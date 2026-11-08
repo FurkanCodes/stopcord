@@ -1,0 +1,134 @@
+/*
+  Sawtooth theme for Tailwind v4.
+
+  In the app's main stylesheet:
+    @import "tailwindcss";
+    @import "@sawtooth/ui/theme.css";
+
+  Load the fonts once in the page <head>:
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+
+  One dark theme. Red means "needs you" and nothing else. Green shows only on working lamps.
+*/
+
+/* Scan this package's own components, so the app doesn't have to. */
+@source "./";
+
+@theme {
+  /* Only Sawtooth colours exist. bg-transparent and text-current still work. */
+  --color-*: initial;
+
+  /* Grounds, darkest to lightest */
+  --color-term: oklch(0.125 0.005 260);   /* terminal panes and cards */
+  --color-ground: oklch(0.155 0.006 260); /* the page */
+  --color-room: oklch(0.178 0.006 260);   /* the sandbox */
+  --color-raised: oklch(0.19 0.007 260);  /* panels, cards, nodes, menus */
+  --color-well: oklch(0.235 0.008 260);   /* icon tiles, pressed toggles, tooltips */
+  --color-hover: oklch(1 0 0 / 0.06);     /* hover wash, the view-switch track */
+  --color-sunk: oklch(0 0 0 / 0.12);      /* the needs list under a factory card */
+  --color-dot: oklch(1 0 0 / 0.06);       /* canvas dot grid */
+
+  /* Ink */
+  --color-ink: oklch(0.965 0.003 260);    /* text */
+  --color-ink-2: oklch(0.74 0.008 260);   /* secondary text */
+  --color-ink-3: oklch(0.55 0.008 260);   /* icons only: about 4:1, too low for text */
+  --color-on-ink: oklch(0.16 0.006 260);  /* text on ink or red fills */
+
+  /* Lines */
+  --color-line-2: oklch(1 0 0 / 0.055);   /* faint dividers */
+  --color-line: oklch(1 0 0 / 0.09);      /* card borders */
+  --color-line-strong: oklch(1 0 0 / 0.18); /* menus, quiet buttons */
+  --color-edge: oklch(0.5 0.008 260);     /* input borders, 3:1 */
+  --color-wire: oklch(0.49 0.006 260);    /* flow lines at rest, 3:1 */
+  --color-wire-live: oklch(0.8 0.008 260); /* the line work is moving along */
+  --color-focus: oklch(0.85 0.01 260);    /* 2px focus ring */
+
+  /* State */
+  --color-working: oklch(0.79 0.17 155);  /* working lamps only */
+  --color-idle: oklch(0.6 0.008 260);     /* idle lamp ring */
+  --color-needs: oklch(0.67 0.2 22);      /* the only red: needs you */
+  --color-needs-text: oklch(0.76 0.14 22);
+  --color-needs-wash: oklch(0.67 0.2 22 / 0.13);
+
+  /* Type */
+  --font-sans: "IBM Plex Sans", "Helvetica Neue", Arial, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, Menlo, monospace;
+
+  --text-label: 11px;  --text-label--line-height: 16px;  /* line labels on the canvas, counts */
+  --text-meta: 12px;   --text-meta--line-height: 18px;   /* meta, mono lines */
+  --text-body: 13px;   --text-body--line-height: 20px;   /* UI body, buttons, inputs */
+  --text-title: 14px;  --text-title--line-height: 20px;  /* panel and section titles */
+  --text-name: 15px;   --text-name--line-height: 22px;   --text-name--letter-spacing: -0.005em; /* factory names */
+  --text-h1: 22px;     --text-h1--line-height: 28px;     --text-h1--letter-spacing: -0.015em;
+
+  /* Radii */
+  --radius-row: 6px;   /* buttons, rows, inputs */
+  --radius-tile: 8px;  /* icon tiles, toggle track, banners */
+  --radius-card: 10px; /* terminal cards, menus */
+  --radius-node: 12px; /* flow nodes, factory cards */
+  --radius-room: 16px; /* the sandbox */
+
+  /* Shadows: only things that float get one */
+  --shadow-pop: 0 16px 40px oklch(0 0 0 / 0.5);
+  --shadow-lift: 0 16px 32px oklch(0 0 0 / 0.45);
+  --shadow-drawer: -24px 0 48px oklch(0 0 0 / 0.35);
+
+  /* Motion: one thing moves at a time */
+  --ease-calm: cubic-bezier(0.2, 0, 0, 1);
+  --animate-breathe: sawtooth-breathe 2.4s ease-in-out infinite;
+  --animate-travel: sawtooth-travel 1.6s cubic-bezier(0.4, 0, 0.2, 1) both;
+
+  @keyframes sawtooth-breathe {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+  }
+
+  @keyframes sawtooth-travel {
+    0% { offset-distance: 0%; opacity: 0; }
+    12% { opacity: 1; }
+    88% { opacity: 1; }
+    100% { offset-distance: 100%; opacity: 0; }
+  }
+}
+
+@layer base {
+  :root {
+    color-scheme: dark;
+  }
+
+  body {
+    background-color: var(--color-ground);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    font-size: 14px;
+    line-height: 1.45;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-focus);
+    outline-offset: 2px;
+  }
+
+  ::selection {
+    background-color: oklch(0.85 0.01 260 / 0.28);
+  }
+}
+
+/* The canvas dot grid */
+@utility bg-dots {
+  background-image: radial-gradient(var(--color-dot) 1px, transparent 1.3px);
+  background-size: 20px 20px;
+}
+
+/* Reduced motion: everything stops. Lamps rest at full opacity, packets don't show. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

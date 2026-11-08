@@ -1,0 +1,33 @@
+{
+  "name": "@sawtooth/ui",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Sawtooth's components and design tokens: React, Base UI and Tailwind v4.",
+  "type": "module",
+  "sideEffects": [
+    "*.css"
+  ],
+  "exports": {
+    ".": "./src/index.ts",
+    "./theme.css": "./src/theme.css"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "css:check": "tailwindcss -i ./check/check.css -o ./check/out.css"
+  },
+  "peerDependencies": {
+    "@base-ui/react": "^1.9.0",
+    "react": "^18.2.0 || ^19.0.0",
+    "react-dom": "^18.2.0 || ^19.0.0"
+  },
+  "devDependencies": {
+    "@base-ui/react": "1.9.0",
+    "@tailwindcss/cli": "4.3.5",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "tailwindcss": "4.3.5",
+    "typescript": "^5.6.0"
+  }
+}
