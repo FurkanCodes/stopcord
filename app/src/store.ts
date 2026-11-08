@@ -297,6 +297,29 @@ export interface Need {
   kind: 'terminal' | 'knowledge';
 }
 
+export interface FleetNeed extends Need {
+  factoryId: string;
+}
+
+let needsCache: { terminals: State['terminals']; factories: Factory[]; list: FleetNeed[] } | null = null;
+
+/** Everything that needs a person, in every factory: the NEEDS block on every status line. */
+export function allNeeds(s: Pick<State, 'terminals' | 'factories'>): FleetNeed[] {
+  if (needsCache && needsCache.terminals === s.terminals && needsCache.factories === s.factories) return needsCache.list;
+  const list: FleetNeed[] = [
+    ...s.factories.flatMap((f) => needsOf(f, terminalsIn(f.id, s)).map((n) => ({ ...n, factoryId: f.id }))),
+    ...needsOf(undefined, terminalsIn('', s)).map((n) => ({ ...n, factoryId: '' })),
+  ];
+  needsCache = { terminals: s.terminals, factories: s.factories, list };
+  return list;
+}
+
+/** Goes to what needs you: a terminal's question, or the knowledge base to review. */
+export function openNeed(n: FleetNeed) {
+  if (n.kind === 'terminal') openFactory(n.factoryId, 'terminals', n.target);
+  else openFactory(n.factoryId, 'knowledge');
+}
+
 export function needsOf(f: Factory | undefined, terminals: Terminal[]): Need[] {
   const out: Need[] = terminals
     .filter((t) => t.needs_you)
