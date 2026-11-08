@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState, type ReactElement } from 'react';
 import { confirm } from '@tauri-apps/plugin-dialog';
 import { listen } from '@tauri-apps/api/event';
 import { api, type Factory, type Knowledge as KnowledgeData } from '../api';
@@ -22,10 +22,11 @@ function joinPath(folder: string, file: string): string {
 
 const base = (path: string) => path.split('/').pop() || path;
 
+/** Unchanged lines shown around each change in a diff. */
+const CONTEXT = 3;
+
 type Decision = 'y' | 'n';
 
-/** Answers are kept by the line itself, so they survive the file changing again under review. */
-const opKey = (op: { type: string; text: string }) => `${op.type}:${op.text}`;
 
 /** The knowledge base and the library's folders: read, edit, and review what agents changed. */
 export function Knowledge({ factory, file }: { factory: Factory; file?: string }) {
@@ -34,6 +35,8 @@ export function Knowledge({ factory, file }: { factory: Factory; file?: string }
   const [text, setText] = useState('');
   const [dirty, setDirty] = useState(false);
   const [decided, setDecided] = useState<Record<string, Decision>>({});
+  // Runs of unchanged lines opened up in the diff, by where they start.
+  const [unfolded, setUnfolded] = useState<Set<number>>(new Set());
 
   const load = () =>
     api.knowledge(factory.id).then(
@@ -109,23 +112,36 @@ export function Knowledge({ factory, file }: { factory: Factory; file?: string }
     }
   }
 
-  // ---- What agents changed, one line at a time -----------------------------------
+  // ---- What agents changed, as in a git diff ----------------------------------------
 
   const ops = data?.changedByAgent ? diffLines(data.approvedText, data.text) : [];
-  const items = ops.map((op) => ({ ...op, i: opKey(op) })).filter((op) => op.type !== 'same' && op.text.trim());
+  const { hunks, hunkOf, runs, lineNo } = useMemo(() => changesOf(ops), [data?.approvedText, data?.text, data?.changedByAgent]);
+  // Blank lines that came and went are kept without asking.
+  const toReview = hunks.filter((h) => !h.blank);
+  const answer = (h: Change, given: Record<string, Decision>): Decision | undefined => (h.blank ? 'y' : given[h.key]);
+  const pending = toReview.filter((h) => !decided[h.key]);
+  const reviewing = section.kind === 'kb' && toReview.length > 0;
 
-  async function decide(i: string, d: Decision) {
-    const next = { ...decided, [i]: d };
+  async function decide(key: string, d: Decision) {
+    const next = { ...decided, [key]: d };
     setDecided(next);
-    if (items.some((it) => !next[it.i])) return;
-    // Every line has an answer: keep what was said yes to, and put back the rest.
+    if (toReview.some((h) => !next[h.key])) return;
+    await finish(next);
+  }
+
+  async function finish(given: Record<string, Decision>) {
+    // Every change has an answer: keep what was said ok to, and put back the rest.
     try {
-      const all = items.map((it) => next[it.i]);
+      const all = toReview.map((h) => given[h.key]);
       if (all.every((x) => x === 'y')) await api.approveKnowledge(factory.id);
       else if (all.every((x) => x === 'n')) await api.undoKnowledge(factory.id);
       else {
         const merged = ops
-          .filter((op) => (op.type === 'same' ? true : op.type === 'add' ? (next[opKey(op)] ?? 'y') === 'y' : (next[opKey(op)] ?? 'y') === 'n'))
+          .filter((op, i) => {
+            if (op.type === 'same') return true;
+            const ok = answer(hunks[hunkOf[i]!]!, given) === 'y';
+            return op.type === 'add' ? ok : !ok;
+          })
           .map((op) => op.text)
           .join('\n');
         await api.saveKnowledge(factory.id, merged);
@@ -140,7 +156,16 @@ export function Knowledge({ factory, file }: { factory: Factory; file?: string }
     }
   }
 
-  const pending = items.filter((it) => !decided[it.i]);
+  const answerAll = (d: Decision) => void finish(Object.fromEntries(toReview.map((h) => [h.key, d])));
+
+  // y and n answer the next change and bring the one after it into view.
+  const answerNext = (d: Decision) => {
+    const h = pending[0];
+    if (!h) return;
+    void decide(h.key, d);
+    const after = pending[1];
+    if (after) requestAnimationFrame(() => document.querySelector(`[data-hunk="${CSS.escape(after.key)}"]`)?.scrollIntoView({ block: 'center', behavior: 'smooth' }));
+  };
 
   useKeys((e) => {
     if ((e.metaKey || e.ctrlKey) && e.key === 's') {
@@ -159,8 +184,8 @@ export function Knowledge({ factory, file }: { factory: Factory; file?: string }
       void open({ kind: 'folder', partId: section.partId });
       return true;
     }
-    if ((e.key === 'y' || e.key === 'n') && pending[0] && !(dirty && section.kind === 'kb')) {
-      void decide(pending[0].i, e.key);
+    if ((e.key === 'y' || e.key === 'n') && reviewing && pending[0]) {
+      answerNext(e.key);
       return true;
     }
   });
@@ -192,7 +217,7 @@ export function Knowledge({ factory, file }: { factory: Factory; file?: string }
       hints={[
         ['j/k', 'move'],
         ['⏎', 'open'],
-        ['y/n', 'keep or skip a change'],
+        ...(reviewing ? ([['y', 'ok to the next change'], ['n', 'no to the next change']] as [string, string][]) : []),
         ['⌘S', 'save'],
         ['tab', 'next pane'],
         ['1-4', 'sections'],
@@ -242,12 +267,106 @@ export function Knowledge({ factory, file }: { factory: Factory; file?: string }
         as="main"
         aria-label={label}
         title={<Titled strong>{label}</Titled>}
-        right={<span style={{ color: dirty ? 'var(--ink)' : 'var(--ink-3)' }}>{state}</span>}
+        hot={reviewing}
+        right={
+          reviewing ? (
+            <span style={{ display: 'inline-flex', gap: 8, alignItems: 'center', color: 'var(--red-text)' }}>
+              an agent changed it · {pending.length} of {toReview.length} to review
+            </span>
+          ) : (
+            <span style={{ color: dirty ? 'var(--ink)' : 'var(--ink-3)' }}>{state}</span>
+          )
+        }
         className="t-editor"
         style={{ flex: '999 1 520px', minHeight: 0, maxHeight: '100%', display: 'flex', flexDirection: 'column', paddingTop: 8 }}
       >
         <div style={{ flex: '1 1 0', minHeight: 0, overflow: 'auto' }}>
-          {!isFolder && (kbPart || section.kind === 'file') && (
+          {reviewing && (
+            <div role="list" aria-label="What an agent changed" style={{ padding: '8px 0 24px' }}>
+              <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '4px 8px', padding: '0 14px 10px', fontSize: 12 }}>
+                <span className="t-muted" style={{ flexGrow: 1 }}>
+                  green lines are new, red lines were taken out. say ok or no to each change.
+                </span>
+                <Key size="xs" onClick={() => answerAll('n')}>
+                  undo all
+                </Key>
+                <button type="button" className="t-solid is-sm" onClick={() => answerAll('y')}>
+                  ok to all
+                </button>
+              </div>
+              {(() => {
+                const rows: ReactElement[] = [];
+                for (let i = 0; i < ops.length; i++) {
+                  const run = runs.find((r) => r.at === i);
+                  if (!run) {
+                    // Unchanged lines: three around each change, the rest folded away as git does.
+                    let end = i;
+                    while (end + 1 < ops.length && ops[end + 1]!.type === 'same') end++;
+                    const keepTop = i === 0 ? 0 : CONTEXT;
+                    const keepEnd = end === ops.length - 1 ? 0 : CONTEXT;
+                    const hidden = end - i + 1 - keepTop - keepEnd;
+                    const start = i;
+                    for (let k = i; k <= end; k++) {
+                      if (hidden > 1 && !unfolded.has(start) && k >= start + keepTop && k <= end - keepEnd) {
+                        if (k === start + keepTop) {
+                          rows.push(
+                            <button key={`f${k}`} type="button" className="t-row t-dim" style={{ padding: '2px 14px', fontSize: 12 }} onClick={() => setUnfolded((u) => new Set(u).add(start))}>
+                              ⋯ {hidden} unchanged line{hidden === 1 ? '' : 's'} · show
+                            </button>,
+                          );
+                        }
+                        continue;
+                      }
+                      rows.push(
+                        <div key={`s${k}`} className="t-diff-line">
+                          <span className="num">{lineNo[k]}</span>
+                          <span className="sign"> </span>
+                          <span className="text">{ops[k]!.text || ' '}</span>
+                        </div>,
+                      );
+                    }
+                    i = end;
+                    continue;
+                  }
+                  for (const h of run.changes.map((c) => hunks[c]!)) {
+                    const given = answer(h, decided);
+                    const next = pending[0]?.key === h.key;
+                    rows.push(
+                      <div key={h.key} role="listitem" data-hunk={h.key} className={`t-hunk${next ? ' is-next' : ''}${given ? ' is-done' : ''}`}>
+                        {!h.blank && (
+                          <span className="t-hunk-actions">
+                            {given && <span className="t-dim">{given === 'y' ? '✓ ok' : '✗ no'} ·</span>}
+                            <button type="button" className={given === 'y' || (next && !given) ? 't-solid is-xs' : 't-key is-xs'} aria-pressed={given === 'y'} onClick={() => void decide(h.key, 'y')}>
+                              {next ? '[y] ' : ''}ok
+                            </button>
+                            <button type="button" className={given === 'n' ? 't-solid is-xs' : 't-key is-xs'} aria-pressed={given === 'n'} onClick={() => void decide(h.key, 'n')}>
+                              {next ? '[n] ' : ''}no
+                            </button>
+                          </span>
+                        )}
+                        {[...h.dels, ...h.adds].map((k) => {
+                          const o = ops[k]!;
+                          const gone = given !== undefined && (o.type === 'add' ? given === 'n' : given === 'y');
+                          return (
+                            <div key={k} className={`t-diff-line ${o.type === 'add' ? 'is-add' : 'is-del'}${gone ? ' is-gone' : ''}`}>
+                              <span className="num">{o.type === 'add' ? lineNo[k] : ''}</span>
+                              <span className="sign" aria-label={o.type === 'add' ? 'added' : 'taken out'}>
+                                {o.type === 'add' ? '+' : '−'}
+                              </span>
+                              <span className="text">{o.text || ' '}</span>
+                            </div>
+                          );
+                        })}
+                      </div>,
+                    );
+                  }
+                  i = run.end;
+                }
+                return rows;
+              })()}
+            </div>
+          )}
+          {!reviewing && !isFolder && (kbPart || section.kind === 'file') && (
             <div style={{ display: 'flex', alignItems: 'flex-start', padding: '8px 0 24px', minWidth: 'max-content' }}>
               <pre aria-hidden="true" className="t-faint" style={{ padding: '0 12px 0 14px', flexShrink: 0, textAlign: 'right', fontSize: 13, lineHeight: 1.7, userSelect: 'none' }}>
                 {lines.map((_, i) => i + 1).join('\n')}
@@ -319,52 +438,11 @@ export function Knowledge({ factory, file }: { factory: Factory; file?: string }
               </Key>
             </span>
           ) : (
-            <span>{isFolder ? 'agents open these when they need them' : 'markdown · edit in place'}</span>
+            <span>{reviewing ? 'say ok or no to each change, then it saves' : isFolder ? 'agents open these when they need them' : 'markdown · edit in place'}</span>
           )}
         </div>
       </Pane>
 
-      <Pane
-        as="aside"
-        aria-labelledby="review-title"
-        title={
-          <span id="review-title">
-            <Titled>to review</Titled> <span style={{ color: 'var(--ink)' }}>{pending.length}</span>
-          </span>
-        }
-        hot={pending.length > 0}
-        scroll style={{ flex: '1 1 280px', maxWidth: 330, minHeight: 0, maxHeight: '100%', overflow: 'auto', padding: '14px 0 10px' }}
-      >
-        {pending.length === 0 ? (
-          <Empty>nothing to review</Empty>
-        ) : (
-          <ul>
-            {dirty && section.kind === 'kb' && (
-              <li className="t-dim" style={{ padding: '0 12px 8px', fontSize: 12 }}>
-                save or drop your own edit first, below the editor
-              </li>
-            )}
-            {pending.map((it) => (
-              <li key={it.i} style={{ display: 'flex', flexDirection: 'column', gap: 8, padding: '8px 12px 12px', borderBottom: '1px dashed var(--line-dash)' }}>
-                <span className="t-dim" style={{ fontSize: 12 }}>
-                  {it.type === 'add' ? '+ an agent added' : '− an agent took out'}
-                </span>
-                <p style={{ lineHeight: 1.5, textDecoration: it.type === 'del' ? 'line-through' : undefined, color: it.type === 'del' ? 'var(--ink-2)' : undefined }}>
-                  {it.text.replace(/^\s*[-*]\s+/, '')}
-                </p>
-                <span style={{ display: 'flex', gap: 6 }}>
-                  <button type="button" className="t-solid is-sm" disabled={dirty && section.kind === 'kb'} onClick={() => void decide(it.i, 'y')}>
-                    [y] {it.type === 'add' ? 'add' : 'take out'}
-                  </button>
-                  <Key k="n" size="sm" disabled={dirty && section.kind === 'kb'} onClick={() => void decide(it.i, 'n')}>
-                    {it.type === 'add' ? 'skip' : 'keep it'}
-                  </Key>
-                </span>
-              </li>
-            ))}
-          </ul>
-        )}
-      </Pane>
     </Screen>
   );
 }
@@ -398,4 +476,85 @@ export function diffLines(a: string, b: string): { type: 'same' | 'add' | 'del';
   while (i < n) out.push({ type: 'del', text: x[i++]! });
   while (j < m) out.push({ type: 'add', text: y[j++]! });
   return out;
+}
+
+/** One change to say ok or no to: lines taken out and lines added, by index into the diff. */
+export interface Change {
+  key: string;
+  dels: number[];
+  adds: number[];
+  blank: boolean;
+}
+
+const ITEM = /^\s*([-*+]\s|\d+[.)]\s|#{1,6}\s)/;
+
+/** Splits lines into list items and headings: a block starts at one, its wrapped lines follow. */
+function blocksOf(lines: number[], ops: { text: string }[]): number[][] {
+  const out: number[][] = [];
+  for (const i of lines) {
+    const text = ops[i]!.text;
+    const last = out[out.length - 1];
+    const prev = last ? ops[last[last.length - 1]!]!.text : '';
+    if (!last || ITEM.test(text) || !text.trim() || !prev.trim() || last[last.length - 1] !== i - 1) out.push([i]);
+    else last.push(i);
+  }
+  return out;
+}
+
+function wordsOf(block: number[], ops: { text: string }[]): Set<string> {
+  return new Set(block.map((i) => ops[i]!.text).join(' ').toLowerCase().match(/[\p{L}\p{N}_]+/gu) ?? []);
+}
+
+/**
+ * The changes in a diff. Each run of changed lines is split at list items and headings, and
+ * an item taken out is paired with the item added in its place when they share most words,
+ * so a reworded fact is one change and a new fact is another.
+ */
+export function changesOf(ops: { type: 'same' | 'add' | 'del'; text: string }[]) {
+  const hunks: Change[] = [];
+  const hunkOf: number[] = [];
+  const runs: { at: number; end: number; changes: number[] }[] = [];
+  const lineNo: number[] = [];
+  let n = 0;
+  ops.forEach((op, i) => {
+    if (op.type !== 'del') lineNo[i] = ++n;
+  });
+  for (let i = 0; i < ops.length; i++) {
+    if (ops[i]!.type === 'same') continue;
+    const at = i;
+    while (i + 1 < ops.length && ops[i + 1]!.type !== 'same') i++;
+    const idx = Array.from({ length: i - at + 1 }, (_, k) => at + k);
+    const dels = blocksOf(idx.filter((k) => ops[k]!.type === 'del'), ops);
+    const adds = blocksOf(idx.filter((k) => ops[k]!.type === 'add'), ops);
+    const used = new Set<number>();
+    const pairs = adds.map((a) => {
+      const aw = wordsOf(a, ops);
+      let best = -1;
+      let score = 0.4;
+      dels.forEach((d, j) => {
+        if (used.has(j)) return;
+        const dw = wordsOf(d, ops);
+        const shared = [...aw].filter((w) => dw.has(w)).length;
+        const s = shared / Math.max(1, new Set([...aw, ...dw]).size);
+        if (s >= score) [best, score] = [j, s];
+      });
+      if (best >= 0) used.add(best);
+      return { dels: best >= 0 ? dels[best]! : [], adds: a };
+    });
+    const parts = [...dels.filter((_, j) => !used.has(j)).map((d) => ({ dels: d, adds: [] as number[] })), ...pairs];
+    const run = { at, end: i, changes: [] as number[] };
+    for (const p of parts) {
+      const lines = [...p.dels, ...p.adds];
+      lines.forEach((k) => (hunkOf[k] = hunks.length));
+      run.changes.push(hunks.length);
+      hunks.push({
+        key: lines.map((k) => `${ops[k]!.type}:${ops[k]!.text}`).join('|'),
+        dels: p.dels,
+        adds: p.adds,
+        blank: lines.every((k) => !ops[k]!.text.trim()),
+      });
+    }
+    runs.push(run);
+  }
+  return { hunks, hunkOf, runs, lineNo };
 }

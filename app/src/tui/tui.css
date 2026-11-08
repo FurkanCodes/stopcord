@@ -19,6 +19,11 @@
   --red-text: oklch(0.76 0.15 22);
   --red-line: oklch(0.68 0.2 22 / 0.75);
   --green: oklch(0.79 0.17 155);
+  /* A diff: what an agent added and took out. */
+  --add-bg: oklch(0.32 0.07 150 / 0.45);
+  --add-ink: oklch(0.84 0.13 150);
+  --del-bg: oklch(0.32 0.08 22 / 0.45);
+  --del-ink: oklch(0.8 0.12 22);
   --bar: oklch(0.2 0.007 260);
   --bar-2: oklch(0.26 0.008 260);
   --mono: 'IBM Plex Mono', ui-monospace, Menlo, monospace;
@@ -607,4 +612,73 @@ textarea.t-field {
 }
 .xterm .xterm-viewport {
   background-color: transparent !important;
+}
+
+/* ---- A change to review, as in a git diff ---------------------------------- */
+
+.t-diff-line {
+  display: grid;
+  grid-template-columns: 5ch 2ch minmax(0, 1fr);
+  font-size: 13px;
+  line-height: 1.7;
+}
+.t-diff-line > .num {
+  padding-right: 12px;
+  text-align: right;
+  color: var(--ink-4);
+  user-select: none;
+}
+.t-diff-line > .sign {
+  user-select: none;
+  color: var(--ink-4);
+}
+.t-diff-line > .text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  padding-right: 14px;
+}
+.t-diff-line.is-add {
+  background: var(--add-bg);
+}
+.t-diff-line.is-add > .sign,
+.t-diff-line.is-add > .text {
+  color: var(--add-ink);
+}
+.t-diff-line.is-del {
+  background: var(--del-bg);
+}
+.t-diff-line.is-del > .sign,
+.t-diff-line.is-del > .text {
+  color: var(--del-ink);
+}
+/* A line that won't stay, once the change has an answer. */
+.t-diff-line.is-gone {
+  background: transparent;
+  opacity: 0.4;
+}
+.t-diff-line.is-gone > .text {
+  text-decoration: line-through;
+}
+.t-hunk {
+  position: relative;
+  margin: 2px 0;
+  border-left: 2px solid var(--line-focus);
+}
+.t-hunk.is-next {
+  border-left-color: var(--ink);
+}
+.t-hunk.is-done {
+  border-left-color: var(--line);
+}
+.t-hunk-actions {
+  position: absolute;
+  top: 2px;
+  right: 10px;
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  font-size: 12px;
+}
+.t-hunk .t-diff-line > .text {
+  padding-right: 190px;
 }
