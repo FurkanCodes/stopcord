@@ -1,44 +1,28 @@
 import { useEffect, useState } from 'react';
 import { confirm } from '@tauri-apps/plugin-dialog';
-import { Button, IconButton, SectionTabs, Tooltip, ViewSwitch, factoryViews } from '@sawtooth/ui';
-import { api, type Pos, type ProjectInfo, type Terminal } from '../api';
-import {
-  changeFactory,
-  go,
-  harnessOf,
-  openFactory,
-  refreshFactories,
-  setState,
-  showProblem,
-  terminalsIn,
-  useStore,
-  type Draft,
-  type Route,
-  type Tab,
-} from '../store';
-import { EditPanel } from './EditPanel';
-import { FlowCanvas } from './FlowCanvas';
-import { FlowList } from './FlowList';
+import { api, type Pos, type ProjectInfo } from '../api';
+import { changeFactory, go, openFactory, refreshFactories, setState, showProblem, terminalsIn, useStore, type Draft, type Route, type Tab } from '../store';
+import { Brand, Screen } from '../tui/kit';
+import { plain, useKeys } from '../tui/keys';
+import { FactoryMap } from './FactoryMap';
+import { Fleet } from './Fleet';
 import { Knowledge } from './Knowledge';
 import { Runs } from './Runs';
-import { Terminals } from './Terminals';
 import { fromTemplate, type Template } from './parts';
-import { tilde } from '../text';
 
 type FactoryRoute = Extract<Route, { screen: 'factory' }>;
 
 const NO_DRAFTS: Draft[] = [];
+const tabKeys: Record<string, Tab> = { '1': 'overview', '2': 'terminals', '3': 'knowledge', '4': 'runs' };
 
-/** One factory: its flow on a canvas or as lists, its terminals, its knowledge and its runs. */
-export function FactoryScreen({ id }: { id: string }) {
+/** One factory: its map, its terminals, its knowledge and its runs. */
+export function FactoryScreen({ id, onSearch }: { id: string; onSearch: () => void }) {
   const route = useStore((s) => s.route) as FactoryRoute;
   const factories = useStore((s) => s.factories);
   const terminalsById = useStore((s) => s.terminals);
-  const branches = useStore((s) => s.branches);
   const runs = useStore((s) => s.runs[id]);
   const drafts = useStore((s) => s.drafts[id] ?? NO_DRAFTS);
   const selected = useStore((s) => s.selected);
-  const view = useStore((s) => s.factoryView);
   const agents = useStore((s) => s.agents);
   const installed = useStore((s) => s.installed);
   const loaded = useStore((s) => s.loaded);
@@ -69,19 +53,35 @@ export function FactoryScreen({ id }: { id: string }) {
     return () => clearTimeout(timer);
   }, [factory?.id, folderKey]);
 
-  if (id === '') return <OtherTerminals route={route} terminals={terminals} branches={branches} />;
+  useKeys((e) => {
+    if (!plain(e)) return;
+    const tab = tabKeys[e.key];
+    if (tab && factory) {
+      if (tab !== route.tab) openFactory(id, tab);
+      return true;
+    }
+    if (e.key === 't' && factory) {
+      go({ screen: 'tickets', id });
+      return true;
+    }
+    if (e.key === 'Escape') {
+      go({ screen: 'home' });
+      return true;
+    }
+  }, { priority: -1 });
+
+  // Terminals outside every factory only have the terminals screen.
+  if (id === '' || route.tab === 'terminals') return <Fleet route={route} onSearch={onSearch} />;
+
   if (!factory) {
     return (
-      <p className="m-8 text-body text-ink-2">{loaded ? 'This factory is gone. It may have been removed.' : 'Loading…'}</p>
+      <Screen header={<Brand />} hints={[['esc', 'back to every factory']]} status={{ mode: 'FACTORY' }}>
+        <p className="t-dim" style={{ padding: 20 }}>
+          {loaded ? '-- this factory is gone. it may have been removed --' : 'loading…'}
+        </p>
+      </Screen>
     );
   }
-
-  const meta = (t: Terminal) => {
-    const where = branches[t.cwd] ?? (t.cwd === factory.path ? null : t.cwd.split('/').pop());
-    return [harnessOf(t), where].filter(Boolean).join(' · ');
-  };
-  const select = (sel: string | null) => setState({ selected: sel });
-  const pickTerminal = (terminal: string) => openFactory(id, 'terminals', terminal);
 
   function add(template: Template, at?: Pos) {
     if (!factory) return;
@@ -106,7 +106,7 @@ export function FactoryScreen({ id }: { id: string }) {
     if (part.kind === 'tickets' && factory.parts.some((p) => p.kind === 'tickets')) return;
     const layout = at ? { ...factory.layout, [part.id]: at } : factory.layout;
     changeFactory({ ...factory, parts: [...factory.parts, part], layout });
-    select(part.id);
+    setState({ selected: part.id });
   }
 
   async function remove() {
@@ -125,115 +125,23 @@ export function FactoryScreen({ id }: { id: string }) {
     }
   }
 
-  const hasTickets = factory.parts.some((p) => p.kind === 'tickets');
-  const shared = {
-    factory,
-    terminals,
-    drafts,
-    runs,
-    selected,
-    folderCounts,
-    meta,
-    onSelect: (sel: string | null) => select(sel),
-    onOpenRuns: () => go({ ...route, tab: 'runs' }),
-  };
-
+  if (route.tab === 'knowledge') return <Knowledge factory={factory} file={route.file} />;
+  if (route.tab === 'runs') return <Runs factory={factory} runs={runs} terminals={terminals} />;
   return (
-    <SectionTabs.Root value={route.tab} onValueChange={(tab) => go({ ...route, tab: tab as Tab })} className="grow">
-      <div className="flex shrink-0 items-center gap-3 border-b border-line pr-3 pl-3.5">
-        <SectionTabs.List className="shrink-0 flex-nowrap self-stretch border-b-0">
-          <SectionTabs.Tab value="overview">Overview</SectionTabs.Tab>
-          <SectionTabs.Tab value="terminals">Terminals</SectionTabs.Tab>
-          <SectionTabs.Tab value="knowledge">Knowledge</SectionTabs.Tab>
-          <SectionTabs.Tab value="runs">Runs</SectionTabs.Tab>
-        </SectionTabs.List>
-        <span className="min-w-0 grow truncate text-right font-mono text-meta text-ink-2" title={factory.path}>
-          {tilde(factory.path)}
-        </span>
-        {route.tab === 'overview' && (
-          <ViewSwitch value={view} onValueChange={(v) => setState({ factoryView: v })} options={factoryViews} />
-        )}
-        {hasTickets && (
-          <Button
-            variant="quiet"
-            onClick={() => {
-              const tickets = factory.parts.find((p) => p.kind === 'tickets');
-              if (route.tab !== 'overview') go({ ...route, tab: 'overview' });
-              if (tickets) select(tickets.id);
-            }}
-          >
-            Feed tickets
-          </Button>
-        )}
-        <Tooltip label="Remove from Sawtooth">
-          <IconButton icon="trash" label={`Remove ${factory.name} from Sawtooth`} onClick={() => void remove()} />
-        </Tooltip>
-      </div>
-
-      <SectionTabs.Panel value="overview" className="flex min-h-0">
-        <div className="flex min-w-0 grow flex-col">
-          {view === 'canvas' ? (
-            <FlowCanvas
-              {...shared}
-              onOpenTerminal={pickTerminal}
-              onAdd={add}
-            />
-          ) : (
-            <FlowList {...shared} onSelect={(sel) => select(sel)} onAdd={(t) => add(t)} />
-          )}
-        </div>
-        {selected && (
-          <EditPanel
-            factory={factory}
-            selected={selected}
-            terminals={terminals}
-            drafts={drafts}
-            runs={runs}
-            git={project?.git ?? true}
-            onClose={() => select(null)}
-            onOpenTerminal={pickTerminal}
-          />
-        )}
-      </SectionTabs.Panel>
-      <SectionTabs.Panel value="terminals" className="flex min-h-0">
-        <Terminals
-          list={terminals}
-          selectedId={route.terminal}
-          meta={meta}
-          onPick={pickTerminal}
-          onAdd={() => add('terminal')}
-        />
-      </SectionTabs.Panel>
-      <SectionTabs.Panel value="knowledge" className="flex min-h-0">
-        <Knowledge factory={factory} />
-      </SectionTabs.Panel>
-      <SectionTabs.Panel value="runs" className="flex min-h-0">
-        <Runs runs={runs} terminals={terminals} />
-      </SectionTabs.Panel>
-    </SectionTabs.Root>
-  );
-}
-
-/** Terminals started outside every factory, such as from the sawtooth command in a shell. */
-function OtherTerminals({
-  route,
-  terminals,
-  branches,
-}: {
-  route: FactoryRoute;
-  terminals: Terminal[];
-  branches: Record<string, string | null>;
-}) {
-  const meta = (t: Terminal) => [harnessOf(t), branches[t.cwd] ?? t.cwd.split('/').pop()].filter(Boolean).join(' · ');
-  return (
-    <div className="flex min-h-0 grow flex-col">
-      <p className="m-0 border-b border-line px-4 py-2.5 text-body text-ink-2">
-        These terminals run outside every factory. Make a factory for their folder to see them on a canvas.
-      </p>
-      <div className="flex min-h-0 grow">
-        <Terminals list={terminals} selectedId={route.terminal} meta={meta} onPick={(t) => openFactory('', 'terminals', t)} />
-      </div>
-    </div>
+    <FactoryMap
+      factory={factory}
+      terminals={terminals}
+      drafts={drafts}
+      runs={runs}
+      selected={selected}
+      folderCounts={folderCounts}
+      git={project?.git ?? true}
+      onSelect={(sel) => setState({ selected: sel })}
+      onAdd={add}
+      onOpenTerminal={(t) => openFactory(id, 'terminals', t)}
+      onOpenRuns={() => openFactory(id, 'runs')}
+      onRemove={() => void remove()}
+    />
   );
 }
 

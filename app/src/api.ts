@@ -124,6 +124,18 @@ export interface Redraw {
   cols: number;
 }
 
+export interface FileChange {
+  path: string;
+  added: number;
+  removed: number;
+}
+
+/** What a terminal's checkout changed since it left the project's checkout. */
+export interface Changes {
+  commits: number;
+  files: FileChange[];
+}
+
 export interface Failure {
   code: string;
   message: string;
@@ -166,6 +178,7 @@ export const api = {
   detectProject: (path: string) => invoke<ProjectInfo>('detect_project', { path }),
   installed: (names: string[]) => invoke<string[]>('installed', { names }),
   branch: (path: string) => invoke<string | null>('branch', { path }),
+  changes: (path: string, base: string) => invoke<Changes | null>('changes', { path, base }),
   view: (id: string) => invoke<Redraw>('view', { id }),
   unview: (id: string) => invoke<void>('unview', { id }),
 };

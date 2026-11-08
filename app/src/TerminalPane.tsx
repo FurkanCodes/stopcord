@@ -4,12 +4,12 @@ import { FitAddon } from '@xterm/addon-fit';
 import { api, daemon, fromBase64, typeInto } from './api';
 import { outputHandlers, type Output } from './store';
 
-// The theme's colours in hex, for xterm's renderer. theme.css holds the OKLCH originals.
+// The theme's colours in hex, for xterm's renderer. tui/tui.css holds the OKLCH originals.
 const theme = {
-  background: '#060708', // term
-  foreground: '#dcdee1',
-  cursor: '#dcdee1',
-  cursorAccent: '#060708',
+  background: '#07080a', // --bg
+  foreground: '#e9ebee', // --ink
+  cursor: '#e9ebee',
+  cursorAccent: '#07080a',
   selectionBackground: '#caced447', // focus, 28%
 };
 
@@ -20,12 +20,29 @@ export function lastSize(): { rows?: number; cols?: number } {
   return size ?? {};
 }
 
+export interface TerminalPaneProps {
+  id: string;
+  label: string;
+  /** Change it to put the keyboard in the terminal. */
+  focusKey?: number;
+  /** ⌘esc: the person wants their keys back for the screen. */
+  onLeave?: () => void;
+}
+
 /**
  * One live terminal. It joins late: it draws the daemon's redraw of the screen,
  * then only the output that came after it, using the chunk numbers (`seq`).
+ * It doesn't take the keyboard until asked, so the screen's keys keep working.
  */
-export function TerminalPane({ id, label }: { id: string; label: string }) {
+export function TerminalPane({ id, label, focusKey = 0, onLeave }: TerminalPaneProps) {
   const host = useRef<HTMLDivElement>(null);
+  const live = useRef<XTerm | null>(null);
+  const leave = useRef(onLeave);
+  leave.current = onLeave;
+
+  useEffect(() => {
+    if (focusKey) live.current?.focus();
+  }, [focusKey]);
 
   useEffect(() => {
     const el = host.current;
@@ -42,6 +59,14 @@ export function TerminalPane({ id, label }: { id: string; label: string }) {
     });
     const fit = new FitAddon();
     term.loadAddon(fit);
+    term.attachCustomKeyEventHandler((e) => {
+      if (e.type === 'keydown' && e.metaKey && e.key === 'Escape') {
+        term.blur();
+        leave.current?.();
+        return false;
+      }
+      return true;
+    });
 
     // Output that arrives before the redraw waits here.
     let drawn: number | null = null;
@@ -90,11 +115,12 @@ export function TerminalPane({ id, label }: { id: string; label: string }) {
         term.write('\r\n  This terminal is gone.\r\n');
       }
       observer.observe(el);
-      term.focus();
+      live.current = term;
     })();
 
     return () => {
       disposed = true;
+      live.current = null;
       if (outputHandlers.get(id) === write) outputHandlers.delete(id);
       if (drawn !== null) void api.unview(id);
       clearTimeout(resizeTimer);
@@ -106,5 +132,5 @@ export function TerminalPane({ id, label }: { id: string; label: string }) {
     };
   }, [id]);
 
-  return <div ref={host} role="region" aria-label={label} className="h-full w-full" />;
+  return <div ref={host} role="region" aria-label={label} style={{ width: '100%', height: '100%' }} />;
 }

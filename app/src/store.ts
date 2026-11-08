@@ -3,17 +3,22 @@
 
 import { useSyncExternalStore } from 'react';
 import { listen } from '@tauri-apps/api/event';
-import { api, daemon, failureText, type Factory, type Run, type Terminal } from './api';
-import type { LampState } from '@sawtooth/ui';
+import { api, daemon, failureText, type Changes, type Factory, type Run, type Terminal } from './api';
 
+export type LampState = 'working' | 'needs' | 'idle';
 export type Tab = 'overview' | 'terminals' | 'knowledge' | 'runs';
 export type View = 'canvas' | 'list';
 
 export type Route =
   | { screen: 'home' }
   | { screen: 'new' }
-  /** `id` is a factory's id, or '' for terminals outside every factory. */
-  | { screen: 'factory'; id: string; tab: Tab; terminal?: string };
+  /** The factory's ticket source: list tickets and feed some in. */
+  | { screen: 'tickets'; id: string }
+  /**
+   * `id` is a factory's id, or '' for terminals outside every factory.
+   * `file` opens a library file in the knowledge tab, as "<part id>:<path>".
+   */
+  | { screen: 'factory'; id: string; tab: Tab; terminal?: string; file?: string };
 
 /** A terminal added on the canvas but not started yet. It lives only in the window. */
 export interface Draft {
@@ -28,7 +33,6 @@ export interface Draft {
 export interface State {
   route: Route;
   homeView: View;
-  factoryView: View;
   factories: Factory[];
   loaded: boolean;
   terminals: Record<string, Terminal>;
@@ -43,12 +47,13 @@ export interface State {
   agents: string[];
   installed: string[] | null;
   branches: Record<string, string | null>;
+  /** What each terminal's checkout changed, by its folder. */
+  changes: Record<string, Changes | null>;
 }
 
 let state: State = {
   route: { screen: 'home' },
   homeView: 'canvas',
-  factoryView: 'canvas',
   factories: [],
   loaded: false,
   terminals: {},
@@ -60,6 +65,7 @@ let state: State = {
   agents: [],
   installed: null,
   branches: {},
+  changes: {},
 };
 
 const listeners = new Set<() => void>();
@@ -131,6 +137,22 @@ export function loadBranch(path: string) {
   );
 }
 
+const changesAt = new Map<string, number>();
+
+/** Reads what a terminal's checkout changed, at most every few seconds per folder. */
+export function loadChanges(t: Terminal, factories: Factory[] = state.factories, force = false) {
+  const path = t.cwd;
+  if (!path) return;
+  const now = Date.now();
+  if (!force && now - (changesAt.get(path) ?? 0) < 4000) return;
+  changesAt.set(path, now);
+  const base = factoryOf(t, factories)?.path ?? path;
+  api.changes(path, base).then(
+    (c) => setState((s) => ({ changes: { ...s.changes, [path]: c } })),
+    () => undefined,
+  );
+}
+
 export async function refreshFactories() {
   try {
     const factories = await api.factories();
@@ -193,7 +215,10 @@ export function connect() {
         return { terminals, selected: s.selected === id ? null : s.selected };
       });
     } else if (terminal) {
+      const before = state.terminals[terminal.id];
       putTerminal(terminal);
+      // A turn ending or starting is when files change.
+      if (before && before.state !== terminal.state) loadChanges(terminal, state.factories, true);
     }
   });
   void listen<string>('daemon:lost', (e) => setState({ connected: false, problem: e.payload }));
@@ -318,6 +343,12 @@ export function allNeeds(s: Pick<State, 'terminals' | 'factories'>): FleetNeed[]
 export function openNeed(n: FleetNeed) {
   if (n.kind === 'terminal') openFactory(n.factoryId, 'terminals', n.target);
   else openFactory(n.factoryId, 'knowledge');
+}
+
+/** Sawtooth's own folder, from where it keeps worktrees. */
+export function sawtoothHome(factories: Factory[]): string {
+  const dir = factories[0]?.worktreesDir;
+  return dir ? dir.replace(/\/worktrees\/[^/]+\/?$/, '') : '~/.sawtooth';
 }
 
 export function needsOf(f: Factory | undefined, terminals: Terminal[]): Need[] {

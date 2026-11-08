@@ -1,15 +1,6 @@
 // The parts a factory can have, what each is called, and the ready-made ones the drawer offers.
 
-import type { IconName } from '@sawtooth/ui';
 import type { Factory, Part, PartKind, RunsIn, RunsOn, When } from '../api';
-
-export const iconOf: Record<PartKind, IconName> = {
-  knowledge: 'file',
-  folder: 'folder',
-  check: 'check',
-  trigger: 'clock',
-  tickets: 'ticket',
-};
 
 export const kindWords: Record<PartKind, string> = {
   knowledge: 'Knowledge base',
@@ -119,7 +110,6 @@ export interface DrawerItem {
   template: Template;
   name: string;
   description: string;
-  icon: IconName;
   /** Why it can't be added right now, if it can't. */
   off?: string;
 }
@@ -134,7 +124,6 @@ export function drawerGroups(f: Factory): { group: string; items: DrawerItem[] }
           template: 'terminal',
           name: 'Terminal',
           description: 'A terminal in its own worktree. Start any harness in it.',
-          icon: 'terminal',
         },
       ],
     },
@@ -145,20 +134,19 @@ export function drawerGroups(f: Factory): { group: string; items: DrawerItem[] }
           template: 'tickets',
           name: 'Ticket source',
           description: 'Lists your tickets with a command you write, like gh issue list.',
-          icon: 'ticket',
           off: has('tickets') ? 'Already on the canvas. A factory has one.' : undefined,
         },
-        { template: 'trigger', name: 'Trigger', description: 'Types a prompt into a terminal when something happens.', icon: 'clock' },
-        { template: 'testsQuiet', name: 'Tests when quiet', description: 'Asks a terminal to run the tests once it stops.', icon: 'clock' },
-        { template: 'kbTidy', name: 'Weekly tidy', description: 'Every Monday, an agent proposes knowledge base clean-ups.', icon: 'clock' },
+        { template: 'trigger', name: 'Trigger', description: 'Types a prompt into a terminal when something happens.' },
+        { template: 'testsQuiet', name: 'Tests when quiet', description: 'Asks a terminal to run the tests once it stops.' },
+        { template: 'kbTidy', name: 'Weekly tidy', description: 'Every Monday, an agent proposes knowledge base clean-ups.' },
       ],
     },
     {
       group: 'Guardrails',
       items: [
-        { template: 'check', name: 'Check', description: 'A command that runs on every commit and has to pass.', icon: 'check' },
-        { template: 'tests', name: 'Tests', description: 'The project’s tests, on every commit.', icon: 'check' },
-        { template: 'secrets', name: 'No secrets', description: 'Stops a commit that holds something like a key.', icon: 'shield' },
+        { template: 'check', name: 'Check', description: 'A command that runs on every commit and has to pass.' },
+        { template: 'tests', name: 'Tests', description: 'The project’s tests, on every commit.' },
+        { template: 'secrets', name: 'No secrets', description: 'Stops a commit that holds something like a key.' },
       ],
     },
     {
@@ -168,11 +156,10 @@ export function drawerGroups(f: Factory): { group: string; items: DrawerItem[] }
           template: 'knowledge',
           name: 'Knowledge base',
           description: 'One file every harness reads at start.',
-          icon: 'file',
           off: has('knowledge') ? 'Already on the canvas. A factory has one.' : undefined,
         },
-        { template: 'folder', name: 'Folder', description: 'Markdown files agents read when they need them.', icon: 'folder' },
-        { template: 'skills', name: 'Skills', description: 'Step-by-step guides agents follow, like release.md.', icon: 'book' },
+        { template: 'folder', name: 'Folder', description: 'Markdown files agents read when they need them.' },
+        { template: 'skills', name: 'Skills', description: 'Step-by-step guides agents follow, like release.md.' },
       ],
     },
   ];

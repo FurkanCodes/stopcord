@@ -12,7 +12,7 @@ export function ago(at: number, now = Date.now()): string {
 /** "10:42", or "Mon 10:42" for another day. */
 export function clock(at: number, now = Date.now()): string {
   const d = new Date(at);
-  const time = d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+  const time = d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
   return new Date(now).toDateString() === d.toDateString()
     ? time
     : `${d.toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' })} ${time}`;
