@@ -212,7 +212,10 @@ export function Screen({ header, children, hints, status, message, bodyStyle }: 
   const problem = useStore((s) => s.problem);
   return (
     <div className="t-app">
-      <header className="t-header">{header}</header>
+      {/* The window has no title bar of its own: this row is where it is dragged from. */}
+      <header className="t-header" data-tauri-drag-region="deep">
+        {header}
+      </header>
       <div className="t-body" style={bodyStyle}>
         {children}
       </div>

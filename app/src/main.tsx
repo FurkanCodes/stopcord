@@ -9,6 +9,9 @@ import { createRoot } from 'react-dom/client';
 import { App } from './App';
 import { connect } from './store';
 
+// The header leaves room for the window buttons only where the system draws them over it.
+if (/Mac/.test(navigator.platform)) document.documentElement.dataset.os = 'mac';
+
 connect();
 
 createRoot(document.getElementById('root')!).render(

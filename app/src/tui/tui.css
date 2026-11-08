@@ -157,9 +157,16 @@ textarea::placeholder {
   flex-wrap: wrap;
   align-items: center;
   gap: 6px 12px;
-  min-height: 36px;
+  min-height: 44px;
   padding: 4px 10px;
   flex-shrink: 0;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* macOS draws its window buttons over the header's left end. */
+:root[data-os='mac'] .t-header {
+  padding-left: 84px;
 }
 
 .t-brand {
