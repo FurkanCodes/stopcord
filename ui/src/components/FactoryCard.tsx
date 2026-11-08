@@ -13,12 +13,12 @@ export interface FactoryNeed {
 export interface FactoryCardProps {
   name: string;
   terminals: { harness: string; state: LampState }[];
-  /** Files in the library. */
-  library: number;
+  /** Files in the library. Leave the three counts out until the factory has those parts. */
+  library?: number;
   /** Guardrails and triggers. */
-  control: number;
+  control?: number;
   /** The ticket queue in words: "3 tickets", "no tickets". */
-  tickets: string;
+  tickets?: string;
   needs?: FactoryNeed[];
   onOpen?: () => void;
   className?: string;
@@ -75,11 +75,13 @@ export function FactoryCard({ name, terminals, library, control, tickets, needs 
             <NoTerminalsChip />
           )}
         </span>
-        <span className="flex flex-wrap gap-x-4 gap-y-1.5 font-mono text-meta text-ink-2">
-          <Stat icon="book">{library} library</Stat>
-          <Stat icon="shield">{control} control</Stat>
-          <Stat icon="ticket">{tickets}</Stat>
-        </span>
+        {(library !== undefined || control !== undefined || tickets !== undefined) && (
+          <span className="flex flex-wrap gap-x-4 gap-y-1.5 font-mono text-meta text-ink-2">
+            {library !== undefined && <Stat icon="book">{library} library</Stat>}
+            {control !== undefined && <Stat icon="shield">{control} control</Stat>}
+            {tickets !== undefined && <Stat icon="ticket">{tickets}</Stat>}
+          </span>
+        )}
       </button>
       {needs.length > 0 && (
         <ul aria-label={`${name} needs you`} className="m-0 list-none border-t border-line-2 bg-sunk p-1">

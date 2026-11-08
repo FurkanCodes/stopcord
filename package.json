@@ -1,0 +1,13 @@
+{
+  "name": "sawtooth",
+  "private": true,
+  "description": "Sawtooth's JavaScript workspace: the ui package and the app window.",
+  "workspaces": [
+    "ui",
+    "app"
+  ],
+  "scripts": {
+    "app": "npm run tauri --workspace app -- dev",
+    "typecheck": "npm run typecheck --workspaces"
+  }
+}

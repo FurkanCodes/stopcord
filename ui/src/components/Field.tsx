@@ -46,6 +46,8 @@ export const TextInput = React.forwardRef<HTMLElement, TextInputProps>(function 
   return (
     <Input
       ref={ref}
+      // Commands, branches and paths must stay exactly as typed.
+      {...(mono ? { autoCapitalize: 'off', autoCorrect: 'off', spellCheck: false } : null)}
       className={cx(
         controlFrame,
         'h-[34px] px-2.5 placeholder:text-ink-2 focus-visible:outline-offset-0',

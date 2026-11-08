@@ -1,0 +1,33 @@
+# Screen rules for Pi.
+# Adapted from herdr's detection manifest src/detect/manifests/pi.toml
+# (https://github.com/herdrdev/herdr), licensed under the Apache License 2.0;
+# see LICENSE-herdr.txt beside this file. Changed for Sawtooth: added `names`
+# and dropped herdr's label aliases. The rule format is otherwise the same.
+
+id = "pi"
+names = ["pi", "pi-coding-agent"]
+version = "2026.10.01.1"
+min_engine_version = 1
+updated_at = "2026-10-01T00:00:00Z"
+
+[[rules]]
+id = "working_literal"
+state = "working"
+priority = 100
+region = "whole_recent"
+visible_working = true
+any = [
+  { contains = ["Working..."] },
+  { line_regex = ['^[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] Working$'] },
+]
+
+[[rules]]
+id = "working_border"
+state = "working"
+priority = 100
+region = "bottom_non_empty_lines(12)"
+visible_working = true
+any = [
+  { line_regex = ['^── [⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] Working ─+$'] },
+  { line_regex = ['^[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] Working$'] },
+]

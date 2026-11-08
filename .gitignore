@@ -10,3 +10,7 @@ ui/check/out.css
 *.swp
 .idea/
 .vscode/
+
+# The app
+app/dist/
+app/src-tauri/gen/

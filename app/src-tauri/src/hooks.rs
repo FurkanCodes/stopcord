@@ -1,0 +1,387 @@
+//! Checks that run on every commit or before a push, as git hooks.
+//!
+//! The hook is a tiny script that calls this app with `hook <factory> <name>`.
+//! The app runs the factory's checks, shows their output (an agent committing
+//! sees it in its terminal), writes the run log, and stops the commit when one fails.
+
+use std::io::{Read, Write};
+use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
+
+use crate::factories::{Factory, Kind, RunsOn, Store};
+use crate::runs::{self, Run};
+use crate::worktree::{common_dir, git, is_git};
+
+const MARKER: &str = "# sawtooth-hook";
+
+/// The hooks a factory can need, and which checks each one runs.
+const HOOKS: [(&str, RunsOn); 2] = [("pre-commit", RunsOn::Commit), ("pre-push", RunsOn::Merge)];
+
+fn quote(s: &str) -> String {
+    format!("'{}'", s.replace('\'', r"'\''"))
+}
+
+fn script(factory: &Factory, program: &Path, home: &Path, hook: &str) -> String {
+    format!(
+        "#!/bin/sh\n{MARKER}\n# Runs the checks of the Sawtooth factory \"{name}\". Sawtooth rewrites this file;\n\
+         # remove the factory's checks to remove it.\n\
+         app={app}\n\
+         if [ -x \"$app\" ]; then SAWTOOTH_HOME={home} exec \"$app\" hook {id} {hook}; fi\n\
+         echo \"sawtooth: the app isn't at $app any more, so the factory's checks were skipped.\" >&2\n\
+         exit 0\n",
+        name = factory.name.replace('\n', " "),
+        app = quote(&program.display().to_string()),
+        home = quote(&home.display().to_string()),
+        id = quote(&factory.id),
+    )
+}
+
+fn hooks_dir(project: &Path) -> Result<PathBuf, String> {
+    if let Ok(path) = git(project, &["config", "core.hooksPath"])
+        && !path.is_empty()
+    {
+        return Err(format!(
+            "This repo keeps its git hooks in {path} (core.hooksPath), so Sawtooth didn't add its checks there. \
+             Call `sawtooth-app hook <factory> pre-commit` from your own hook to run them."
+        ));
+    }
+    common_dir(project)
+        .map(|d| d.join("hooks"))
+        .ok_or_else(|| "couldn't find the repo's git folder".to_string())
+}
+
+fn ours(path: &Path) -> bool {
+    std::fs::read_to_string(path).is_ok_and(|t| t.lines().any(|l| l.trim() == MARKER))
+}
+
+/// Writes the hooks the factory's checks need and removes ours that it no longer needs.
+/// Returns problems in words. Outside git there's nothing to hook, so checks on commit can't run.
+pub fn install(factory: &Factory, program: &Path, home: &Path) -> Vec<String> {
+    let project = Path::new(&factory.path);
+    let needs = |on: RunsOn| {
+        factory
+            .parts
+            .iter()
+            .any(|p| p.kind == Kind::Check && p.runs_on == on && !p.command.trim().is_empty())
+    };
+    if !is_git(project) {
+        return if needs(RunsOn::Commit) || needs(RunsOn::Merge) {
+            vec![
+                "This folder isn't a git repo, so checks on commit or before a push never run."
+                    .into(),
+            ]
+        } else {
+            Vec::new()
+        };
+    }
+    let dir = match hooks_dir(project) {
+        Ok(dir) => dir,
+        Err(problem) => {
+            return if needs(RunsOn::Commit) || needs(RunsOn::Merge) {
+                vec![problem]
+            } else {
+                Vec::new()
+            };
+        }
+    };
+    let mut problems = Vec::new();
+    for (hook, on) in HOOKS {
+        let path = dir.join(hook);
+        let exists = path.exists();
+        if needs(on) {
+            if exists && !ours(&path) {
+                problems.push(format!(
+                    "This repo already has a {hook} hook, so Sawtooth didn't replace it. \
+                     Add this line to {} to run the factory's checks too: \"{}\" hook {} {hook}",
+                    path.display(),
+                    program.display(),
+                    factory.id
+                ));
+                continue;
+            }
+            let write = std::fs::create_dir_all(&dir)
+                .and_then(|_| std::fs::write(&path, script(factory, program, home, hook)))
+                .and_then(|_| {
+                    use std::os::unix::fs::PermissionsExt;
+                    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755))
+                });
+            if let Err(e) = write {
+                problems.push(format!("couldn't write {}: {e}", path.display()));
+            }
+        } else if exists && ours(&path) {
+            let _ = std::fs::remove_file(&path);
+        }
+    }
+    problems
+}
+
+/// Removes the factory's hooks.
+pub fn uninstall(factory: &Factory) {
+    let project = Path::new(&factory.path);
+    if let Ok(dir) = hooks_dir(project) {
+        for (hook, _) in HOOKS {
+            let path = dir.join(hook);
+            if ours(&path)
+                && std::fs::read_to_string(&path).is_ok_and(|t| t.contains(&quote(&factory.id)))
+            {
+                let _ = std::fs::remove_file(&path);
+            }
+        }
+    }
+}
+
+/// Runs a shell command in `cwd`, copying its output to `echo` as it comes.
+/// Returns whether it passed and everything it printed. With a timeout, a
+/// command still running then is stopped and counts as failed.
+pub fn run_command(
+    command: &str,
+    cwd: &Path,
+    echo: &mut dyn Write,
+    timeout: Option<std::time::Duration>,
+) -> (bool, String) {
+    let child = Command::new("sh")
+        .arg("-c")
+        .arg(format!("exec 2>&1; {command}"))
+        .current_dir(cwd)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .spawn();
+    let mut child = match child {
+        Ok(c) => c,
+        Err(e) => return (false, format!("couldn't run it: {e}")),
+    };
+    let mut out = child.stdout.take().unwrap();
+    let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let timed_out = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    if let Some(timeout) = timeout {
+        let (done, timed_out, pid) = (done.clone(), timed_out.clone(), child.id());
+        std::thread::spawn(move || {
+            let deadline = std::time::Instant::now() + timeout;
+            while !done.load(std::sync::atomic::Ordering::SeqCst) {
+                if std::time::Instant::now() > deadline {
+                    timed_out.store(true, std::sync::atomic::Ordering::SeqCst);
+                    let _ = Command::new("kill").arg(pid.to_string()).status();
+                    return;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(200));
+            }
+        });
+    }
+    let mut all = Vec::new();
+    let mut buf = [0u8; 8192];
+    loop {
+        match out.read(&mut buf) {
+            Ok(0) | Err(_) => break,
+            Ok(n) => {
+                let _ = echo.write_all(&buf[..n]);
+                all.extend_from_slice(&buf[..n]);
+            }
+        }
+    }
+    let ok = child.wait().map(|s| s.success()).unwrap_or(false);
+    done.store(true, std::sync::atomic::Ordering::SeqCst);
+    let mut text = String::from_utf8_lossy(&all).into_owned();
+    if timed_out.load(std::sync::atomic::Ordering::SeqCst) {
+        text.push_str("\n(stopped: it ran too long)\n");
+        return (false, text);
+    }
+    (ok, text)
+}
+
+/// What `sawtooth-app hook <id> <hook>` does. Returns the exit code for git.
+pub fn run_hook(store: &Store, id: &str, hook: &str, cwd: &Path) -> i32 {
+    let Some(on) = HOOKS.iter().find(|(h, _)| *h == hook).map(|(_, on)| *on) else {
+        eprintln!("sawtooth: there's no hook called {hook}");
+        return 0;
+    };
+    let factory = match store.get(id) {
+        Ok(f) => f,
+        Err(_) => {
+            eprintln!("sawtooth: the factory {id} is gone, so no checks ran.");
+            return 0;
+        }
+    };
+    let terminal = std::env::var("SAWTOOTH_TERMINAL").ok();
+    let branch = git(cwd, &["branch", "--show-current"]).unwrap_or_default();
+    let what = if on == RunsOn::Commit {
+        "commit"
+    } else {
+        "push"
+    };
+    let mut failed = Vec::new();
+    let mut stderr = std::io::stderr();
+    for part in factory
+        .parts
+        .iter()
+        .filter(|p| p.kind == Kind::Check && p.runs_on == on && !p.command.trim().is_empty())
+    {
+        let _ = writeln!(stderr, "sawtooth: {} ({})", part.name, part.command);
+        let (ok, output) = run_command(&part.command, cwd, &mut stderr, None);
+        let _ = writeln!(
+            stderr,
+            "sawtooth: {} {}",
+            part.name,
+            if ok { "passed" } else { "failed" }
+        );
+        let on_branch = if branch.is_empty() {
+            String::new()
+        } else {
+            format!(" on {branch}")
+        };
+        let text = format!(
+            "{} {} for a {what}{on_branch}",
+            part.name,
+            if ok { "passed" } else { "failed" }
+        );
+        let run = Run::new("check", text)
+            .ok(ok)
+            .part(&part.id)
+            .terminal(terminal.as_deref())
+            .detail(&output);
+        let _ = runs::append(store, id, &run);
+        if !ok {
+            failed.push(part.name.clone());
+        }
+    }
+    if failed.is_empty() {
+        0
+    } else {
+        let _ = writeln!(
+            stderr,
+            "sawtooth: the {what} was stopped because {} failed. Fix what it says above, then {what} again.",
+            failed.join(" and ")
+        );
+        1
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::factories::Part;
+    use crate::worktree::tests::repo;
+
+    fn check(name: &str, command: &str, on: RunsOn) -> Part {
+        Part {
+            id: crate::factories::slug(name),
+            kind: Kind::Check,
+            name: name.into(),
+            command: command.into(),
+            runs_on: on,
+            ..Part::default()
+        }
+    }
+
+    fn factory(store: &Store, path: &Path, parts: Vec<Part>) -> Factory {
+        store.create(path, "demo", parts).unwrap()
+    }
+
+    #[test]
+    fn installs_only_what_checks_need_and_keeps_foreign_hooks() {
+        let repo = repo();
+        let home = tempfile::tempdir().unwrap();
+        let store = Store::new(home.path().to_path_buf());
+        let mut f = factory(
+            &store,
+            repo.path(),
+            vec![check("Tests", "true", RunsOn::Commit)],
+        );
+        let program = Path::new("/no/such/app");
+        assert!(install(&f, program, home.path()).is_empty());
+        let hooks = common_dir(repo.path()).unwrap().join("hooks");
+        assert!(ours(&hooks.join("pre-commit")));
+        assert!(!hooks.join("pre-push").exists());
+
+        // A missing app lets the commit through with a warning.
+        std::fs::write(repo.path().join("a.txt"), "a").unwrap();
+        git(repo.path(), &["add", "."]).unwrap();
+        git(repo.path(), &["commit", "-q", "-m", "a"]).unwrap();
+
+        std::fs::write(hooks.join("pre-push"), "#!/bin/sh\nexit 0\n").unwrap();
+        f.parts = vec![check("Lint", "true", RunsOn::Merge)];
+        let problems = install(&f, program, home.path());
+        assert_eq!(problems.len(), 1, "{problems:?}");
+        assert!(problems[0].contains("already has a pre-push hook"));
+        assert!(
+            !hooks.join("pre-commit").exists(),
+            "ours goes when no check needs it"
+        );
+
+        uninstall(&f);
+        assert!(
+            hooks.join("pre-push").exists(),
+            "never removes someone else's hook"
+        );
+    }
+
+    #[test]
+    fn hooks_path_and_plain_folders() {
+        let repo = repo();
+        git(repo.path(), &["config", "core.hooksPath", ".husky"]).unwrap();
+        let home = tempfile::tempdir().unwrap();
+        let store = Store::new(home.path().to_path_buf());
+        let f = factory(
+            &store,
+            repo.path(),
+            vec![check("Tests", "true", RunsOn::Commit)],
+        );
+        let problems = install(&f, Path::new("/x"), home.path());
+        assert!(problems[0].contains("core.hooksPath"), "{problems:?}");
+
+        let plain = tempfile::tempdir().unwrap();
+        let g = store
+            .create(
+                plain.path(),
+                "plain",
+                vec![check("Tests", "true", RunsOn::Commit)],
+            )
+            .unwrap();
+        assert!(install(&g, Path::new("/x"), home.path())[0].contains("isn't a git repo"));
+    }
+
+    #[test]
+    fn a_command_that_runs_too_long_fails() {
+        let dir = tempfile::tempdir().unwrap();
+        let (ok, out) = run_command(
+            "sleep 5",
+            dir.path(),
+            &mut std::io::sink(),
+            Some(std::time::Duration::from_millis(300)),
+        );
+        assert!(!ok);
+        assert!(out.contains("too long"));
+        let (ok, out) = run_command(
+            "echo hi; echo err >&2",
+            dir.path(),
+            &mut std::io::sink(),
+            None,
+        );
+        assert!(ok);
+        assert_eq!(out, "hi\nerr\n");
+    }
+
+    #[test]
+    fn run_hook_logs_each_check_and_stops_on_failure() {
+        let repo = repo();
+        let home = tempfile::tempdir().unwrap();
+        let store = Store::new(home.path().to_path_buf());
+        let f = factory(
+            &store,
+            repo.path(),
+            vec![
+                check("Tests", "echo all good", RunsOn::Commit),
+                check("No secrets", "echo found a key >&2; exit 1", RunsOn::Commit),
+                check("Push only", "exit 1", RunsOn::Merge),
+            ],
+        );
+        assert_eq!(run_hook(&store, &f.id, "pre-commit", repo.path()), 1);
+        let log = runs::read(&store, &f.id, 10).unwrap();
+        assert_eq!(log.len(), 2);
+        assert_eq!(log[0].ok, Some(false));
+        assert_eq!(log[0].text, "No secrets failed for a commit on main");
+        assert!(log[0].detail.as_deref().unwrap().contains("found a key"));
+        assert_eq!(log[1].ok, Some(true));
+        assert_eq!(run_hook(&store, &f.id, "pre-commit-nope", repo.path()), 0);
+        assert_eq!(run_hook(&store, "gone", "pre-commit", repo.path()), 0);
+    }
+}

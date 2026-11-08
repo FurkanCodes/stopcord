@@ -1,0 +1,309 @@
+// What the window knows: factories, the daemon's terminals, run logs, and where you are.
+// One small store, read with useStore(selector). The daemon's and the engine's events keep it current.
+
+import { useSyncExternalStore } from 'react';
+import { listen } from '@tauri-apps/api/event';
+import { api, daemon, failureText, type Factory, type Run, type Terminal } from './api';
+import type { LampState } from '@sawtooth/ui';
+
+export type Tab = 'overview' | 'terminals' | 'knowledge' | 'runs' | 'feed';
+export type View = 'canvas' | 'list';
+
+export type Route =
+  | { screen: 'home' }
+  | { screen: 'new' }
+  /** `id` is a factory's id, or '' for terminals outside every factory. */
+  | { screen: 'factory'; id: string; tab: Tab; terminal?: string };
+
+/** A terminal added on the canvas but not started yet. It lives only in the window. */
+export interface Draft {
+  id: string;
+  name: string;
+  /** A harness command, '' for a plain shell, or anything else typed in. */
+  command: string;
+  other: boolean;
+  branch: string;
+}
+
+export interface State {
+  route: Route;
+  homeView: View;
+  factoryView: View;
+  factories: Factory[];
+  loaded: boolean;
+  terminals: Record<string, Terminal>;
+  runs: Record<string, Run[]>;
+  drafts: Record<string, Draft[]>;
+  /** What the edit panel shows: a part id, a terminal id, or a draft id. */
+  selected: string | null;
+  /** False while the daemon can't be reached. */
+  connected: boolean;
+  problem: string | null;
+  /** Agents the daemon has rules for, and which of them the login shell can run. */
+  agents: string[];
+  installed: string[] | null;
+  branches: Record<string, string | null>;
+}
+
+let state: State = {
+  route: { screen: 'home' },
+  homeView: 'canvas',
+  factoryView: 'canvas',
+  factories: [],
+  loaded: false,
+  terminals: {},
+  runs: {},
+  drafts: {},
+  selected: null,
+  connected: true,
+  problem: null,
+  agents: [],
+  installed: null,
+  branches: {},
+};
+
+const listeners = new Set<() => void>();
+
+export function getState(): State {
+  return state;
+}
+
+export function setState(change: Partial<State> | ((s: State) => Partial<State>)) {
+  const next = typeof change === 'function' ? change(state) : change;
+  state = { ...state, ...next };
+  listeners.forEach((l) => l());
+}
+
+export function useStore<T>(select: (s: State) => T): T {
+  return useSyncExternalStore(
+    (l) => {
+      listeners.add(l);
+      return () => listeners.delete(l);
+    },
+    () => select(state),
+  );
+}
+
+export function go(route: Route) {
+  setState((s) => ({
+    route,
+    selected: route.screen === 'factory' && s.route.screen === 'factory' && s.route.id === route.id ? s.selected : null,
+  }));
+}
+
+export function openFactory(id: string, tab: Tab = 'overview', terminal?: string) {
+  go({ screen: 'factory', id, tab, terminal });
+}
+
+export function showProblem(e: unknown) {
+  setState({ problem: failureText(e) });
+}
+
+// ---- Output, for the one terminal on screen ---------------------------------
+
+export interface Output {
+  id: string;
+  seq?: number;
+  data: string;
+}
+
+export const outputHandlers = new Map<string, (o: Output) => void>();
+
+// ---- Keeping up with the daemon and the engine ------------------------------
+
+/** Adds or updates one terminal, such as one just started. */
+export function putTerminal(t: Terminal) {
+  setState((s) => ({ terminals: { ...s.terminals, [t.id]: t } }));
+  loadBranch(t.cwd);
+}
+
+function setTerminals(list: Terminal[]) {
+  setState({ terminals: Object.fromEntries(list.map((t) => [t.id, t])), connected: true, problem: null });
+  list.forEach((t) => loadBranch(t.cwd));
+}
+
+export function loadBranch(path: string) {
+  if (!path || path in state.branches) return;
+  setState((s) => ({ branches: { ...s.branches, [path]: null } }));
+  api.branch(path).then(
+    (branch) => setState((s) => ({ branches: { ...s.branches, [path]: branch } })),
+    () => undefined,
+  );
+}
+
+export async function refreshFactories() {
+  try {
+    const factories = await api.factories();
+    setState({ factories, loaded: true });
+  } catch (e) {
+    setState({ loaded: true });
+    showProblem(e);
+  }
+}
+
+export async function loadRuns(id: string) {
+  try {
+    const runs = await api.runs(id, 200);
+    setState((s) => ({ runs: { ...s.runs, [id]: runs } }));
+  } catch {
+    // A factory without a run log yet has nothing to show.
+  }
+}
+
+/** Replaces one factory in the store right away, then saves it. */
+export function changeFactory(next: Factory) {
+  setState((s) => ({ factories: s.factories.map((f) => (f.id === next.id ? next : f)) }));
+  scheduleSave(next);
+}
+
+const saving = new Map<string, ReturnType<typeof setTimeout>>();
+
+function scheduleSave(f: Factory) {
+  clearTimeout(saving.get(f.id));
+  saving.set(
+    f.id,
+    setTimeout(() => {
+      saving.delete(f.id);
+      api.saveFactory(f).then(
+        (saved) => {
+          // Keep what changed in the window since this save went out.
+          if (saving.has(f.id)) return;
+          setState((s) => ({ factories: s.factories.map((x) => (x.id === saved.id ? saved : x)) }));
+        },
+        (e) => showProblem(e),
+      );
+    }, 350),
+  );
+}
+
+let connected = false;
+
+/** Starts listening to the daemon and the engine. Call once, before the first render. */
+export function connect() {
+  if (connected) return;
+  connected = true;
+
+  void listen<Terminal[]>('daemon:ready', (e) => setTerminals(e.payload));
+  void listen<{ event: string; terminal?: Terminal; id?: string }>('daemon:event', (e) => {
+    const { event, terminal, id } = e.payload;
+    if (event === 'terminal.closed' && id) {
+      setState((s) => {
+        const terminals = { ...s.terminals };
+        delete terminals[id];
+        return { terminals, selected: s.selected === id ? null : s.selected };
+      });
+    } else if (terminal) {
+      putTerminal(terminal);
+    }
+  });
+  void listen<string>('daemon:lost', (e) => setState({ connected: false, problem: e.payload }));
+  void listen<Output>('terminal:output', (e) => outputHandlers.get(e.payload.id)?.(e.payload));
+  void listen<{ id: string }>('factory:runs', (e) => void loadRuns(e.payload.id));
+  void listen<{ id: string }>('factory:changed', () => {
+    if (!saving.size) void refreshFactories();
+  });
+  void listen<{ id: string }>('knowledge:changed', () => void refreshFactories());
+
+  void refreshFactories().then(() => state.factories.forEach((f) => void loadRuns(f.id)));
+  // The event thread may have said hello before these listeners existed, so ask once too.
+  daemon<{ terminals: Terminal[] }>('terminal.list').then(
+    (r) => setTerminals(r.terminals),
+    (e) => setState({ connected: false, problem: failureText(e) }),
+  );
+  daemon<{ agents: string[] }>('daemon.info').then(
+    async (info) => {
+      const agents = [...info.agents].sort();
+      setState({ agents });
+      const installed = await api.installed(agents);
+      setState({ installed });
+    },
+    () => undefined,
+  );
+}
+
+// ---- Reading terminals ------------------------------------------------------
+
+function under(path: string, dir: string): boolean {
+  if (!dir) return false;
+  return path === dir || path.startsWith(dir.endsWith('/') ? dir : dir + '/');
+}
+
+/** The factory a terminal belongs to: the one whose folder or worktrees hold its working folder. */
+export function factoryOf(t: Terminal, factories: Factory[]): Factory | undefined {
+  let best: Factory | undefined;
+  let bestLength = -1;
+  for (const f of factories) {
+    for (const dir of [f.path, f.worktreesDir]) {
+      if (under(t.cwd, dir) && dir.length > bestLength) {
+        best = f;
+        bestLength = dir.length;
+      }
+    }
+  }
+  return best;
+}
+
+/** Terminals in a factory, oldest first. '' gives the ones outside every factory. */
+export function terminalsIn(id: string, s: Pick<State, 'terminals' | 'factories'>): Terminal[] {
+  return Object.values(s.terminals)
+    .filter((t) => (factoryOf(t, s.factories)?.id ?? '') === id)
+    .sort((a, b) => a.started_at - b.started_at);
+}
+
+export function lampOf(t: Terminal): LampState {
+  if (t.needs_you) return 'needs';
+  return t.state === 'working' ? 'working' : 'idle';
+}
+
+/** A short red word on a card when the terminal needs you. */
+export function flagOf(t: Terminal): string | undefined {
+  if (t.state === 'blocked') return 'waiting for you';
+  if (t.needs_you) return 'turn finished';
+  return undefined;
+}
+
+/** What the terminal is doing, in a few words. */
+export function stateWords(t: Terminal): string {
+  switch (t.state) {
+    case 'blocked':
+      return 'Waiting for you';
+    case 'working':
+      return 'Working';
+    case 'idle':
+      return t.needs_you ? 'Turn finished' : 'Idle';
+    case 'exited':
+      return t.exit_code ? `Ended with code ${t.exit_code}` : 'Ended';
+    default:
+      return 'Shell';
+  }
+}
+
+/** What needs the person, as a sentence: the factory card's needs list. */
+export function needText(t: Terminal): string {
+  return t.state === 'blocked' ? `${t.name} is waiting for an answer` : `${t.name} finished a turn`;
+}
+
+/** The harness in front, or what the terminal started. */
+export function harnessOf(t: Terminal): string {
+  if (t.agent) return t.agent;
+  return t.state === 'exited' ? 'ended' : 'shell';
+}
+
+/** Everything that needs a person in one factory: terminals first, then parts. */
+export interface Need {
+  text: string;
+  /** A terminal id, or a part id. */
+  target: string;
+  kind: 'terminal' | 'knowledge';
+}
+
+export function needsOf(f: Factory | undefined, terminals: Terminal[]): Need[] {
+  const out: Need[] = terminals
+    .filter((t) => t.needs_you)
+    .map((t) => ({ text: needText(t), target: t.id, kind: 'terminal' as const }));
+  if (f?.knowledgeChanged) {
+    const kb = f.parts.find((p) => p.kind === 'knowledge');
+    out.push({ text: 'Review changes to the knowledge base', target: kb?.id ?? 'kb', kind: 'knowledge' });
+  }
+  return out;
+}

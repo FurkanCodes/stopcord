@@ -1,0 +1,22 @@
+[package]
+name = "sawtooth-app"
+description = "The Sawtooth window onto the terminal daemon."
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+anyhow.workspace = true
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+base64.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sawtooth-daemon = { path = "../../crates/daemon" }
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+
+[dev-dependencies]
+tempfile.workspace = true
