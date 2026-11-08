@@ -4,7 +4,7 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { listen } from '@tauri-apps/api/event';
 import { invoke } from '@tauri-apps/api/core';
-import { daemon, sendLine, type Changes, type Factory, type Run, type Terminal } from '../api';
+import { api, daemon, sendLine, type Changes, type Factory, type Run, type Terminal, type Touched } from '../api';
 import { askOf } from '../Home';
 import { TerminalPane } from '../TerminalPane';
 import {
@@ -566,7 +566,10 @@ function Current({
   );
 }
 
-const steps = ['ticket in', 'read knowledge', 'working', 'checks', 'logged'] as const;
+/** What to type when asking an agent to keep what it learned. */
+export function saveFactsAsk(file: string): string {
+  return `If you learned anything about this project that the next agent should know, add it to ${file} under "About this project", one short line each. If there is nothing new, say so and change nothing.`;
+}
 
 function Side({
   t,
@@ -599,32 +602,62 @@ function Side({
   const passed = checks.filter((r) => r.ok !== false).length;
   const checksText = checks.length ? `${passed}/${checks.length}` : '—';
   const ticket = factory ? Object.entries(factory.running).find(([, id]) => id === t.id)?.[0] : undefined;
-  const files = changes?.files ?? [];
+  const git = changes !== null;
+  const turns = mine.filter((r) => r.kind === 'terminal' && /finished a turn/.test(r.text)).length;
 
-  // Where it is in the loop: ticket in, read knowledge, working, checks, logged.
-  const needs = t.needs_you;
-  const here = t.state === 'working' || needs ? 2 : checks.length ? 4 : 2;
-  const ended = t.state === 'exited' || (t.state === 'idle' && !needs);
-  const loop = steps.map((label, i) => {
-    const done = i < here || (ended && i <= here && (i !== 2 || checks.length > 0 || (changes?.commits ?? 0) > 0));
-    const now = i === here && !ended;
-    const red = now && needs;
-    let note = '';
-    if (i === 0) note = ticket ?? branch ?? '';
-    if (i === 3 && checks.length) note = checksText;
-    if (i === 4 && mine.length) note = `${mine.length} event${mine.length === 1 ? '' : 's'}`;
-    if (now && !needs) note = '← now';
-    if (red) note = '← you';
-    return { label, note, done, now, red };
+  // Outside git, the folder's modified times are all there is to go on.
+  const [touched, setTouched] = useState<Touched[] | null>(null);
+  useEffect(() => {
+    if (git) return;
+    let live = true;
+    const read = () => api.touched(t.cwd, t.started_at).then((list) => live && setTouched(list), () => undefined);
+    read();
+    const timer = setInterval(read, 5000);
+    return () => {
+      live = false;
+      clearInterval(timer);
+    };
+  }, [git, t.cwd, t.started_at, t.state]);
+  const sharing = others.filter((o) => o.cwd === t.cwd && o.state !== 'exited');
+  const files = git ? (changes?.files ?? []) : (touched ?? []).map((f) => ({ path: f.path, added: 0, removed: 0 }));
+
+  const kb = factory?.parts.find((p) => p.kind === 'knowledge');
+  const kbFile = kb?.readAs[0];
+  const canAsk = !!kbFile && t.agent !== null && t.state === 'idle' && !t.needs_you;
+  const askToSave = () => {
+    if (canAsk) void sendLine(t.id, saveFactsAsk(kbFile)).catch(showProblem);
+  };
+  useKeys((e) => {
+    if (plain(e) && e.key === 'f' && canAsk) {
+      askToSave();
+      return true;
+    }
   });
+
+  // Where it is in the loop. Each step is ticked only when it really happened.
+  const needs = t.needs_you;
+  const busy = t.state === 'working' || needs;
+  const loop: { label: string; note: string; state: 'done' | 'now' | 'you' | 'off' | 'todo' }[] = [
+    { label: ticket ? 'ticket in' : 'started', note: ticket ?? branch ?? '', state: 'done' },
+    { label: 'knowledge', note: kb ? (kbFile ? 'linked' : 'not linked') : 'none', state: kbFile ? 'done' : 'off' },
+    {
+      label: 'working',
+      note: needs ? '← you' : busy ? '← now' : turns ? `${turns} turn${turns === 1 ? '' : 's'}` : '',
+      state: needs ? 'you' : busy ? 'now' : turns ? 'done' : 'todo',
+    },
+    git
+      ? { label: 'checks', note: checks.length ? checksText : 'none ran yet', state: checks.length ? 'done' : 'todo' }
+      : { label: 'checks', note: 'need git', state: 'off' },
+    { label: 'logged', note: mine.length ? `${mine.length} event${mine.length === 1 ? '' : 's'}` : '', state: mine.length ? 'done' : 'todo' },
+  ];
 
   const overlapOf = (path: string) =>
     others.filter((o) => o.cwd !== t.cwd && allChanges[o.cwd]?.files.some((f) => f.path === path)).map((o) => o.name);
 
   const stats: [string, string, boolean][] = [
     ['running', age(t.started_at), true],
-    ['files', String(files.length), true],
-    ['commits', String(changes?.commits ?? 0), true],
+    ['files', git ? String(files.length) : touched ? `${files.length} in folder` : '…', true],
+    ['commits', git ? String(changes?.commits ?? 0) : 'no git', git],
     ['checks', checks.length ? `${checksText} ✓` : '—', checks.length > 0],
   ];
 
@@ -642,14 +675,6 @@ function Side({
           <dd className="t-muted" style={{ fontSize: 12, overflowWrap: 'anywhere' }}>
             {tilde(t.cwd)}
           </dd>
-          {t.rule && (
-            <>
-              <dt className="t-dim">rule</dt>
-              <dd className="t-muted" style={{ fontSize: 12 }}>
-                {t.rule}
-              </dd>
-            </>
-          )}
         </dl>
         <span style={{ display: 'flex', gap: 4, marginLeft: -8 }}>
           <Key k="r" size="sm" onClick={onRename}>
@@ -661,39 +686,39 @@ function Side({
         </span>
       </Pane>
 
-      <Pane title={<Titled>loop</Titled>} style={{ padding: '14px 12px 10px' }}>
+      <Pane title={<Titled>loop</Titled>} style={{ padding: '14px 12px 10px', display: 'flex', flexDirection: 'column', gap: 8 }}>
         <ol>
-          {loop.map((l) => (
-            <li
-              key={l.label}
-              style={{
-                display: 'flex',
-                gap: 10,
-                fontWeight: l.now ? 500 : 400,
-                color: l.red ? 'var(--red-text)' : l.now ? 'var(--ink)' : l.done ? 'var(--ink-2)' : 'var(--ink-3)',
-              }}
-            >
-              <span aria-hidden="true" style={{ width: 10, flexShrink: 0, color: l.red ? 'var(--red)' : l.now ? 'var(--ink)' : l.done ? 'var(--ink-2)' : 'var(--ink-3)' }}>
-                {l.red ? '!' : l.now ? '▸' : l.done ? '✓' : '·'}
-              </span>
-              <span style={{ flexGrow: 1 }}>{l.label}</span>
-              <span style={{ fontWeight: 400, color: l.red ? 'var(--red-text)' : 'var(--ink-3)' }}>{l.note}</span>
-            </li>
-          ))}
+          {loop.map((l) => {
+            const color = l.state === 'you' ? 'var(--red-text)' : l.state === 'now' ? 'var(--ink)' : l.state === 'done' ? 'var(--ink-2)' : 'var(--ink-3)';
+            return (
+              <li key={l.label} style={{ display: 'flex', gap: 10, fontWeight: l.state === 'now' ? 500 : 400, color }}>
+                <span aria-hidden="true" style={{ width: 10, flexShrink: 0, color: l.state === 'you' ? 'var(--red)' : color }}>
+                  {{ you: '!', now: '▸', done: '✓', off: '–', todo: '·' }[l.state]}
+                </span>
+                <span style={{ flexGrow: 1 }}>{l.label}</span>
+                <span style={{ fontWeight: 400, color: l.state === 'you' ? 'var(--red-text)' : 'var(--ink-3)', textAlign: 'right' }}>{l.note}</span>
+              </li>
+            );
+          })}
         </ol>
+        {canAsk && (
+          <span style={{ marginLeft: -8 }}>
+            <Key k="f" size="sm" onClick={askToSave}>
+              ask it to save what it learned
+            </Key>
+          </span>
+        )}
       </Pane>
 
-      <Pane title={<Titled>files</Titled>} scroll style={{ flexGrow: 1, minHeight: 0, overflow: 'auto', padding: '14px 12px 10px' }}>
-        {changes === undefined ? (
+      <Pane title={<Titled>files</Titled>} right={git ? undefined : <span className="t-dim">since it started</span>} scroll style={{ flexGrow: 1, minHeight: 0, overflow: 'auto', padding: '14px 12px 10px' }}>
+        {git && changes === undefined ? (
           <p className="t-dim">reading…</p>
-        ) : changes === null ? (
-          <Empty style={{ padding: 0 }}>not a git checkout</Empty>
         ) : files.length === 0 ? (
-          <Empty style={{ padding: 0 }}>no changes yet</Empty>
+          <Empty style={{ padding: 0 }}>{git || touched ? 'no changes yet' : 'reading…'}</Empty>
         ) : (
           <ul style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
             {files.map((f) => {
-              const also = overlapOf(f.path);
+              const also = git ? overlapOf(f.path) : [];
               return (
                 <li key={f.path} style={{ display: 'flex', flexWrap: 'wrap', gap: '0 8px', fontSize: 12 }}>
                   <span className="t-dim">M</span>
@@ -708,6 +733,11 @@ function Side({
               );
             })}
           </ul>
+        )}
+        {!git && sharing.length > 0 && (
+          <p className="t-dim" style={{ fontSize: 12, marginTop: 10, lineHeight: 1.5 }}>
+            ⚠ {sharing.map((o) => o.name).join(', ')} work{sharing.length === 1 ? 's' : ''} in this folder too, so some of these may be theirs.
+          </p>
         )}
       </Pane>
     </div>

@@ -53,6 +53,7 @@ export function NewTerminal({ factory, draft, git, onDiscard }: { factory: Facto
         command: draft.command || undefined,
         name,
         branch: git ? branch.trim() || undefined : undefined,
+        task: task || undefined,
         ...lastSize(),
       });
       putTerminal(t);

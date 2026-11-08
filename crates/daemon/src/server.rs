@@ -74,6 +74,9 @@ struct Entry {
 struct Status {
     tracker: Tracker,
     title: String,
+    /// A program the terminal's shell is running that isn't an agent Sawtooth knows,
+    /// such as a home-made agent or `npm test`, by name.
+    running: Option<String>,
 }
 
 enum OutputFilter {
@@ -363,6 +366,7 @@ impl Entry {
             "unseen": t.unseen,
             "rule": t.rule,
             "title": status.title,
+            "running": status.running,
             "exit_code": exit.flatten(),
             "started_at": self.started_at,
         })
@@ -385,8 +389,16 @@ impl Entry {
                 progress: &snapshot.progress,
             })
         });
+        let running = match (&agent, &foreground, self.term.pid()) {
+            (None, Some(p), Some(own)) if p.pid != own => Some(p.name.clone()),
+            _ => None,
+        };
         let mut status = self.status.lock().unwrap();
         let mut changed = status.tracker.observe(agent, detection, Instant::now());
+        if status.running != running {
+            status.running = running;
+            changed = true;
+        }
         if status.title != snapshot.title {
             status.title = snapshot.title;
             changed = true;

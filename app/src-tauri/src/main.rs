@@ -210,6 +210,7 @@ fn start_terminal(
     branch: Option<String>,
     rows: Option<u16>,
     cols: Option<u16>,
+    task: Option<String>,
 ) -> Result<Value, Failure> {
     engine::start_terminal(
         &app.store,
@@ -222,6 +223,7 @@ fn start_terminal(
             branch,
             rows,
             cols,
+            task,
         },
     )
 }
@@ -241,6 +243,13 @@ fn branch(path: String) -> Option<String> {
 #[tauri::command(async)]
 fn changes(path: String, base: String) -> Option<git::Changes> {
     git::changes(Path::new(&path), Path::new(&base))
+}
+
+/// Files under `path` changed since `since` (ms since 1970), newest first: what a terminal
+/// changed in a folder that isn't a git checkout, where nothing else can tell.
+#[tauri::command(async)]
+fn touched(path: String, since: u64) -> Vec<git::Touched> {
+    git::touched(Path::new(&path), since)
 }
 
 // ---- Factories --------------------------------------------------------------
@@ -673,6 +682,7 @@ fn main() {
             installed,
             branch,
             changes,
+            touched,
             factories,
             create_factory,
             save_factory,

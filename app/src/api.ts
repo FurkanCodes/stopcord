@@ -19,6 +19,8 @@ export interface Terminal {
   /** The rule that decided the state. */
   rule: string | null;
   title: string;
+  /** A program the shell runs that isn't a known agent, such as a home-made one. */
+  running?: string | null;
   exit_code: number | null;
   started_at: number;
 }
@@ -136,6 +138,12 @@ export interface Changes {
   files: FileChange[];
 }
 
+/** A file changed in a folder git doesn't track. */
+export interface Touched {
+  path: string;
+  modified: number;
+}
+
 export interface Failure {
   code: string;
   message: string;
@@ -163,6 +171,7 @@ export const api = {
     branch?: string;
     rows?: number;
     cols?: number;
+    task?: string;
   }) => invoke<Terminal>('start_terminal', args),
   runs: (id: string, limit = 200) => invoke<Run[]>('runs', { id, limit }),
   knowledge: (id: string) => invoke<Knowledge>('knowledge', { id }),
@@ -179,6 +188,7 @@ export const api = {
   installed: (names: string[]) => invoke<string[]>('installed', { names }),
   branch: (path: string) => invoke<string | null>('branch', { path }),
   changes: (path: string, base: string) => invoke<Changes | null>('changes', { path, base }),
+  touched: (path: string, since: number) => invoke<Touched[]>('touched', { path, since }),
   view: (id: string) => invoke<Redraw>('view', { id }),
   unview: (id: string) => invoke<void>('unview', { id }),
 };

@@ -19,6 +19,23 @@ use portable_pty::{Child, CommandBuilder, MasterPty, PtySize, native_pty_system}
 
 pub use process::{Process, process_info};
 
+/// Environment variables that mark a process as running inside another agent's session.
+pub const SESSION_MARKERS: &[&str] = &[
+    "CLAUDECODE",
+    "CLAUDE_CODE_ENTRYPOINT",
+    "CLAUDE_CODE_SESSION_ID",
+    "CLAUDE_CODE_CHILD_SESSION",
+    "CLAUDE_CODE_SESSION_ATTENDED",
+    "CLAUDE_CODE_MESSAGING_SOCKET",
+    "CLAUDE_CODE_MESSAGING_TOKEN",
+    "CLAUDE_CODE_EXECPATH",
+    "CLAUDE_PID",
+    "CLAUDE_EFFORT",
+    "AI_AGENT",
+    "CODEX_SANDBOX",
+    "CODEX_SANDBOX_NETWORK_DISABLED",
+];
+
 /// What to run and how big the terminal starts.
 #[derive(Debug, Clone)]
 pub struct SpawnSpec {
@@ -173,6 +190,12 @@ impl Terminal {
         cmd.args(&spec.argv[1..]);
         if let Some(cwd) = &spec.cwd {
             cmd.cwd(cwd);
+        }
+        // An agent's session markers tell the agents started here that they run inside
+        // that session, so they act like sub-agents (Claude Code stops saving transcripts).
+        // Settings such as CLAUDE_CODE_USE_BEDROCK still pass through.
+        for marker in SESSION_MARKERS {
+            cmd.env_remove(marker);
         }
         cmd.env("TERM", "xterm-256color");
         cmd.env("COLORTERM", "truecolor");
@@ -372,6 +395,23 @@ mod tests {
         assert!(text.contains(&format!("{}b", "a".repeat(150))), "{text:?}");
         assert_eq!(term.snapshot().cols, 99);
         wait_exit(&rx);
+    }
+
+    #[test]
+    fn another_agents_session_markers_stay_out() {
+        // This test process may itself run inside an agent's session; if not, pretend it does.
+        // SAFETY: no other test reads or writes these variables.
+        unsafe { std::env::set_var("CLAUDE_CODE_CHILD_SESSION", "1") };
+        let (tx, rx) = mpsc::channel();
+        let mut spec = sh("echo \"[${CLAUDE_CODE_CHILD_SESSION}:${HOME:+home}]\"");
+        spec.env.push(("SAWTOOTH_PROBE".into(), "1".into()));
+        let term = Terminal::spawn(spec, move |e| {
+            let _ = tx.send(e);
+        })
+        .unwrap();
+        wait_exit(&rx);
+        let text = term.snapshot().text;
+        assert!(text.contains("[:home]"), "{text:?}");
     }
 
     #[test]

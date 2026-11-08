@@ -355,7 +355,8 @@ export function stateWords(t: Terminal): string {
     case 'exited':
       return t.exit_code ? `Ended with code ${t.exit_code}` : 'Ended';
     default:
-      return 'Shell';
+      // Sawtooth can't read the state of an agent it doesn't know.
+      return t.running ? `Running ${t.running}` : 'Shell';
   }
 }
 
@@ -367,6 +368,7 @@ export function needText(t: Terminal): string {
 /** The harness in front, or what the terminal started. */
 export function harnessOf(t: Terminal): string {
   if (t.agent) return t.agent;
+  if (t.running && t.state !== 'exited') return t.running;
   return t.state === 'exited' ? 'ended' : 'shell';
 }
 

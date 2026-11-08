@@ -2,6 +2,7 @@ import type { Factory, Run, Terminal } from './api';
 import { laneOf } from './factory/parts';
 import { go, harnessOf, lampOf, needsOf, openFactory, sawtoothHome, setState, terminalsIn, useStore } from './store';
 import { tilde } from './text';
+import { ago } from './time';
 import { Brand, Empty, Glyph, Key, Pane, Screen, Sep, Titled, type Status } from './tui/kit';
 import { plain, useKeys } from './tui/keys';
 import { useState } from 'react';
@@ -213,6 +214,14 @@ function a11yOf(c: Card): string {
   return `Open ${c.name}${c.needs ? `, ${c.needs} need you` : ''}, ${c.terms.length} terminals, ${c.working} working`;
 }
 
+/** When a terminal last did something, from the run log: "done 4m ago". Nothing while it works. */
+function lastWords(t: Terminal, runs: Run[] | undefined): string {
+  if (t.state === 'working' || t.needs_you) return '';
+  const last = runs?.find((r) => r.terminal === t.id && r.kind === 'terminal');
+  if (!last) return '';
+  return `${/finished a turn/.test(last.text) ? 'done' : 'started'} ${ago(last.at)}`;
+}
+
 function FactoryPane({ card: c, runs, onOpen }: { card: Card; runs: Run[] | undefined; onOpen: () => void }) {
   const tag = tagOf(c);
   const hot = c.needs > 0;
@@ -264,6 +273,9 @@ function FactoryPane({ card: c, runs, onOpen }: { card: Card; runs: Run[] | unde
                 }}
               >
                 {t.name}
+              </span>
+              <span className="t-dim" style={{ flexShrink: 0, fontSize: 12 }}>
+                {lastWords(t, runs)}
               </span>
             </span>
             {t.needs_you && (

@@ -46,6 +46,8 @@ pub struct StartRequest {
     pub branch: Option<String>,
     pub rows: Option<u16>,
     pub cols: Option<u16>,
+    /// What the person will ask it first, for the run log. The window types it in.
+    pub task: Option<String>,
 }
 
 fn failure(e: anyhow::Error) -> Failure {
@@ -100,10 +102,17 @@ pub fn start_terminal(store: &Store, bridge: &Bridge, req: StartRequest) -> Resu
         } else {
             format!(" on {}", branch.trim())
         };
+        let asked = req
+            .task
+            .as_deref()
+            .map(str::trim)
+            .filter(|t| !t.is_empty())
+            .map(|t| format!(", asked: {}", shorten(t, 120)))
+            .unwrap_or_default();
         let _ = runs::append(
             store,
             &f.id,
-            &Run::new("terminal", format!("{name} started{on}")).terminal(terminal["id"].as_str()),
+            &Run::new("terminal", format!("{name} started{on}{asked}")).terminal(terminal["id"].as_str()),
         );
     }
     Ok(terminal)
@@ -198,6 +207,8 @@ struct State {
     runs_seen: HashMap<String, u64>,
     factory_mtime: HashMap<String, SystemTime>,
     knowledge_differs: HashMap<String, bool>,
+    /// When each terminal's current turn began.
+    turn_started: HashMap<String, Instant>,
     /// When the knowledge base was last written, so a second change under review still reaches the window.
     knowledge_mtime: HashMap<String, SystemTime>,
     /// Ticket sources with no harness, already logged.
@@ -304,6 +315,9 @@ impl Engine {
                     .terminals
                     .insert(id.to_string(), terminal.clone());
                 let was_working = before.as_ref().is_some_and(|t| t["state"] == "working");
+                if terminal["state"] == "working" && !was_working {
+                    self.state.lock().unwrap().turn_started.insert(id.to_string(), Instant::now());
+                }
                 if kind == "terminal.changed" && was_working && terminal["state"] == "idle" {
                     let me = Arc::clone(self);
                     let terminal = terminal.clone();
@@ -357,6 +371,16 @@ impl Engine {
             return;
         };
         let name = terminal["name"].as_str().unwrap_or(id).to_string();
+        let took = self
+            .state
+            .lock()
+            .unwrap()
+            .turn_started
+            .remove(id)
+            .map(|t| t.elapsed().as_secs())
+            .map(|s| if s < 90 { format!(" after {s}s") } else { format!(" after {}m", (s + 30) / 60) })
+            .unwrap_or_default();
+        self.log(&factory.id, Run::new("terminal", format!("{name} finished a turn{took}")).terminal(Some(id)));
         let cwd = terminal["cwd"]
             .as_str()
             .unwrap_or(&factory.path)
@@ -966,4 +990,15 @@ mod tests {
         std::fs::write(store.knowledge_file("f"), "b").unwrap();
         assert!(knowledge_differs(&store, "f"));
     }
+}
+
+/// At most `max` characters, cut at a word, with "…" when cut.
+fn shorten(text: &str, max: usize) -> String {
+    let flat: String = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    if flat.chars().count() <= max {
+        return flat;
+    }
+    let cut: String = flat.chars().take(max).collect();
+    let cut = cut.rsplit_once(' ').map_or(cut.as_str(), |(head, _)| head);
+    format!("{cut}…")
 }

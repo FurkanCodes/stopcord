@@ -108,8 +108,82 @@ pub fn changes(dir: &Path, base: &Path) -> Option<Changes> {
     Some(Changes { commits, files })
 }
 
+/// A file changed in a folder, for folders git doesn't track.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct Touched {
+    pub path: String,
+    /// Milliseconds since 1970.
+    pub modified: u64,
+}
+
+/// Folders that hold what tools make, not what people and agents write.
+const SKIP: &[&str] = &["node_modules", "target", "dist", "build", "__pycache__", "venv", ".venv"];
+
+/// Files under `root` changed at or after `since` (ms since 1970), newest first, at most 100.
+/// Hidden files and folders and the folders in `SKIP` are left out; the walk stops after
+/// 20 000 entries so a huge folder can't stall it.
+pub fn touched(root: &Path, since: u64) -> Vec<Touched> {
+    let mut out = Vec::new();
+    let mut stack = vec![root.to_path_buf()];
+    let mut seen = 0usize;
+    while let Some(dir) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else { continue };
+        for entry in entries.flatten() {
+            seen += 1;
+            if seen > 20_000 {
+                break;
+            }
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            if name.starts_with('.') || SKIP.contains(&name.as_ref()) {
+                continue;
+            }
+            let Ok(meta) = entry.metadata() else { continue };
+            if meta.is_dir() {
+                stack.push(entry.path());
+            } else if meta.is_file() {
+                let modified = meta
+                    .modified()
+                    .ok()
+                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                    .map_or(0, |d| d.as_millis() as u64);
+                if modified >= since {
+                    let path = entry.path();
+                    let rel = path.strip_prefix(root).unwrap_or(&path);
+                    out.push(Touched { path: rel.to_string_lossy().into_owned(), modified });
+                }
+            }
+        }
+    }
+    out.sort_by(|a, b| b.modified.cmp(&a.modified).then_with(|| a.path.cmp(&b.path)));
+    out.truncate(100);
+    out
+}
+
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn touched_lists_new_files_and_skips_hidden_and_tool_folders() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::create_dir_all(root.join("notes")).unwrap();
+        std::fs::create_dir_all(root.join("node_modules/x")).unwrap();
+        std::fs::create_dir_all(root.join(".git")).unwrap();
+        std::fs::write(root.join("old.txt"), "old").unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        let since = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64;
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        std::fs::write(root.join("notes/controls.md"), "keys").unwrap();
+        std::fs::write(root.join("node_modules/x/y.js"), "x").unwrap();
+        std::fs::write(root.join(".git/HEAD"), "x").unwrap();
+        let paths: Vec<String> = touched(root, since).into_iter().map(|t| t.path).collect();
+        assert_eq!(paths, vec!["notes/controls.md".to_string()]);
+    }
+
     use super::*;
 
     fn git_in(dir: &Path, args: &[&str]) {

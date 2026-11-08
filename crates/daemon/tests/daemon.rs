@@ -309,3 +309,14 @@ fn bad_requests_get_clear_errors() {
     );
     assert!(info["rule_problems"].as_array().unwrap().is_empty());
 }
+
+#[test]
+fn a_shell_says_what_it_runs_when_that_isnt_a_known_agent() {
+    let fx = Fixture::new();
+    let mut events = fx.events();
+    // Job control puts `sleep` in the foreground, as a shell does for anything typed in it.
+    let id = start(&fx, "set -m; sleep 5; true");
+    let seen = wait_for(&mut events, &id, "the program it runs", |t| t["running"] == "sleep");
+    assert_eq!(seen["agent"], Value::Null);
+    fx.client().call("terminal.close", json!({ "id": id })).unwrap();
+}
