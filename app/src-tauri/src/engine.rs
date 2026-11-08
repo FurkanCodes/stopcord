@@ -198,6 +198,8 @@ struct State {
     runs_seen: HashMap<String, u64>,
     factory_mtime: HashMap<String, SystemTime>,
     knowledge_differs: HashMap<String, bool>,
+    /// When the knowledge base was last written, so a second change under review still reaches the window.
+    knowledge_mtime: HashMap<String, SystemTime>,
     /// Ticket sources with no harness, already logged.
     warned: HashSet<String>,
 }
@@ -805,13 +807,21 @@ impl Engine {
 
         // The knowledge base, changed by someone other than the window.
         let differs = knowledge_differs(&self.store, &f.id);
-        let before = self
-            .state
-            .lock()
-            .unwrap()
-            .knowledge_differs
-            .insert(f.id.clone(), differs);
-        if differs && before == Some(false) {
+        let mtime = std::fs::metadata(self.store.knowledge_file(&f.id))
+            .and_then(|m| m.modified())
+            .ok();
+        let (before, rewritten) = {
+            let mut st = self.state.lock().unwrap();
+            let before = st.knowledge_differs.insert(f.id.clone(), differs);
+            let last = match mtime {
+                Some(t) => st.knowledge_mtime.insert(f.id.clone(), t),
+                None => st.knowledge_mtime.remove(&f.id),
+            };
+            (before, last.is_some() && last != mtime)
+        };
+        if differs && before == Some(true) && rewritten {
+            (self.emit)("knowledge:changed", json!({ "id": f.id }));
+        } else if differs && before == Some(false) {
             self.log(
                 &f.id,
                 Run::new("knowledge", "The knowledge base changed. Review it."),

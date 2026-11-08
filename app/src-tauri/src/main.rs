@@ -235,6 +235,12 @@ fn branch(path: String) -> Option<String> {
     git::branch(Path::new(&path))
 }
 
+/// What a terminal's checkout changed since it left the project's checkout in `base`.
+#[tauri::command(async)]
+fn changes(path: String, base: String) -> Option<git::Changes> {
+    git::changes(Path::new(&path), Path::new(&base))
+}
+
 // ---- Factories --------------------------------------------------------------
 
 #[tauri::command(async)]
@@ -646,6 +652,7 @@ fn main() {
             start_terminal,
             installed,
             branch,
+            changes,
             factories,
             create_factory,
             save_factory,
