@@ -51,7 +51,3 @@ From the terminal's foreground process: its argv[0], its executable name, and, f
 ## Terminal queries
 
 Programs ask their terminal for the cursor position, its attributes and its colours. The daemon answers these itself, because often nobody is watching. A viewer that shows a terminal in another terminal should drop those queries from the output (see `QueryFilter` in `crates/daemon/src/viewer.rs`), or its own terminal will answer a second time.
-
-## Credit
-
-The detection approach and the rule format follow [herdr](https://github.com/herdrdev/herdr). The bundled rule files are adapted from herdr's (Apache-2.0; see `crates/detect/rules/LICENSE-herdr.txt`). The code is Sawtooth's own.
