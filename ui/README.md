@@ -39,24 +39,24 @@ import { TooltipProvider, FlowNode, Lamp } from '@sawtooth/ui';
 | --- | --- |
 | Actions | `Button` (solid, quiet, ghost; sm, md), `IconButton` |
 | Status | `Lamp`, `NeedsCount`, `NeedsBar`, `HarnessChip`, `NoTerminalsChip` |
-| Canvas | `Canvas`, `ZoneTitle`, `FlowStatus`, `FlowNode`, `Sandbox`, `TerminalCard`, `EdgeLayer`, `Edge`, `Packet`, `EdgeLabel` |
+| Canvas | `Canvas`, `ZoneBox`, `FlowStatus`, `FlowNode`, `Sandbox`, `TerminalCard`, `EdgeLayer`, `Edge`, `Packet`, `EdgeLabel` |
 | Routing | `connect`, `pathH`, `pathV`, `arrowAt` (from `route.ts`, ported from the prototype) |
 | Home and list | `FactoryCard`, `ListSection`, `ListRow` |
 | Navigation | `SectionTabs` (Base UI Tabs), `ViewSwitch` (ToggleGroup), `Menu` |
 | Forms | `Field`, `TextInput`, `TextArea`, `Select` |
-| Overlays | `Tooltip`, `TooltipProvider`, `PartsDrawer`, `PartGroup`, `PartItem`, `Panel` |
+| Overlays | `Tooltip`, `TooltipProvider`, `Panel` |
 | Icons | `Icon` (24px grid, 1.6 or 1.8 stroke), `LogoMark`, `Wordmark` |
 
 ### Drawing a flow
 
 ```tsx
 const sb = { x: 260, y: 40, w: 460, h: 320 };
-const intake = { x: 0, y: 40, w: 200, h: 64 };
+const intake = { x: 12, y: 80, w: 200, h: 64 };
 const r = connect(intake, sb, { ey: sb.y + 72, bend: 'src', prefer: 'h' });
 
-<Canvas ref={setFrame} width={1000} height={520} label="How work moves through invoice-app"
-  toolbar={<PartsDrawer open={open} onOpenChange={setOpen} container={frame}
-    trigger={<Button variant="quiet">Add parts</Button>}>…</PartsDrawer>}>
+<Canvas width={1000} height={520} label="How work moves through invoice-app">
+  <ZoneBox x={0} y={40} width={224} height={116} title="Intake" count={1}
+    action={<IconButton icon="plus" label="Add to Intake" />} />
   <EdgeLayer width={1000} height={520}><Edge route={r} live /></EdgeLayer>
   <Packet key={step} path={r.d} />
   <FlowNode icon="ticket" name="Tickets" meta="3 waiting" x={intake.x} y={intake.y} width={intake.w} />

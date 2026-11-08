@@ -1,8 +1,9 @@
-import { IconButton, ListRow, ListSection, Menu, Tooltip } from '@sawtooth/ui';
+import { ListRow, ListSection } from '@sawtooth/ui';
 import type { Factory, Part, Run, Terminal } from '../api';
 import { flagOf, lampOf, stateWords, type Draft } from '../store';
 import { ago, clock } from '../time';
-import { drawerGroups, iconOf, laneOf, metaOf, type Template } from './parts';
+import { AddMenu } from './AddMenu';
+import { iconOf, laneOf, metaOf, type Template } from './parts';
 
 export interface FlowListProps {
   factory: Factory;
@@ -19,29 +20,7 @@ export interface FlowListProps {
 
 /** The same factory as the canvas, as lists. Nothing is lost switching between them. */
 export function FlowList({ factory, terminals, drafts, runs, selected, folderCounts, meta, onSelect, onOpenRuns, onAdd }: FlowListProps) {
-  const groups = drawerGroups(factory);
-  const addMenu = (group: string, label: string) => {
-    const items = groups.find((g) => g.group === group)?.items ?? [];
-    if (items.length === 1) {
-      return (
-        <Tooltip label={label}>
-          <IconButton icon="plus" label={label} onClick={() => onAdd(items[0]!.template)} />
-        </Tooltip>
-      );
-    }
-    return (
-      <Menu.Root>
-        <Menu.Trigger render={<IconButton icon="plus" label={label} />} />
-        <Menu.Popup align="end">
-          {items.map((item) => (
-            <Menu.Item key={item.template} icon={item.icon} disabled={!!item.off} onClick={() => onAdd(item.template)}>
-              {item.name}
-            </Menu.Item>
-          ))}
-        </Menu.Popup>
-      </Menu.Root>
-    );
-  };
+  const addMenu = (group: string, label: string) => <AddMenu factory={factory} group={group} label={label} onAdd={onAdd} />;
 
   const row = (p: Part) => {
     const run = runs?.find((r) => r.part === p.id);

@@ -14,7 +14,16 @@ export interface SandboxProps extends React.ComponentPropsWithoutRef<'section'> 
   height?: number;
   /** Shown as a dashed slot when there are no terminals. */
   onAddTerminal?: () => void;
+  /** Sits at the right of the header: the + for a new terminal. */
+  action?: React.ReactNode;
+  /** The light behind the room. It warms faintly while a terminal needs you. */
+  glow?: 'calm' | 'needs';
 }
+
+const GLOW = {
+  calm: '0 28px 90px -28px oklch(0.78 0.012 260 / 0.26), 0 0 0 1px oklch(1 0 0 / 0.02)',
+  needs: '0 28px 90px -24px oklch(0.67 0.2 22 / 0.2), 0 0 0 1px oklch(0.67 0.2 22 / 0.08)',
+} as const;
 
 /**
  * The room where the terminals work. The one deep box on the canvas:
@@ -30,6 +39,8 @@ export function Sandbox({
   width,
   height,
   onAddTerminal,
+  action,
+  glow = 'calm',
   className,
   style,
   children,
@@ -44,11 +55,19 @@ export function Sandbox({
       data-dragging={dragging || undefined}
       className={cx(
         'box-border flex flex-col gap-2.5 rounded-room border border-line bg-room px-3 pb-3.5',
-        'transition-shadow duration-180 ease-calm data-dragging:z-10 data-dragging:shadow-lift',
+        'transition-shadow duration-700 ease-calm motion-reduce:transition-none data-dragging:z-10',
         placed && 'absolute',
         className,
       )}
-      style={{ ...(placed ? { left: x, top: y } : null), width, height, ...style }}
+      style={{
+        ...(placed ? { left: x, top: y } : null),
+        width,
+        height,
+        // Light from above, so the room reads as the place where work happens.
+        backgroundImage: 'radial-gradient(120% 70% at 50% 0%, oklch(1 0 0 / 0.04), transparent 70%)',
+        boxShadow: GLOW[glow],
+        ...style,
+      }}
       {...props}
     >
       <div
@@ -63,6 +82,12 @@ export function Sandbox({
           {title}
         </h2>
         {status !== undefined && <span className="font-mono text-meta text-ink-2">{status}</span>}
+        {action && (
+          <>
+            <span className="grow" />
+            <div onPointerDown={(e) => e.stopPropagation()}>{action}</div>
+          </>
+        )}
       </div>
       {children}
       {empty && onAddTerminal && (

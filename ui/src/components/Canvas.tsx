@@ -8,7 +8,7 @@ export interface CanvasProps {
   height: number;
   /** Names the flow for screen readers: "How work moves through invoice-app". */
   label: string;
-  /** Floating controls at the top right: Tidy up, Add parts. */
+  /** Floating controls at the top right: Tidy up. */
   toolbar?: React.ReactNode;
   className?: string;
   children: React.ReactNode;
@@ -16,7 +16,6 @@ export interface CanvasProps {
 
 /**
  * The dotted canvas a factory's flow sits on. It scrolls; the world inside keeps its size.
- * The ref points at the outer frame, which is where PartsDrawer should portal to.
  */
 export const Canvas = React.forwardRef<HTMLDivElement, CanvasProps>(function Canvas(
   { width, height, label, toolbar, className, children },
@@ -34,23 +33,38 @@ export const Canvas = React.forwardRef<HTMLDivElement, CanvasProps>(function Can
   );
 });
 
-export interface ZoneTitleProps {
+export interface ZoneBoxProps {
   x: number;
   y: number;
+  width: number;
+  height: number;
   title: string;
   count?: number;
+  /** Sits at the right of the header: the zone's + menu. */
+  action?: React.ReactNode;
 }
 
-/** Names a column of nodes on the canvas: "Intake 3", "Guardrails 4". */
-export function ZoneTitle({ x, y, title, count }: ZoneTitleProps) {
+/**
+ * A quiet frame around one zone's nodes: "Intake 3 +". It follows the nodes wherever
+ * they're dragged, so it's drawn from their bounds, and it sits behind the lines and nodes.
+ */
+export function ZoneBox({ x, y, width, height, title, count, action }: ZoneBoxProps) {
+  const id = React.useId();
   return (
-    <h2
-      className="pointer-events-none absolute m-0 flex items-baseline gap-2 whitespace-nowrap text-meta font-medium text-ink-2"
-      style={{ left: x, top: y }}
+    <section
+      aria-labelledby={id}
+      className="pointer-events-none absolute box-border rounded-room border border-line-2"
+      style={{ left: x, top: y, width, height }}
     >
-      {title}
-      {count !== undefined && <span className="font-mono font-normal">{count}</span>}
-    </h2>
+      <div className="flex h-10 items-center gap-2 pr-1.5 pl-3.5">
+        <h2 id={id} className="m-0 flex items-baseline gap-2 whitespace-nowrap text-meta font-medium text-ink-2">
+          {title}
+          {count !== undefined && <span className="font-mono font-normal">{count}</span>}
+        </h2>
+        <span className="grow" />
+        {action && <div className="pointer-events-auto">{action}</div>}
+      </div>
+    </section>
   );
 }
 

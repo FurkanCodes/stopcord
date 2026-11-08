@@ -49,10 +49,26 @@ export interface Flow {
   folders: Placed[];
   edges: FlowEdge[];
   labels: FlowLabel[];
-  titles: { title: string; count: number; x: number; y: number }[];
+  /** A frame around each zone's nodes, drawn from where they are. */
+  zones: Zone[];
 }
 
 /** What just happened, from the run log: which lines carry work right now. */
+export type ZoneName = 'Intake' | 'Guardrails' | 'Library';
+
+export interface Zone {
+  title: ZoneName;
+  count: number;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+/** Room around a zone's nodes, and for its header above them. */
+const ZONE_PAD = 12;
+const ZONE_HEAD = 40;
+
 export interface Lit {
   /** An intake part that just started work. */
   intake?: string;
@@ -117,11 +133,11 @@ export function layoutFlow(
   // Header, then one 84px card and a 10px gap per terminal.
   const sandboxH = 56 + Math.max(1, sandboxCards) * 94;
   const intakeBottom = intakeParts.length ? colY(intakeParts.length) - NODE_GAP : TOP;
-  const logY = guardParts.length ? colY(guardParts.length) - NODE_GAP + 44 : TOP;
+  const logY = colY(guardParts.length);
   const libraryY = Math.max((pos[SANDBOX_ID]?.y ?? SANDBOX_TOP) + sandboxH, intakeBottom, logY + NODE_H) + 110;
   const folderStart = kbPart ? 490 : 230;
 
-  const sandbox = place(SANDBOX_ID, 310, SANDBOX_TOP, 370, sandboxH);
+  const sandbox = place(SANDBOX_ID, 330, SANDBOX_TOP, 370, sandboxH);
 
   // Parts someone dragged stay put. Everything else takes the next free spot in its
   // column or row, so a new part never lands on top of a dragged one.
@@ -155,11 +171,11 @@ export function layoutFlow(
     });
   };
 
-  const intake = column(intakeParts, 0);
-  const guards = column(guardParts, 800);
+  const intake = column(intakeParts, ZONE_PAD);
+  const guards = column(guardParts, 840);
   const log = pos[LOG_ID]
     ? { ...pos[LOG_ID]!, w: 200, h: NODE_H }
-    : free({ x: 800, y: logY, w: 200, h: NODE_H }, { dx: 0, dy: NODE_H + NODE_GAP });
+    : free({ x: 840, y: logY, w: 200, h: NODE_H }, { dx: 0, dy: NODE_H + NODE_GAP });
   const knowledge = kbPart
     ? {
         part: kbPart,
@@ -182,7 +198,33 @@ export function layoutFlow(
   const width = Math.max(1000, ...rects.map((r) => r.x + r.w)) + 16;
   const height = Math.max(libraryY + NODE_H + 32, ...rects.map((r) => r.y + r.h + 40));
 
+  // Each zone is framed by its nodes' bounds, wherever they've been dragged.
+  const zones: Zone[] = [];
+  const library = [...(knowledge ? [knowledge.r] : []), ...folders.map((p) => p.r)];
+  for (const [title, rs, count] of [
+    ['Intake', intake.map((p) => p.r), intake.length],
+    ['Guardrails', [...guards.map((p) => p.r), log], guards.length],
+    ['Library', library, library.length],
+  ] as const) {
+    if (!rs.length) continue;
+    const left = Math.min(...rs.map((r) => r.x)) - ZONE_PAD;
+    const top = Math.min(...rs.map((r) => r.y)) - ZONE_HEAD;
+    const right = Math.max(...rs.map((r) => r.x + r.w)) + ZONE_PAD;
+    const bottom = Math.max(...rs.map((r) => r.y + r.h)) + ZONE_PAD;
+    zones.push({ title, count, x: left, y: top, w: right - left, h: bottom - top });
+  }
+
   const anchor = sandbox.y + 72;
+  // Trunks run down the middle of the gap between a zone and the sandbox, clear of both
+  // borders. When parts were dragged too close for that, they turn next to the node instead.
+  const zoneOf = (t: ZoneName) => zones.find((z) => z.title === t);
+  const mid = (a: number, b: number, fallback: 'src' | 'dst') => (b - a >= 40 ? Math.round((a + b) / 2) : fallback);
+  const inZ = zoneOf('Intake');
+  const guardZ = zoneOf('Guardrails');
+  const libZ = zoneOf('Library');
+  const intakeBend = inZ ? mid(inZ.x + inZ.w, sandbox.x, 'src') : 'src';
+  const guardBend = guardZ ? mid(sandbox.x + sandbox.w, guardZ.x, 'dst') : 'dst';
+  const libraryBend = libZ ? mid(sandbox.y + sandbox.h, libZ.y, 'src') : 'src';
   const edges: FlowEdge[] = [];
   const edge = (key: string, route: Route, on: boolean) => {
     edges.push({ key, route, lit: on });
@@ -190,20 +232,20 @@ export function layoutFlow(
   };
 
   const intakeEdges = intake.map((p) =>
-    edge(`in:${p.part.id}`, connect(p.r, sandbox, { ey: anchor, bend: 'src', prefer: 'h' }), lit.intake === p.part.id),
+    edge(`in:${p.part.id}`, connect(p.r, sandbox, { ey: anchor, bend: intakeBend, prefer: 'h' }), lit.intake === p.part.id),
   );
   const guardEdges = guards.map((p) =>
     edge(
       `check:${p.part.id}`,
-      connect(sandbox, p.r, { sy: anchor, bend: 'dst', prefer: 'h' }),
+      connect(sandbox, p.r, { sy: anchor, bend: guardBend, prefer: 'h' }),
       lit.check === p.part.id || lit.failed === p.part.id,
     ),
   );
   const back = guards.find((p) => p.part.id === failId);
   const returnEdge = back
-    ? edge(`fail:${back.part.id}`, connect(back.r, sandbox, { ey: anchor + 20, bend: 'src', prefer: 'h' }), lit.failed === back.part.id)
+    ? edge(`fail:${back.part.id}`, connect(back.r, sandbox, { ey: anchor + 20, bend: guardBend === 'dst' ? 'src' : guardBend, prefer: 'h' }), lit.failed === back.part.id)
     : undefined;
-  const logEdge = edge('log', connect(sandbox, log, { sy: anchor, bend: 'dst', prefer: 'h' }), !!lit.log);
+  const logEdge = edge('log', connect(sandbox, log, { sy: anchor, bend: guardBend, prefer: 'h' }), !!lit.log);
   const kbx = knowledge ? knowledge.r.x + knowledge.r.w / 2 : 0;
   const readEdge = knowledge
     ? edge('kb:read', connect(knowledge.r, sandbox, { sx: kbx - 30, ex: kbx - 30, share: true, prefer: 'v' }), !!lit.kbRead)
@@ -212,7 +254,7 @@ export function layoutFlow(
     ? edge('kb:facts', connect(sandbox, knowledge.r, { sx: kbx + 30, ex: kbx + 30, share: true, prefer: 'v' }), !!lit.kbFacts)
     : undefined;
   const folderEdges = folders.map((p) =>
-    edge(`folder:${p.part.id}`, connect(p.r, sandbox, { ex: sandbox.x + sandbox.w - 80, bend: 'src', prefer: 'v' }), false),
+    edge(`folder:${p.part.id}`, connect(p.r, sandbox, { ex: sandbox.x + sandbox.w - 80, bend: libraryBend, prefer: 'v' }), false),
   );
   // Lit lines draw last, on top.
   edges.sort((a, b) => Number(a.lit) - Number(b.lit));
@@ -255,26 +297,12 @@ export function layoutFlow(
     label('folders', flat(e) ? atEnd(e, false) : { x: e.ex + 8, y: (e.ey + e.bend) / 2 - 8 }, undefined, 'reads when needed', false);
   }
 
-  // A zone's title sits above its topmost part, leftmost on a tie.
-  const corner = (rs: Rect[]) => rs.reduce((a, b) => (b.y < a.y || (b.y === a.y && b.x < a.x) ? b : a));
-  const titles: Flow['titles'] = [];
-  const library = [...(knowledge ? [knowledge.r] : []), ...folders.map((p) => p.r)];
-  for (const [title, rs] of [
-    ['Intake', intake.map((p) => p.r)],
-    ['Guardrails', guards.map((p) => p.r)],
-    ['Library', library],
-  ] as const) {
-    if (!rs.length) continue;
-    const c = corner([...rs]);
-    titles.push({ title, count: rs.length, x: c.x + 2, y: c.y - 28 });
-  }
-
   // Dragged parts can bring two labels to one spot. Move a label down until it's clear.
   const box = (l: FlowLabel) => {
     const w = (l.step ? 14 : 0) + l.text.length * 6.2 + 4;
     return { left: l.alignEnd ? l.x - w : l.x, right: l.alignEnd ? l.x : l.x + w, top: l.y, bottom: l.y + 16 };
   };
-  const titleBoxes = titles.map((t) => ({ left: t.x, right: t.x + t.title.length * 7 + 24, top: t.y, bottom: t.y + 18 }));
+  const titleBoxes = zones.map((z) => ({ left: z.x, right: z.x + z.w, top: z.y, bottom: z.y + ZONE_HEAD }));
   for (let i = 0; i < labels.length; i++) {
     const l = labels[i]!;
     for (let tries = 0; tries < 4; tries++) {
@@ -287,5 +315,5 @@ export function layoutFlow(
     }
   }
 
-  return { width, height, sandbox, log, intake, guards, knowledge, folders, edges, labels, titles };
+  return { width, height, sandbox, log, intake, guards, knowledge, folders, edges, labels, zones };
 }

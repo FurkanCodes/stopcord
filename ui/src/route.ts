@@ -36,8 +36,9 @@ export interface ConnectOptions {
   sy?: number;
   ex?: number;
   ey?: number;
-  /** Turn 20–24px after the start (src) or before the end (dst). Default: halfway. */
-  bend?: 'src' | 'dst';
+  /** Turn 20–24px after the start (src) or before the end (dst), or at this x (or y, for
+   *  vertical lines) when it's a number. Default: halfway. */
+  bend?: 'src' | 'dst' | number;
   /** Vertical lines: share one x across both nodes when they overlap, so the line is straight. */
   share?: boolean;
 }
@@ -108,7 +109,7 @@ export function connect(a: Rect, b: Rect, opt: ConnectOptions = {}): Route {
     const x1 = dir === 'r' ? a.x + a.w : a.x;
     const x2 = dir === 'r' ? b.x : b.x + b.w;
     const sg = dir === 'r' ? 1 : -1;
-    const bend = opt.bend === 'src' ? x1 + 20 * sg : opt.bend === 'dst' ? x2 - 20 * sg : Math.round((x1 + x2) / 2);
+    const bend = typeof opt.bend === 'number' ? opt.bend : opt.bend === 'src' ? x1 + 20 * sg : opt.bend === 'dst' ? x2 - 20 * sg : Math.round((x1 + x2) / 2);
     return { d: pathH(x1, y1, x2, y2, bend), arrow: arrowAt(x2, y2, dir), sx: x1, sy: y1, ex: x2, ey: y2, dir, bend };
   }
 
@@ -125,6 +126,6 @@ export function connect(a: Rect, b: Rect, opt: ConnectOptions = {}): Route {
   const y1 = dir === 'd' ? a.y + a.h : a.y;
   const y2 = dir === 'd' ? b.y : b.y + b.h;
   const sg = dir === 'd' ? 1 : -1;
-  const bend = opt.bend === 'src' ? y1 + 24 * sg : opt.bend === 'dst' ? y2 - 24 * sg : Math.round((y1 + y2) / 2);
+  const bend = typeof opt.bend === 'number' ? opt.bend : opt.bend === 'src' ? y1 + 24 * sg : opt.bend === 'dst' ? y2 - 24 * sg : Math.round((y1 + y2) / 2);
   return { d: pathV(x1, y1, x2, y2, bend), arrow: arrowAt(x2, y2, dir), sx: x1, sy: y1, ex: x2, ey: y2, dir, bend };
 }

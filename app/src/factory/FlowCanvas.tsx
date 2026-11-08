@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type KeyboardEvent } from 'react';
-import { createPortal } from 'react-dom';
 import {
   Button,
   Canvas,
@@ -8,21 +7,17 @@ import {
   EdgeLayer,
   FlowNode,
   FlowStatus,
-  Icon,
   Packet,
-  PartGroup,
-  PartItem,
-  PartsDrawer,
   Sandbox,
   TerminalCard,
-  ZoneTitle,
-  type IconName,
+  ZoneBox,
 } from '@sawtooth/ui';
 import type { Factory, Part, Pos, Run, Terminal } from '../api';
 import { changeFactory, flagOf, lampOf, stateWords, type Draft } from '../store';
 import { ago, clock } from '../time';
 import { LOG_ID, MIN_Y, PULSE_MS, SANDBOX_ID, layoutFlow, litFrom, returnCheck } from './layout';
-import { drawerGroups, iconOf, laneOf, metaOf, type DrawerItem, type Template } from './parts';
+import { AddMenu } from './AddMenu';
+import { iconOf, laneOf, metaOf, type Template } from './parts';
 
 export interface FlowCanvasProps {
   factory: Factory;
@@ -35,10 +30,8 @@ export interface FlowCanvasProps {
   onSelect: (id: string | null) => void;
   onOpenTerminal: (id: string) => void;
   onOpenRuns: () => void;
-  /** Adds a part from the drawer, at a canvas point when it was dropped. */
-  onAdd: (template: Template, at?: Pos) => void;
-  drawerOpen: boolean;
-  onDrawerOpenChange: (open: boolean) => void;
+  /** Adds a part from a zone's + menu. */
+  onAdd: (template: Template) => void;
 }
 
 interface Drag {
@@ -50,28 +43,20 @@ interface Drag {
   moved: boolean;
 }
 
-interface PartDrag {
-  item: DrawerItem;
-  sx: number;
-  sy: number;
-  moved: boolean;
-}
-
 const HINT_ID = 'flow-drag-hint';
+
+const addLabel = { Intake: 'Add to Intake', Guardrails: 'Add a guardrail', Library: 'Add to Library' } as const;
 
 /** The whole factory on one canvas. Every part can be dragged, clicked to edit, or nudged with the arrow keys. */
 export function FlowCanvas(props: FlowCanvasProps) {
   const { factory, terminals, drafts, runs, selected, folderCounts, meta, onSelect, onAdd } = props;
-  const [frame, setFrame] = useState<HTMLDivElement | null>(null);
+
   const [live, setLive] = useState<Record<string, Pos>>({});
   const [dragging, setDragging] = useState<string | null>(null);
-  const [ghost, setGhost] = useState<{ name: string; icon: IconName; x: number; y: number } | null>(null);
   const [paused, setPaused] = useState(false);
   const drag = useRef<Drag | null>(null);
   const livePos = useRef<Record<string, Pos>>({});
   const justDragged = useRef(false);
-  const partDrag = useRef<PartDrag | null>(null);
-  const partDragged = useRef(false);
 
   // Lines stay lit for a few seconds after a run, so keep time moving while one is.
   const [now, setNow] = useState(() => Date.now());
@@ -91,12 +76,6 @@ export function FlowCanvas(props: FlowCanvasProps) {
   const guards = factory.parts.filter((p) => laneOf(p) === 'guard');
   const lit = paused ? {} : litFrom(runs, now);
   const flow = layoutFlow(factory.parts, terminals.length + drafts.length, layout, lit, returnCheck(guards, runs));
-
-  const world = () => frame?.querySelector<HTMLElement>('[role="group"]') ?? null;
-  const worldPoint = (cx: number, cy: number) => {
-    const r = world()?.getBoundingClientRect();
-    return r ? { x: cx - r.left, y: cy - r.top } : { x: 0, y: 0 };
-  };
 
   function commit(id: string, p: Pos) {
     changeFactory({ ...factory, layout: { ...factory.layout, [id]: p } });
@@ -163,53 +142,6 @@ export function FlowCanvas(props: FlowCanvasProps) {
     fn();
   };
 
-  function partHandlers(item: DrawerItem) {
-    return {
-      disabled: !!item.off,
-      title: item.off,
-      onPointerDown: (e: ReactPointerEvent<HTMLButtonElement>) => {
-        if (item.off || e.button !== 0) return;
-        partDragged.current = false;
-        partDrag.current = { item, sx: e.clientX, sy: e.clientY, moved: false };
-        e.currentTarget.setPointerCapture(e.pointerId);
-      },
-      onPointerMove: (e: ReactPointerEvent<HTMLButtonElement>) => {
-        const d = partDrag.current;
-        if (!d || d.item !== item || !frame) return;
-        if (!d.moved && Math.abs(e.clientX - d.sx) + Math.abs(e.clientY - d.sy) < 5) return;
-        d.moved = true;
-        const r = frame.getBoundingClientRect();
-        setGhost({ name: item.name, icon: item.icon, x: Math.round(e.clientX - r.left - 100), y: Math.round(e.clientY - r.top - 32) });
-      },
-      onPointerUp: (e: ReactPointerEvent<HTMLButtonElement>) => {
-        const d = partDrag.current;
-        partDrag.current = null;
-        if (!d?.moved || !frame) return;
-        partDragged.current = true;
-        setGhost(null);
-        const r = frame.getBoundingClientRect();
-        const drawer = frame.querySelector('[role="dialog"]')?.getBoundingClientRect();
-        const inCanvas = e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom;
-        const overDrawer = !!drawer && e.clientX >= drawer.left;
-        if (inCanvas && !overDrawer) {
-          const p = worldPoint(e.clientX, e.clientY);
-          onAdd(item.template, { x: Math.max(0, Math.round(p.x - 100)), y: Math.max(MIN_Y, Math.round(p.y - 32)) });
-        }
-      },
-      onPointerCancel: () => {
-        partDrag.current = null;
-        setGhost(null);
-      },
-      onClick: () => {
-        if (partDragged.current) {
-          partDragged.current = false;
-          return;
-        }
-        onAdd(item.template);
-      },
-    };
-  }
-
   // What the factory is doing, in one sentence.
   const fresh = runs?.[0] && now - runs[0].at < 60_000 ? runs[0] : undefined;
   const working = terminals.filter((t) => t.state === 'working');
@@ -267,7 +199,7 @@ export function FlowCanvas(props: FlowCanvasProps) {
   return (
     <div className="relative flex min-h-0 grow flex-col">
       <Canvas
-        ref={setFrame}
+
         width={flow.width}
         height={flow.height}
         label={`How work moves through ${factory.name}`}
@@ -276,11 +208,6 @@ export function FlowCanvas(props: FlowCanvasProps) {
             {Object.keys(factory.layout).length > 0 && (
               <Button variant="ghost" icon="tidy" onClick={() => changeFactory({ ...factory, layout: {} })}>
                 Tidy up
-              </Button>
-            )}
-            {!props.drawerOpen && (
-              <Button variant="ghost" icon="plus" onClick={() => props.onDrawerOpenChange(true)}>
-                Add parts
               </Button>
             )}
           </>
@@ -293,6 +220,19 @@ export function FlowCanvas(props: FlowCanvasProps) {
           {sentence}
         </FlowStatus>
 
+        {flow.zones.map((z) => (
+          <ZoneBox
+            key={z.title}
+            x={z.x}
+            y={z.y}
+            width={z.w}
+            height={z.h}
+            title={z.title}
+            count={z.count}
+            action={<AddMenu factory={factory} group={z.title} label={addLabel[z.title]} onAdd={onAdd} />}
+          />
+        ))}
+
         <EdgeLayer width={flow.width} height={flow.height}>
           {flow.edges.map((e) => (
             <Edge key={e.key} route={e.route} live={e.lit} />
@@ -304,9 +244,6 @@ export function FlowCanvas(props: FlowCanvasProps) {
             {l.text}
           </EdgeLabel>
         ))}
-        {flow.titles.map((t) => (
-          <ZoneTitle key={t.title} x={t.x} y={t.y} title={t.title} count={t.count} />
-        ))}
 
         <Sandbox
           data-part={SANDBOX_ID}
@@ -317,6 +254,8 @@ export function FlowCanvas(props: FlowCanvasProps) {
           dragging={dragging === SANDBOX_ID}
           handleProps={{ ...draggable(SANDBOX_ID, sb.x, sb.y), title: 'Drag to move the sandbox' }}
           onAddTerminal={() => onAdd('terminal')}
+          action={<AddMenu factory={factory} group="Sandbox" label="Add a terminal" onAdd={onAdd} />}
+          glow={terminals.some((t) => t.needs_you) ? 'needs' : 'calm'}
         >
           {terminals.map((t) => (
             <TerminalCard
@@ -368,36 +307,6 @@ export function FlowCanvas(props: FlowCanvasProps) {
         />
       </Canvas>
 
-      <PartsDrawer open={props.drawerOpen} onOpenChange={props.onDrawerOpenChange} container={frame}>
-        {drawerGroups(factory).map((g) => (
-          <PartGroup key={g.group} title={g.group}>
-            {g.items.map((item) => (
-              <PartItem
-                key={item.template}
-                data-template={item.template}
-                icon={item.icon}
-                name={item.name}
-                description={item.off ?? item.description}
-                {...partHandlers(item)}
-              />
-            ))}
-          </PartGroup>
-        ))}
-      </PartsDrawer>
-
-      {ghost &&
-        frame &&
-        createPortal(
-          <div
-            aria-hidden="true"
-            className="pointer-events-none absolute z-30 box-border flex h-16 w-[200px] items-center gap-2 rounded-node border border-line-strong bg-raised px-3.5 text-body font-medium text-ink opacity-90 shadow-lift"
-            style={{ left: ghost.x, top: ghost.y }}
-          >
-            <Icon name={ghost.icon} className="text-ink-3" />
-            {ghost.name}
-          </div>,
-          frame,
-        )}
     </div>
   );
 }

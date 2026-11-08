@@ -43,7 +43,6 @@ export function FactoryScreen({ id }: { id: string }) {
   const agents = useStore((s) => s.agents);
   const installed = useStore((s) => s.installed);
   const loaded = useStore((s) => s.loaded);
-  const [drawerOpen, setDrawerOpen] = useState(false);
   const [project, setProject] = useState<ProjectInfo | null>(null);
   const [folderCounts, setFolderCounts] = useState<Record<string, number>>({});
 
@@ -87,7 +86,6 @@ export function FactoryScreen({ id }: { id: string }) {
 
   function add(template: Template, at?: Pos) {
     if (!factory) return;
-    setDrawerOpen(false);
     if (template === 'terminal') {
       const taken = new Set([...terminals.map((t) => t.name), ...drafts.map((d) => d.name)]);
       let n = 1;
@@ -173,11 +171,6 @@ export function FactoryScreen({ id }: { id: string }) {
               {...shared}
               onOpenTerminal={pickTerminal}
               onAdd={add}
-              drawerOpen={drawerOpen}
-              onDrawerOpenChange={(open) => {
-                setDrawerOpen(open);
-                if (open) select(null);
-              }}
             />
           ) : (
             <FlowList {...shared} onSelect={(sel) => select(sel)} onAdd={(t) => add(t)} />
