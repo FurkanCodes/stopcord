@@ -15,6 +15,7 @@ mod factories;
 mod git;
 mod hooks;
 mod kb;
+mod leave_key;
 mod project;
 mod runs;
 mod shell;
@@ -36,6 +37,7 @@ use runs::Run;
 use sawtooth_daemon::{Config, Daemon, paths};
 use serde::Serialize;
 use serde_json::{Value, json};
+use tauri::menu::{Menu, MenuItem, Submenu};
 use tauri::{Emitter, Manager, State};
 
 /// Daemon methods the window may call directly. Terminals start through
@@ -636,6 +638,23 @@ fn main() {
             tauri_app.manage(engine);
             #[cfg(debug_assertions)]
             testbridge::start(tauri_app.handle().clone(), &paths::home());
+            leave_key::watch(tauri_app.handle());
+            // The menu shows the key, and clicking it does the same.
+            let menu = Menu::default(tauri_app.handle())?;
+            let leave = MenuItem::with_id(
+                tauri_app,
+                "leave-terminal",
+                "Back to Sawtooth",
+                true,
+                Some("CmdOrCtrl+Up"),
+            )?;
+            menu.append(&Submenu::with_items(tauri_app, "Terminal", true, &[&leave])?)?;
+            tauri_app.set_menu(menu)?;
+            tauri_app.on_menu_event(|app, event| {
+                if event.id() == "leave-terminal" {
+                    let _ = app.emit(leave_key::EVENT, ());
+                }
+            });
             Ok(())
         })
         // Closing the window hides it, so the engine keeps working. Cmd+Q quits.
@@ -646,6 +665,7 @@ fn main() {
             }
         })
         .invoke_handler(tauri::generate_handler![
+            leave_key::in_terminal,
             daemon,
             view,
             unview,

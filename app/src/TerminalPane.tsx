@@ -25,7 +25,7 @@ export interface TerminalPaneProps {
   label: string;
   /** Change it to put the keyboard in the terminal. */
   focusKey?: number;
-  /** ⌘esc: the person wants their keys back for the screen. */
+  /** ⌘↑ (or ⌘esc): the person wants their keys back for the screen. */
   onLeave?: () => void;
 }
 
@@ -60,7 +60,7 @@ export function TerminalPane({ id, label, focusKey = 0, onLeave }: TerminalPaneP
     const fit = new FitAddon();
     term.loadAddon(fit);
     term.attachCustomKeyEventHandler((e) => {
-      if (e.type === 'keydown' && e.metaKey && e.key === 'Escape') {
+      if (e.type === 'keydown' && e.metaKey && (e.key === 'ArrowUp' || e.key === 'Escape')) {
         term.blur();
         leave.current?.();
         return false;

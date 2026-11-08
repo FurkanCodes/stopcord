@@ -2,7 +2,9 @@
 // how long it's run, where it is in the loop, and the files it changed.
 
 import { useEffect, useState, type FormEvent } from 'react';
-import { daemon, typeInto, type Changes, type Factory, type Run, type Terminal } from '../api';
+import { listen } from '@tauri-apps/api/event';
+import { invoke } from '@tauri-apps/api/core';
+import { daemon, sendLine, type Changes, type Factory, type Run, type Terminal } from '../api';
 import { askOf } from '../Home';
 import { TerminalPane } from '../TerminalPane';
 import {
@@ -100,6 +102,29 @@ export function Fleet({ route, onSearch }: { route: Extract<Route, { screen: 'fa
   const visible = all.filter(matches);
   const backToList = () => document.querySelector<HTMLElement>(`[data-term="${cur?.id}"]`)?.focus();
 
+  // Typing into the terminal is a mode of its own: keys go to the agent, not to Sawtooth.
+  const [typing, setTyping] = useState(false);
+  // The app takes ⌘↑ for itself only while a terminal has the keys.
+  useEffect(() => {
+    void invoke('in_terminal', { on: typing }).catch(() => undefined);
+  }, [typing]);
+  useEffect(() => () => void invoke('in_terminal', { on: false }).catch(() => undefined), []);
+  useEffect(() => {
+    const check = () => setTyping(!!document.activeElement?.closest('.xterm'));
+    document.addEventListener('focusin', check);
+    document.addEventListener('focusout', () => requestAnimationFrame(check));
+    return () => {
+      document.removeEventListener('focusin', check);
+    };
+  }, []);
+  // ⌘↑ is caught by the app before the page, which then says so here.
+  useEffect(() => {
+    const off = listen('leave-terminal', () => {
+      if (document.activeElement?.closest('.xterm')) backToList();
+    });
+    return () => void off.then((f) => f());
+  });
+
   async function stop() {
     if (!cur) return;
     if (cur.state !== 'exited' && !stopping) return setStopping(true);
@@ -121,7 +146,7 @@ export function Fleet({ route, onSearch }: { route: Extract<Route, { screen: 'fa
   }
 
   useKeys((e) => {
-    if (e.metaKey && e.key === 'Escape') {
+    if (e.metaKey && (e.key === 'ArrowUp' || e.key === 'Escape')) {
       backToList();
       return true;
     }
@@ -213,10 +238,13 @@ export function Fleet({ route, onSearch }: { route: Extract<Route, { screen: 'fa
         </>
       }
       bodyStyle={{ flexDirection: 'row', flexWrap: 'wrap', gap: '14px 8px', alignItems: 'stretch', padding: '12px 8px 8px', overflow: 'hidden' }}
-      hints={[
+      hints={typing ? [
+        ['⌘↑', 'back to Sawtooth'],
+        ['esc', `goes to ${cur ? harnessOf(cur) : 'the terminal'}: it stops its turn`],
+        ['click outside', 'also takes you back'],
+      ] : [
         ['j/k', 'move'],
         ['⏎', 'type in the terminal'],
-        ['⌘esc', 'leave the terminal'],
         ['n', 'next needs you'],
         ['a ! w i', 'filter'],
         ['r', 'rename'],
@@ -225,8 +253,8 @@ export function Fleet({ route, onSearch }: { route: Extract<Route, { screen: 'fa
         ['?', 'all keys'],
       ]}
       status={{
-        mode: 'FLEET',
-        path: cur ? `${curGroupName}/${branch ?? tilde(cur.cwd)}` : curGroupName,
+        mode: typing ? 'TERMINAL' : 'FLEET',
+        path: typing && cur ? `keys go to ${cur.name} · ⌘↑ back to Sawtooth` : cur ? `${curGroupName}/${branch ?? tilde(cur.cwd)}` : curGroupName,
         info: `${factories.length} factor${factories.length === 1 ? 'y' : 'ies'} · ${all.length} term · ${queued} queued`,
       }}
     >
@@ -296,6 +324,7 @@ export function Fleet({ route, onSearch }: { route: Extract<Route, { screen: 'fa
           onLeave={backToList}
           renaming={renaming}
           onRename={rename}
+          typing={typing}
         />
       ) : (
         <Pane as="main" focus title={<Titled k="2">no terminal</Titled>} style={{ flex: '999 1 520px', padding: '18px 14px', display: 'flex', flexDirection: 'column', gap: 10 }}>
@@ -336,6 +365,7 @@ function Current({
   onLeave,
   renaming,
   onRename,
+  typing,
 }: {
   t: Terminal;
   factory?: Factory;
@@ -344,6 +374,7 @@ function Current({
   onLeave: () => void;
   renaming: string | null;
   onRename: (name: string) => void;
+  typing: boolean;
 }) {
   const [answer, setAnswer] = useState('');
   const [line, setLine] = useState('');
@@ -355,7 +386,7 @@ function Current({
   const send = (text: string, done: () => void) => (e: FormEvent) => {
     e.preventDefault();
     if (!text.trim()) return;
-    void typeInto(t.id, `${text}\r`).then(done, (err) => showProblem(err));
+    void sendLine(t.id, text).then(done, (err) => showProblem(err));
   };
 
   return (
@@ -395,11 +426,16 @@ function Current({
           </Titled>
         )
       }
+      className={typing ? 'is-typing' : undefined}
       right={
+        typing ? (
+          <span style={{ color: 'var(--ink)' }}>typing · ⌘↑ back</span>
+        ) : (
         <span style={{ display: 'inline-flex', gap: 8, color: needs ? 'var(--red-text)' : 'var(--ink-2)' }}>
           <Glyph status={status} style={{ width: 'auto' }} />
           {needs ? (t.state === 'blocked' ? 'waiting for you' : 'turn finished') : stateWords(t).toLowerCase()}
         </span>
+        )
       }
       style={{ flex: '999 1 520px', minHeight: 0, display: 'flex', flexDirection: 'column', paddingTop: 6 }}
     >
@@ -476,7 +512,6 @@ function Current({
           value={line}
           onChange={(e) => setLine(e.currentTarget.value)}
         />
-        <span aria-hidden="true" className="t-cursor" style={{ width: 8, height: 15, background: 'var(--ink-2)' }} />
       </form>
     </Pane>
   );

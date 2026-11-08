@@ -205,6 +205,16 @@ const encoder = new TextEncoder();
 // Typing goes out one call at a time per terminal, so keys never arrive out of order.
 const sending = new Map<string, Promise<unknown>>();
 
+/**
+ * Types a line into a terminal and presses ⏎ a moment later. Agents such as Codex read a
+ * fast burst of keys as a paste, and a ⏎ inside a paste is a new line, not "send".
+ */
+export async function sendLine(id: string, text: string): Promise<void> {
+  await typeInto(id, text);
+  await new Promise((done) => setTimeout(done, 250));
+  await typeInto(id, '\r');
+}
+
 /** Types into a terminal. `binary` is xterm's byte string for non-UTF-8 input. */
 export function typeInto(id: string, input: string, binary = false): Promise<unknown> {
   const bytes = binary ? Uint8Array.from(input, (c) => c.charCodeAt(0) & 0xff) : encoder.encode(input);

@@ -173,7 +173,7 @@ export function Help({ onClose }: { onClose: () => void }) {
         </h2>
         <ul>{everywhere.map(row)}</ul>
         <p className="t-dim" style={{ padding: '10px 14px 0', fontSize: 12 }}>
-          keys don't fire while you type in a field or a terminal. ⌘esc leaves a terminal.
+          keys don't fire while you type in a field or a terminal. ⌘↑ leaves a terminal.
         </p>
       </Pane>
     </div>
