@@ -86,7 +86,7 @@ export function Runs({ factory, runs, terminals }: { factory: Factory; runs: Run
       status={{ mode: 'RUNS', path: `${factory.name}/run-log`, info: `${today} event${today === 1 ? '' : 's'} today` }}
     >
       <Pane
-        title={<Titled k="1" strong>run log</Titled>}
+        title={<Titled strong>run log</Titled>}
         heading={1}
         right={<span className="t-dim">{shown.length} of {list.length} events</span>}
         style={{ flexGrow: 1, minHeight: 0, display: 'flex', flexDirection: 'column', paddingTop: 10 }}

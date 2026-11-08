@@ -195,7 +195,7 @@ export function Knowledge({ factory, file }: { factory: Factory; file?: string }
       ]}
       status={{ mode: 'KNOWLEDGE', path: `${factory.name}/${label}`, info: state }}
     >
-      <Pane as="nav" aria-labelledby="files-title" title={<span id="files-title"><Titled k="1">files</Titled></span>} scroll style={{ flex: '1 1 220px', maxWidth: 260, minHeight: 0, overflow: 'auto', padding: '14px 4px 10px' }}>
+      <Pane as="nav" aria-labelledby="files-title" title={<span id="files-title"><Titled>files</Titled></span>} scroll style={{ flex: '1 1 220px', maxWidth: 260, minHeight: 0, overflow: 'auto', padding: '14px 4px 10px' }}>
         <ul>
           {sections.map((sct) => (
             <li key={sct.key}>
@@ -235,7 +235,7 @@ export function Knowledge({ factory, file }: { factory: Factory; file?: string }
       <Pane
         as="main"
         aria-label={label}
-        title={<Titled k="2" strong>{label}</Titled>}
+        title={<Titled strong>{label}</Titled>}
         right={<span style={{ color: dirty ? 'var(--ink)' : 'var(--ink-3)' }}>{state}</span>}
         className="t-editor"
         style={{ flex: '999 1 520px', minHeight: 0, display: 'flex', flexDirection: 'column', paddingTop: 8 }}
@@ -318,7 +318,7 @@ export function Knowledge({ factory, file }: { factory: Factory; file?: string }
         aria-labelledby="review-title"
         title={
           <span id="review-title">
-            <Titled k="3">to review</Titled> <span style={{ color: 'var(--ink)' }}>{pending.length}</span>
+            <Titled>to review</Titled> <span style={{ color: 'var(--ink)' }}>{pending.length}</span>
           </span>
         }
         hot={pending.length > 0}

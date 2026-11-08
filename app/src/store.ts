@@ -3,7 +3,7 @@
 
 import { useSyncExternalStore } from 'react';
 import { listen } from '@tauri-apps/api/event';
-import { api, daemon, failureText, type Changes, type Factory, type Run, type Terminal } from './api';
+import { api, daemon, failureText, sendLine, type Changes, type Factory, type Run, type Terminal } from './api';
 
 export type LampState = 'working' | 'needs' | 'idle';
 export type Tab = 'overview' | 'terminals' | 'knowledge' | 'runs';
@@ -28,6 +28,8 @@ export interface Draft {
   command: string;
   other: boolean;
   branch: string;
+  /** What to ask the agent first. Typed in once its prompt is ready. */
+  task: string;
 }
 
 export interface State {
@@ -40,6 +42,8 @@ export interface State {
   drafts: Record<string, Draft[]>;
   /** What the edit panel shows: a part id, a terminal id, or a draft id. */
   selected: string | null;
+  /** A terminal to put the keys into as soon as the terminals screen shows it. */
+  enter: string | null;
   /** False while the daemon can't be reached. */
   connected: boolean;
   problem: string | null;
@@ -60,6 +64,7 @@ let state: State = {
   runs: {},
   drafts: {},
   selected: null,
+  enter: null,
   connected: true,
   problem: null,
   agents: [],
@@ -118,6 +123,57 @@ export const outputHandlers = new Map<string, (o: Output) => void>();
 // ---- Keeping up with the daemon and the engine ------------------------------
 
 /** Adds or updates one terminal, such as one just started. */
+/** A new, not yet started terminal in a factory, named "Terminal n". Selects it. */
+export function newDraft(factoryId: string): Draft {
+  const s = state;
+  const taken = new Set([...terminalsIn(factoryId, s).map((t) => t.name), ...(s.drafts[factoryId] ?? []).map((d) => d.name)]);
+  let n = 1;
+  while (taken.has(`Terminal ${n}`)) n++;
+  const firstAgent = s.agents.find((a) => !s.installed || s.installed.includes(a)) ?? '';
+  const draft: Draft = {
+    id: `draft-${Math.random().toString(36).slice(2, 8)}`,
+    name: `Terminal ${n}`,
+    command: firstAgent,
+    other: false,
+    branch: `terminal-${n}`,
+    task: '',
+  };
+  setState((st) => ({ drafts: { ...st.drafts, [factoryId]: [...(st.drafts[factoryId] ?? []), draft] }, selected: draft.id }));
+  return draft;
+}
+
+// ---- A first task, typed in once the agent is ready -------------------------
+
+const pendingTasks = new Map<string, { text: string; since: number }>();
+
+/** Types `text` into a new terminal once its agent shows its prompt (or soon, for a shell). */
+export function queueTask(id: string, text: string) {
+  if (!text.trim()) return;
+  pendingTasks.set(id, { text: text.trim(), since: Date.now() });
+  const poll = () => {
+    deliverTask(id);
+    if (pendingTasks.has(id)) setTimeout(poll, 400);
+  };
+  setTimeout(poll, 400);
+}
+
+function deliverTask(id: string) {
+  const job = pendingTasks.get(id);
+  const t = state.terminals[id];
+  if (!job) return;
+  const waited = Date.now() - job.since;
+  const ready = t && (t.agent ? t.state === 'idle' && waited > 1200 : waited > 1500);
+  if (!ready && waited < 30_000) return;
+  pendingTasks.delete(id);
+  if (!t || t.state === 'exited') return;
+  void sendLine(id, job.text).catch(showProblem);
+}
+
+/** Asks the terminals screen to put the keys straight into this terminal once it shows. */
+export function enterWhenShown(id: string) {
+  setState({ enter: id });
+}
+
 export function putTerminal(t: Terminal) {
   setState((s) => ({ terminals: { ...s.terminals, [t.id]: t } }));
   loadBranch(t.cwd);

@@ -441,7 +441,7 @@ export function FactoryMap(props: FactoryMapProps) {
     >
       <section aria-labelledby="map-title" className="t-pane" style={{ flexGrow: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
         <h1 id="map-title" className="t-pane-title">
-          <Titled k="1">factory map</Titled>
+          <Titled>factory map</Titled>
         </h1>
         <span className="t-pane-right" style={{ gap: 14 }}>
           <span style={{ display: 'inline-flex', gap: 6 }}>

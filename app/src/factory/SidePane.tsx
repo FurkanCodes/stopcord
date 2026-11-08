@@ -3,12 +3,12 @@
 
 import { useEffect, useState, type ReactNode } from 'react';
 import { api, type Factory, type FileEntry, type Part, type Run, type Terminal } from '../api';
-import { lastSize } from '../TerminalPane';
-import { changeFactory, go, lampOf, putTerminal, setState, showProblem, useStore, type Draft } from '../store';
+import { changeFactory, go, lampOf, showProblem, useStore, type Draft } from '../store';
+import { NewTerminal } from './NewTerminal';
 import { ago, clock } from '../time';
 import { tilde } from '../text';
 import { Check, Empty, FieldRow, Glyph, Key, Pane, Radio } from '../tui/kit';
-import { branchFrom, harnessFiles, runsInWords, runsOnWords, whenWords } from './parts';
+import { harnessFiles, runsInWords, runsOnWords, whenWords } from './parts';
 
 export interface SidePaneProps {
   factory: Factory;
@@ -66,13 +66,13 @@ export function SidePane(props: SidePaneProps) {
       }}
     >
       <div style={{ flex: '1 1 0', minHeight: 0, overflow: 'auto', padding: '6px 14px 12px', display: 'flex', flexDirection: 'column', gap: 14 }}>
-        {part ? <PartBody key={part.id} {...props} part={part} /> : <DraftBody key={draft!.id} {...props} draft={draft!} />}
+        {part ? <PartBody key={part.id} {...props} part={part} /> : <NewTerminal key={draft!.id} factory={props.factory} draft={draft!} git={props.git} onDiscard={props.onClose} />}
       </div>
     </Pane>
   );
 }
 
-function Section({ title, children }: { title: string; children: ReactNode }) {
+export function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
     <section style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
       <h3 className="t-dim" style={{ fontSize: 12, fontWeight: 400 }}>
@@ -603,85 +603,5 @@ function ActivityBody({ part, runs, onOpenTerminal }: SidePaneProps & { part: Pa
         </Section>
       )}
     </>
-  );
-}
-
-// ---- A terminal that isn't started yet ---------------------------------------------
-
-function DraftBody({ factory, draft, git, onClose }: SidePaneProps & { draft: Draft }) {
-  const [busy, setBusy] = useState(false);
-  const change = (patch: Partial<Draft>) =>
-    setState((s) => ({
-      drafts: { ...s.drafts, [factory.id]: (s.drafts[factory.id] ?? []).map((d) => (d.id === draft.id ? { ...d, ...patch } : d)) },
-    }));
-  const discard = () => {
-    setState((s) => ({ drafts: { ...s.drafts, [factory.id]: (s.drafts[factory.id] ?? []).filter((d) => d.id !== draft.id) } }));
-    onClose();
-  };
-  const start = async () => {
-    setBusy(true);
-    try {
-      const t = await api.startTerminal({
-        factoryId: factory.id,
-        command: draft.command || undefined,
-        name: draft.name,
-        branch: git ? draft.branch.trim() || undefined : undefined,
-        ...lastSize(),
-      });
-      putTerminal(t);
-      setState((s) => ({
-        drafts: { ...s.drafts, [factory.id]: (s.drafts[factory.id] ?? []).filter((d) => d.id !== draft.id) },
-        selected: null,
-      }));
-    } catch (e) {
-      showProblem(e);
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  return (
-    <form
-      style={{ display: 'flex', flexDirection: 'column', gap: 14 }}
-      onSubmit={(e) => {
-        e.preventDefault();
-        if (!busy && draft.name.trim()) void start();
-      }}
-    >
-      <Section title="new terminal">
-        <FieldRow id="draft-name" label="name">
-          <input
-            id="draft-name"
-            className="t-field"
-            value={draft.name}
-            onChange={(e) => {
-              const name = e.currentTarget.value;
-              // The branch follows the name until someone types their own.
-              const follows = draft.branch === branchFrom(draft.name);
-              change(follows ? { name, branch: branchFrom(name) } : { name });
-            }}
-          />
-        </FieldRow>
-        <HarnessPick id="draft-command" label="runs" value={draft.command} allowShell onChange={(command) => change({ command })} />
-        {git ? (
-          <FieldRow id="draft-branch" label="branch" top>
-            <input id="draft-branch" className="t-field" value={draft.branch} onChange={(e) => change({ branch: e.currentTarget.value })} />
-            <span className="t-dim" style={{ fontSize: 12 }}>
-              gets its own worktree on this branch · empty works in the project folder
-            </span>
-          </FieldRow>
-        ) : (
-          <p className="t-dim" style={{ fontSize: 12 }}>
-            not a git repo, so the terminal works in the folder itself
-          </p>
-        )}
-      </Section>
-      <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-        <button type="submit" className="t-solid" disabled={busy || !draft.name.trim()}>
-          {busy ? 'starting…' : '⏎ start'}
-        </button>
-        <Key onClick={discard}>discard</Key>
-      </div>
-    </form>
   );
 }

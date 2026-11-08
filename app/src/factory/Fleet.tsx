@@ -9,12 +9,13 @@ import { askOf } from '../Home';
 import { TerminalPane } from '../TerminalPane';
 import {
   factoryOf,
-  go,
   harnessOf,
   lampOf,
   loadChanges,
   openFactory,
+  newDraft,
   putTerminal,
+  setState,
   showProblem,
   stateWords,
   terminalsIn,
@@ -22,9 +23,14 @@ import {
   type Route,
 } from '../store';
 import { tilde } from '../text';
-import { Brand, Empty, Glyph, Key, Pane, Screen, Sep, Titled } from '../tui/kit';
+import { Brand, Empty, Glyph, Key, Pane, Screen, Titled } from '../tui/kit';
 import { plain, useKeys } from '../tui/keys';
 import { diffOf } from './FactoryMap';
+import { FactoryHeader } from './FactoryHeader';
+import { NewTerminal } from './NewTerminal';
+import type { Draft } from '../store';
+
+const NO_DRAFTS: Draft[] = [];
 
 type Filter = 'all' | 'needs' | 'working' | 'idle';
 
@@ -43,28 +49,32 @@ function age(from: number, now = Date.now()): string {
   return h < 36 ? `${h}h` : `${Math.round(h / 24)}d`;
 }
 
-export function Fleet({ route, onSearch }: { route: Extract<Route, { screen: 'factory' }>; onSearch: () => void }) {
+export function Fleet({ route, onSearch, git }: { route: Extract<Route, { screen: 'factory' }>; onSearch: () => void; git: boolean }) {
   const factories = useStore((s) => s.factories);
   const terminals = useStore((s) => s.terminals);
   const branches = useStore((s) => s.branches);
   const changes = useStore((s) => s.changes);
   const allRuns = useStore((s) => s.runs);
+  const drafts = useStore((s) => s.drafts[route.id] ?? NO_DRAFTS);
+  const enter = useStore((s) => s.enter);
   const [filter, setFilter] = useState<Filter>('all');
   const [focusKey, setFocusKey] = useState(0);
   const [renaming, setRenaming] = useState<string | null>(null);
   const [stopping, setStopping] = useState(false);
   const s = { factories, terminals };
 
-  const groups: Group[] = [
-    ...factories.map((f) => ({ id: f.id, name: f.name, factory: f, terms: terminalsIn(f.id, s) })),
-    { id: '', name: 'other', terms: terminalsIn('', s) },
-  ].filter((g) => g.terms.length > 0);
+  // A factory's terminals tab shows that factory's terminals; Home shows every factory.
+  const routeFactory = factories.find((f) => f.id === route.id);
+  const groups: Group[] = routeFactory
+    ? [{ id: routeFactory.id, name: routeFactory.name, factory: routeFactory, terms: terminalsIn(routeFactory.id, s) }]
+    : [{ id: '', name: 'outside every factory', terms: terminalsIn('', s) }];
   const all = groups.flatMap((g) => g.terms);
+  const draft = drafts.find((d) => d.id === route.terminal);
   const matches = (t: Terminal) => filter === 'all' || lampOf(t) === filter;
 
   // The terminal on show: the one asked for, else the first in this factory, else any.
   const inFactory = groups.find((g) => g.id === route.id)?.terms ?? [];
-  const cur = all.find((t) => t.id === route.terminal) ?? inFactory[0] ?? all[0];
+  const cur = draft ? undefined : (all.find((t) => t.id === route.terminal) ?? inFactory[0] ?? all[0]);
   const curFactory = cur ? factoryOf(cur, factories) : factories.find((f) => f.id === route.id);
   const curGroupName = cur ? (curFactory?.name ?? 'other') : (curFactory?.name ?? 'other');
   const pick = (t: Terminal) => openFactory(factoryOf(t, factories)?.id ?? '', 'terminals', t.id);
@@ -93,6 +103,19 @@ export function Fleet({ route, onSearch }: { route: Extract<Route, { screen: 'fa
     setStopping(false);
     setRenaming(null);
   }, [cur?.id]);
+  // A terminal just started with nothing to ask: the keys go straight into it.
+  useEffect(() => {
+    if (cur && enter === cur.id) {
+      setState({ enter: null });
+      setFocusKey((n) => n + 1);
+    }
+  }, [cur?.id, enter]);
+
+  const addTerminal = () => {
+    if (!routeFactory) return;
+    const d = newDraft(routeFactory.id);
+    openFactory(routeFactory.id, 'terminals', d.id);
+  };
   useEffect(() => {
     if (!stopping) return;
     const timer = setTimeout(() => setStopping(false), 3000);
@@ -192,7 +215,7 @@ export function Fleet({ route, onSearch }: { route: Extract<Route, { screen: 'fa
         void stop();
         return true;
       case '+':
-        go({ screen: 'new' });
+        addTerminal();
         return true;
     }
   });
@@ -200,7 +223,7 @@ export function Fleet({ route, onSearch }: { route: Extract<Route, { screen: 'fa
   const count = (f: Filter) => all.filter((t) => f === 'all' || lampOf(t) === f).length;
   const chips: [Filter, string, string][] = [
     ['all', 'a', 'all'],
-    ['needs', '!', 'needs you'],
+    ['needs', '!', 'needs'],
     ['working', 'w', 'working'],
     ['idle', 'i', 'idle'],
   ];
@@ -212,39 +235,40 @@ export function Fleet({ route, onSearch }: { route: Extract<Route, { screen: 'fa
   return (
     <Screen
       header={
-        <>
-          <Brand />
-          <Sep />
-          <div role="group" aria-label="Show terminals" style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-            {chips.map(([id, k, label]) => {
-              const n = count(id);
-              return (
-                <Key key={id} k={k} pressed={filter === id} onClick={() => setFilter(id)}>
-                  {label}
-                  <span className="t-dim" style={{ color: id === 'needs' && n ? 'var(--red-text)' : undefined }}>
-                    {n}
-                  </span>
-                </Key>
-              );
-            })}
-          </div>
-          <span style={{ flexGrow: 1 }} />
-          <Key k="/" aria-label="Search factories and terminals" onClick={onSearch}>
-            search
-          </Key>
-          <Key k="+" onClick={() => go({ screen: 'new' })}>
-            new factory
-          </Key>
-        </>
+        routeFactory ? (
+          <FactoryHeader
+            factory={routeFactory}
+            tab="terminals"
+            extra={
+              <Key k="+" onClick={addTerminal}>
+                new terminal
+              </Key>
+            }
+          />
+        ) : (
+          <>
+            <Brand />
+            <span style={{ flexGrow: 1 }} />
+            <Key k="/" aria-label="Search factories and terminals" onClick={onSearch}>
+              search
+            </Key>
+          </>
+        )
       }
       bodyStyle={{ flexDirection: 'row', flexWrap: 'wrap', gap: '14px 8px', alignItems: 'stretch', padding: '12px 8px 8px', overflow: 'hidden' }}
-      hints={typing ? [
+      hints={draft ? [
+        ['⏎', 'start it'],
+        ['⇧⏎', 'new line'],
+        ['tab', 'next field'],
+        ['j/k', 'other terminals, once out of the form'],
+      ] : typing ? [
         ['⌘↑', 'back to Sawtooth'],
         ['esc', `goes to ${cur ? harnessOf(cur) : 'the terminal'}: it stops its turn`],
         ['click outside', 'also takes you back'],
       ] : [
         ['j/k', 'move'],
         ['⏎', 'type in the terminal'],
+        ...(routeFactory ? ([['+', 'new terminal']] as [string, string][]) : []),
         ['n', 'next needs you'],
         ['a ! w i', 'filter'],
         ['r', 'rename'],
@@ -253,20 +277,33 @@ export function Fleet({ route, onSearch }: { route: Extract<Route, { screen: 'fa
         ['?', 'all keys'],
       ]}
       status={{
-        mode: typing ? 'TERMINAL' : 'FLEET',
+        mode: typing ? 'TERMINAL' : 'TERMINALS',
         path: typing && cur ? `keys go to ${cur.name} · ⌘↑ back to Sawtooth` : cur ? `${curGroupName}/${branch ?? tilde(cur.cwd)}` : curGroupName,
-        info: `${factories.length} factor${factories.length === 1 ? 'y' : 'ies'} · ${all.length} term · ${queued} queued`,
+        info: `${all.length} terminal${all.length === 1 ? '' : 's'}${drafts.length ? ` · ${drafts.length} not started` : ''}${routeFactory?.queue.length ? ` · ${queued} queued` : ''}`,
       }}
     >
       <Pane
         as="nav"
         aria-label="Factories and terminals"
-        title={<Titled k="1">fleet</Titled>}
-        scroll style={{ flex: '1 1 270px', maxWidth: 310, minHeight: 0, overflow: 'auto', padding: '14px 4px 10px', display: 'flex', flexDirection: 'column', gap: 12 }}
+        title={<Titled>terminals</Titled>}
+        scroll style={{ flex: '1 1 270px', maxWidth: 310, minHeight: 0, overflow: 'auto', padding: '12px 4px 10px', display: 'flex', flexDirection: 'column', gap: 12 }}
       >
+        <div role="group" aria-label="Show terminals" style={{ display: 'flex', flexWrap: 'wrap', gap: 2, padding: '0 4px' }}>
+          {chips.map(([id, k, label]) => {
+            const n = count(id);
+            return (
+              <Key key={id} k={k} size="xs" pressed={filter === id} onClick={() => setFilter(id)}>
+                {label}
+                <span className="t-dim" style={{ color: id === 'needs' && n ? 'var(--red-text)' : undefined }}>
+                  {n}
+                </span>
+              </Key>
+            );
+          })}
+        </div>
         {groups.map((g) => {
           const terms = g.terms.filter(matches);
-          if (!terms.length) return null;
+          if (!terms.length && !(filter === 'all' && drafts.length)) return null;
           return (
             <section key={g.id || 'other'} aria-label={g.name} style={{ display: 'flex', flexDirection: 'column' }}>
               <h2 style={{ display: 'flex', gap: 8, padding: '0 8px 2px', fontSize: 13, fontWeight: 500, color: 'var(--ink-2)' }}>
@@ -308,13 +345,44 @@ export function Fleet({ route, onSearch }: { route: Extract<Route, { screen: 'fa
                   </button>
                 );
               })}
+              {filter === 'all' &&
+                drafts.map((d) => {
+                  const on = d.id === draft?.id;
+                  return (
+                    <button
+                      key={d.id}
+                      type="button"
+                      className="t-row"
+                      aria-pressed={on}
+                      onClick={() => routeFactory && openFactory(routeFactory.id, 'terminals', d.id)}
+                      style={{ alignItems: 'flex-start', gap: 8, padding: '2px 8px', color: 'var(--ink-2)' }}
+                    >
+                      <span aria-hidden="true" style={{ width: 10, flexShrink: 0 }}>
+                        {on ? '›' : ' '}
+                      </span>
+                      <span aria-hidden="true" className="t-dim" style={{ width: '1ch' }}>
+                        +
+                      </span>
+                      <span style={{ flexGrow: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d.name}</span>
+                      <span className="t-dim">not started</span>
+                    </button>
+                  );
+                })}
             </section>
           );
         })}
-        {visible.length === 0 && <Empty style={{ padding: '0 8px' }}>{all.length ? 'nothing here' : 'no terminals yet'}</Empty>}
+        {visible.length === 0 && drafts.length === 0 && (
+          <Empty style={{ padding: '0 8px' }}>{all.length ? 'nothing here' : routeFactory ? 'no terminals yet · [+] starts one' : 'no terminals yet'}</Empty>
+        )}
       </Pane>
 
-      {cur ? (
+      {draft && routeFactory ? (
+        <Pane as="main" focus scroll title={<Titled strong>{draft.name}</Titled>} right={<span className="t-dim">not started</span>} style={{ flex: '999 1 520px', minHeight: 0, padding: '18px 16px' }}>
+          <div style={{ maxWidth: 640 }}>
+            <NewTerminal factory={routeFactory} draft={draft} git={git} onDiscard={() => openFactory(routeFactory.id, 'terminals')} />
+          </div>
+        </Pane>
+      ) : cur ? (
         <Current
           key={cur.id}
           t={cur}
@@ -327,12 +395,12 @@ export function Fleet({ route, onSearch }: { route: Extract<Route, { screen: 'fa
           typing={typing}
         />
       ) : (
-        <Pane as="main" focus title={<Titled k="2">no terminal</Titled>} style={{ flex: '999 1 520px', padding: '18px 14px', display: 'flex', flexDirection: 'column', gap: 10 }}>
-          <p className="t-muted">start an agent or a shell in a factory. it keeps running when the window closes.</p>
-          {curFactory && (
+        <Pane as="main" focus title={<Titled>no terminal</Titled>} style={{ flex: '999 1 520px', padding: '18px 14px', display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <p className="t-muted">start an agent or a shell. it keeps running when the window closes.</p>
+          {routeFactory && (
             <span>
-              <button type="button" className="t-solid is-sm" onClick={() => openFactory(curFactory.id, 'overview')}>
-                [p] add a terminal on the map
+              <button type="button" className="t-solid is-sm" onClick={addTerminal}>
+                [+] new terminal
               </button>
             </span>
           )}
@@ -403,7 +471,6 @@ function Current({
               onRename(name);
             }}
           >
-            <span className="t-dim">[2] </span>
             <input
               autoFocus
               aria-label="Terminal name"
@@ -421,7 +488,7 @@ function Current({
             />
           </form>
         ) : (
-          <Titled k="2" strong>
+          <Titled strong>
             {t.name}
           </Titled>
         )
@@ -439,31 +506,13 @@ function Current({
       }
       style={{ flex: '999 1 520px', minHeight: 0, display: 'flex', flexDirection: 'column', paddingTop: 6 }}
     >
-      <nav aria-label="Factory sections" style={{ display: 'flex', flexWrap: 'wrap', gap: '2px 14px', padding: '6px 14px 8px', borderBottom: '1px solid var(--line-soft)', fontSize: 12 }}>
-        {factory ? (
-          <>
-            <span className="t-dim">{factory.name}:</span>
-            <button type="button" className="t-tab" onClick={() => openFactory(factory.id, 'overview')}>
-              overview
-            </button>
-            <span aria-current="page" style={{ color: 'var(--ink)', textDecoration: 'underline', textUnderlineOffset: 4 }}>
-              terminals
-            </span>
-            <button type="button" className="t-tab" onClick={() => openFactory(factory.id, 'knowledge')}>
-              knowledge
-            </button>
-            <button type="button" className="t-tab" onClick={() => openFactory(factory.id, 'runs')}>
-              runs
-            </button>
-          </>
-        ) : (
-          <span className="t-dim">outside every factory · make a factory for its folder to see it on a map</span>
-        )}
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '2px 14px', padding: '6px 14px 8px', borderBottom: '1px solid var(--line-soft)', fontSize: 12 }}>
+        {!factory && <span className="t-dim">outside every factory · make a factory for its folder to see it on a map</span>}
         <span style={{ flexGrow: 1 }} />
         <span className="t-dim">
           {harnessOf(t)} · {branch ?? tilde(t.cwd)} · {age(t.started_at)}
         </span>
-      </nav>
+      </div>
 
       <div style={{ flex: '1 1 0', minHeight: 0, padding: '8px 4px 4px 12px' }}>
         <TerminalPane id={t.id} label={`Terminal: ${t.name}`} focusKey={focusKey} onLeave={onLeave} />
@@ -581,7 +630,7 @@ function Side({
 
   return (
     <div style={{ flex: '1 1 260px', maxWidth: 320, minHeight: 0, display: 'flex', flexDirection: 'column', gap: 14 }}>
-      <Pane title={<Titled k="3">run</Titled>} style={{ padding: '14px 12px 10px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+      <Pane title={<Titled>run</Titled>} style={{ padding: '14px 12px 10px', display: 'flex', flexDirection: 'column', gap: 8 }}>
         <dl style={{ display: 'grid', gridTemplateColumns: 'max-content minmax(0, 1fr)', gap: '2px 16px' }}>
           {stats.map(([label, value, on]) => (
             <div key={label} style={{ display: 'contents' }}>
@@ -612,7 +661,7 @@ function Side({
         </span>
       </Pane>
 
-      <Pane title={<Titled k="4">loop</Titled>} style={{ padding: '14px 12px 10px' }}>
+      <Pane title={<Titled>loop</Titled>} style={{ padding: '14px 12px 10px' }}>
         <ol>
           {loop.map((l) => (
             <li
@@ -634,7 +683,7 @@ function Side({
         </ol>
       </Pane>
 
-      <Pane title={<Titled k="5">files</Titled>} scroll style={{ flexGrow: 1, minHeight: 0, overflow: 'auto', padding: '14px 12px 10px' }}>
+      <Pane title={<Titled>files</Titled>} scroll style={{ flexGrow: 1, minHeight: 0, overflow: 'auto', padding: '14px 12px 10px' }}>
         {changes === undefined ? (
           <p className="t-dim">reading…</p>
         ) : changes === null ? (

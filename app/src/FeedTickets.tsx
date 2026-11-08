@@ -145,7 +145,7 @@ export function FeedTickets({ id }: { id: string }) {
       status={{ mode: 'TICKETS', path: factory?.name ?? id, info: `${n} picked` }}
     >
       <Pane
-        title={<Titled k="1" strong>tickets</Titled>}
+        title={<Titled strong>tickets</Titled>}
         heading={1}
         right={
           <span className="t-muted">

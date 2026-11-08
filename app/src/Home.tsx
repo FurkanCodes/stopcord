@@ -322,7 +322,7 @@ const listCols = '16px minmax(14ch, 1fr) minmax(0, 2fr) 8ch 8ch 8ch 12ch';
 
 function FactoryList({ cards, onOpen }: { cards: Card[]; onOpen: (c: Card) => void }) {
   return (
-    <Pane title={<Titled k="1">factories</Titled>} heading={1} style={{ padding: '14px 0 8px' }}>
+    <Pane title={<Titled>factories</Titled>} heading={1} style={{ padding: '14px 0 8px' }}>
       <div
         aria-hidden="true"
         style={{ display: 'grid', gridTemplateColumns: listCols, gap: 12, padding: '0 14px 6px', fontSize: 12, color: 'var(--ink-3)' }}
