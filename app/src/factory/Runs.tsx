@@ -11,7 +11,7 @@ const groups: Record<Filter, (r: Run) => boolean> = {
   all: () => true,
   checks: (r) => r.kind === 'check',
   intake: (r) => r.kind === 'ticket' || r.kind === 'trigger',
-  terminals: (r) => r.kind === 'terminal' || r.kind === 'knowledge' || r.kind === 'factory',
+  terminals: (r) => r.kind === 'terminal',
 };
 
 const chips: [Filter, string, string][] = [

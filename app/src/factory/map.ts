@@ -151,8 +151,12 @@ function conn(a: Rect, b: Rect, o: ConnOptions = {}): Conn {
     const right = b.x >= a.x + a.w;
     const sx = right ? a.x + a.w : a.x;
     const ex = right ? b.x : b.x + b.w;
-    const ey = clamp(o.ey ?? acy, b.y + 14, b.y + b.h - 14);
-    const sy = clamp(o.sy ?? ey, a.y + 14, a.y + a.h - 14);
+    let ey = clamp(o.ey ?? acy, b.y + 14, b.y + b.h - 14);
+    let sy = clamp(o.sy ?? ey, a.y + 14, a.y + a.h - 14);
+    // Straight across whenever the two boxes share a height it can run at: no small jogs.
+    const lo = Math.max(a.y + 14, b.y + 14);
+    const hi = Math.min(a.y + a.h - 14, b.y + b.h - 14);
+    if (sy !== ey && o.sy === undefined && o.ey === undefined && lo <= hi) sy = ey = clamp(ey, lo, hi);
     const mx = o.mx ?? Math.round((sx + ex) / 2);
     const d = sy === ey ? `M${sx} ${sy}H${ex}` : `M${sx} ${sy}H${mx}V${ey}H${ex}`;
     const lab = sy === ey ? { x: (sx + ex) / 2, y: sy - 20, center: true } : { x: mx + 6, y: (sy + ey) / 2 - 9 };
@@ -324,15 +328,22 @@ export function layoutMap(parts: Part[], rows: number, pos: Record<string, Pos>,
   }
   // Every check hangs off one line out of the sandbox, so they share a trunk instead of each leaving on its own.
   let trunk: number | undefined;
+  const checkY: Record<string, number> = {};
+  const back = guards.find((p) => p.part.id === failId);
   guards.forEach((p, i) => {
-    const c = route(sandbox, p.r, trunk === undefined ? {} : { sy: trunk, mx: sandbox.x + sandbox.w + G });
+    // Into a check that sends fails back, the line runs high, leaving the low band for the fail line.
+    const high = p === back ? { ey: p.r.y + 20 } : {};
+    const c = route(sandbox, p.r, trunk === undefined ? high : { sy: trunk, mx: sandbox.x + sandbox.w + G });
     if (i === 0 && c.dir === 'r') trunk = c.ey;
+    checkY[p.part.id] = c.ey;
     add(`check:${p.part.id}`, c, lit.check === p.part.id || lit.failed === p.part.id, { label: i === 0 ? '3 every commit' : '' });
   });
-  const back = guards.find((p) => p.part.id === failId);
   if (back) {
     // Low on the check, but straight whenever the sandbox reaches that far down.
-    const y = Math.max(back.r.y + 14, Math.min(back.r.y + back.r.h - 16, sandbox.y + sandbox.h - 14));
+    let y = Math.max(back.r.y + 14, Math.min(back.r.y + back.r.h - 16, sandbox.y + sandbox.h - 14));
+    // Never on top of the line into the same check.
+    const cy = checkY[back.part.id];
+    if (cy !== undefined && Math.abs(y - cy) < 14) y = cy + 18 <= back.r.y + back.r.h - 8 ? cy + 18 : cy - 18;
     add(`fail:${back.part.id}`, route(back.r, sandbox, { sy: y, ey: y }), lit.failed === back.part.id, { label: 'fails go back', dash: true, below: true });
   }
   const logLine = connDownRight(sandbox, log);

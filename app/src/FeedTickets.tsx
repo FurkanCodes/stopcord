@@ -134,14 +134,18 @@ export function FeedTickets({ id }: { id: string }) {
     <Screen
       header={header}
       bodyStyle={{ overflow: 'auto', padding: '16px 8px 10px' }}
-      hints={[
-        ['j/k', 'move'],
-        ['space', 'pick'],
-        ['/', 'filter'],
-        ['⏎', 'feed picked'],
-        ['r', 'list again'],
-        ['esc', 'back'],
-      ]}
+      hints={
+        part
+          ? [
+              ['j/k', 'move'],
+              ['space', 'pick'],
+              ['/', 'filter'],
+              ['⏎', 'feed picked'],
+              ['r', 'list again'],
+              ['esc', 'back'],
+            ]
+          : [['esc', 'back to the factory']]
+      }
       status={{ mode: 'TICKETS', path: factory?.name ?? id, info: `${n} picked` }}
     >
       <Pane

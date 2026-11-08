@@ -27,9 +27,11 @@ export function FactoryHeader({ factory, tab, extra }: { factory: Factory; tab: 
       </nav>
       <span style={{ flexGrow: 1 }} />
       {extra}
-      <Key k="t" onClick={() => go({ screen: 'tickets', id: factory.id })}>
-        feed tickets
-      </Key>
+      {factory.parts.some((p) => p.kind === 'tickets') && (
+        <Key k="t" onClick={() => go({ screen: 'tickets', id: factory.id })}>
+          feed tickets
+        </Key>
+      )}
     </>
   );
 }

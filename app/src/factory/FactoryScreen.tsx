@@ -58,8 +58,13 @@ export function FactoryScreen({ id, onSearch }: { id: string; onSearch: () => vo
       if (tab !== route.tab) openFactory(id, tab);
       return true;
     }
-    if (e.key === 't' && factory) {
+    if (e.key === 't' && factory?.parts.some((p) => p.kind === 'tickets')) {
       go({ screen: 'tickets', id });
+      return true;
+    }
+    if (e.key === '+' && factory) {
+      // A new terminal opens where terminals are: the terminals tab.
+      openFactory(id, 'terminals', newDraft(id).id);
       return true;
     }
     if (e.key === 'Escape') {

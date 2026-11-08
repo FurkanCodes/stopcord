@@ -5,7 +5,10 @@ import { tilde } from './text';
 import { ago } from './time';
 import { Brand, Empty, Glyph, Key, Pane, Screen, Sep, Titled, type Status } from './tui/kit';
 import { plain, useKeys } from './tui/keys';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+
+/** The factory last opened from Home, to come back to. */
+let lastOpened: string | null = null;
 
 const bars = '▁▂▃▄▅▆▇█';
 
@@ -64,7 +67,17 @@ export function Home({ onSearch }: { onSearch: () => void }) {
   const queuedTotal = factories.reduce((n, f) => n + f.queue.length, 0);
   const shown = cards.filter((c) => filter === 'all' || c.needs > 0);
 
-  const open = (c: Card) => openFactory(c.id, c.factory ? 'overview' : 'terminals');
+  const open = (c: Card) => {
+    lastOpened = c.id;
+    openFactory(c.id, c.factory ? 'overview' : 'terminals');
+  };
+
+  // A card has focus from the start, the one you came back from if any, so keys work at once.
+  useEffect(() => {
+    if (document.activeElement && document.activeElement !== document.body) return;
+    const cards = [...document.querySelectorAll<HTMLElement>('[data-card]')];
+    (cards.find((el) => el.dataset.id === lastOpened) ?? cards[0])?.focus({ preventScroll: true });
+  }, [shown.length, view]);
 
   useKeys((e) => {
     if (!plain(e)) return;
@@ -231,6 +244,7 @@ function FactoryPane({ card: c, runs, onOpen }: { card: Card; runs: Run[] | unde
     <button
       type="button"
       data-card
+      data-id={c.id}
       data-hot={String(hot)}
       aria-label={a11yOf(c)}
       onClick={onOpen}
@@ -357,6 +371,7 @@ function FactoryList({ cards, onOpen }: { cards: Card[]; onOpen: (c: Card) => vo
               <button
                 type="button"
                 data-card
+                data-id={c.id}
                 data-hot={String(hot)}
                 aria-label={a11yOf(c)}
                 onClick={() => onOpen(c)}
