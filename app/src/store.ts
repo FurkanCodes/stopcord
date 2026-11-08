@@ -6,7 +6,7 @@ import { listen } from '@tauri-apps/api/event';
 import { api, daemon, failureText, type Factory, type Run, type Terminal } from './api';
 import type { LampState } from '@sawtooth/ui';
 
-export type Tab = 'overview' | 'terminals' | 'knowledge' | 'runs' | 'feed';
+export type Tab = 'overview' | 'terminals' | 'knowledge' | 'runs';
 export type View = 'canvas' | 'list';
 
 export type Route =

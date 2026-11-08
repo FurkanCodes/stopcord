@@ -17,7 +17,6 @@ import {
   type Tab,
 } from '../store';
 import { EditPanel } from './EditPanel';
-import { FeedTickets } from './FeedTickets';
 import { FlowCanvas } from './FlowCanvas';
 import { FlowList } from './FlowList';
 import { Knowledge } from './Knowledge';
@@ -155,7 +154,14 @@ export function FactoryScreen({ id }: { id: string }) {
           <ViewSwitch value={view} onValueChange={(v) => setState({ factoryView: v })} options={factoryViews} />
         )}
         {hasTickets && (
-          <Button variant="quiet" onClick={() => go({ ...route, tab: 'feed' })}>
+          <Button
+            variant="quiet"
+            onClick={() => {
+              const tickets = factory.parts.find((p) => p.kind === 'tickets');
+              if (route.tab !== 'overview') go({ ...route, tab: 'overview' });
+              if (tickets) select(tickets.id);
+            }}
+          >
             Feed tickets
           </Button>
         )}
@@ -186,8 +192,6 @@ export function FactoryScreen({ id }: { id: string }) {
             git={project?.git ?? true}
             onClose={() => select(null)}
             onOpenTerminal={pickTerminal}
-            onFeed={() => go({ ...route, tab: 'feed' })}
-            onOpenKnowledge={() => go({ ...route, tab: 'knowledge' })}
           />
         )}
       </SectionTabs.Panel>
@@ -205,9 +209,6 @@ export function FactoryScreen({ id }: { id: string }) {
       </SectionTabs.Panel>
       <SectionTabs.Panel value="runs" className="flex min-h-0">
         <Runs runs={runs} terminals={terminals} />
-      </SectionTabs.Panel>
-      <SectionTabs.Panel value="feed" className="flex min-h-0">
-        <FeedTickets factory={factory} onDone={() => go({ ...route, tab: 'overview' })} />
       </SectionTabs.Panel>
     </SectionTabs.Root>
   );

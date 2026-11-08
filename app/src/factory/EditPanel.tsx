@@ -1,21 +1,20 @@
 import { useEffect, useState, type ReactNode } from 'react';
-import { Button, Field, NeedsBar, Panel, Select, TextArea, TextInput } from '@sawtooth/ui';
-import { api, daemon, type Factory, type Part, type Run, type Terminal } from '../api';
+import { Button, Field, Panel, TextInput } from '@sawtooth/ui';
+import { api, daemon, type Factory, type Run, type Terminal } from '../api';
 import { lastSize } from '../TerminalPane';
 import {
-  changeFactory,
   harnessOf,
   putTerminal,
-  refreshFactories,
   setState,
   showProblem,
   stateWords,
   useStore,
   type Draft,
 } from '../store';
-import { ago } from '../time';
 import { tilde } from '../text';
-import { branchFrom, harnessFiles, iconOf, kindWords, runsInWords, runsOnWords, whenWords } from './parts';
+import { branchFrom } from './parts';
+import { PartPanel } from './PartPanel';
+import { HarnessField } from './PartSettings';
 
 export interface EditPanelProps {
   factory: Factory;
@@ -26,8 +25,6 @@ export interface EditPanelProps {
   git: boolean;
   onClose: () => void;
   onOpenTerminal: (id: string) => void;
-  onFeed: () => void;
-  onOpenKnowledge: () => void;
 }
 
 /** Whatever is selected on the canvas or in the list, edited in place. */
@@ -40,318 +37,6 @@ export function EditPanel(props: EditPanelProps) {
   const draft = drafts.find((d) => d.id === selected);
   if (draft) return <DraftPanel key={draft.id} {...props} draft={draft} />;
   return null;
-}
-
-// ---- Parts --------------------------------------------------------------------
-
-function PartPanel({ factory, part, runs, onClose, onFeed, onOpenKnowledge }: EditPanelProps & { part: Part }) {
-  const update = (patch: Partial<Part>) =>
-    changeFactory({ ...factory, parts: factory.parts.map((p) => (p.id === part.id ? { ...p, ...patch } : p)) });
-  const remove = () => {
-    const layout = { ...factory.layout };
-    delete layout[part.id];
-    changeFactory({ ...factory, parts: factory.parts.filter((p) => p.id !== part.id), layout });
-    onClose();
-  };
-  const last = runs?.find((r) => r.part === part.id);
-
-  return (
-    <Panel
-      icon={iconOf[part.kind]}
-      title={kindWords[part.kind]}
-      onClose={onClose}
-      onDelete={remove}
-      deleteLabel={`Delete ${part.name}`}
-      className="min-h-0 overflow-y-auto"
-    >
-      <Field label="Name">
-        <TextInput value={part.name} onChange={(e) => update({ name: e.currentTarget.value })} />
-      </Field>
-
-      {part.kind === 'knowledge' && <KnowledgeFields factory={factory} part={part} update={update} onOpen={onOpenKnowledge} />}
-
-      {part.kind === 'folder' && (
-        <Field label="Folder" description="In the project, such as specs/. Agents read these files when they need them.">
-          <TextInput mono value={part.folder} onChange={(e) => update({ folder: e.currentTarget.value })} />
-        </Field>
-      )}
-
-      {part.kind === 'check' && (
-        <>
-          <Field label="Command" description="Has to exit 0. Runs in the terminal's own folder.">
-            <TextInput
-              mono
-              value={part.command}
-              placeholder="./scripts/my-check.sh"
-              onChange={(e) => update({ command: e.currentTarget.value })}
-            />
-          </Field>
-          <Field label="Runs on">
-            <Select
-              items={Object.entries(runsOnWords).map(([value, label]) => ({ value, label }))}
-              value={part.runsOn}
-              onValueChange={(v) => v && update({ runsOn: v as Part['runsOn'] })}
-            />
-          </Field>
-        </>
-      )}
-
-      {part.kind === 'trigger' && <TriggerFields part={part} update={update} />}
-
-      {part.kind === 'tickets' && (
-        <>
-          <Field label="Command" description="Prints a JSON list of tickets, each with a number or key, a title and a body.">
-            <TextInput
-              mono
-              value={part.command}
-              placeholder="gh issue list --json number,title,body,url"
-              onChange={(e) => update({ command: e.currentTarget.value })}
-            />
-          </Field>
-          <HarnessField
-            label="Start command"
-            description="What each ticket's terminal runs."
-            value={part.harness}
-            onChange={(harness) => update({ harness })}
-          />
-          <Field label="Running at once">
-            <Select
-              items={['1', '2', '3', '4', '5'].map((n) => ({ value: n, label: n }))}
-              value={String(part.atOnce || 1)}
-              onValueChange={(v) => v && update({ atOnce: Number(v) })}
-            />
-          </Field>
-          <Button variant="solid" className="self-start" onClick={onFeed} disabled={!part.command}>
-            Feed tickets
-          </Button>
-        </>
-      )}
-
-      {last && (part.kind === 'check' || part.kind === 'trigger') && (
-        <section className="flex flex-col gap-1.5">
-          <h3 className="m-0 text-body font-medium text-ink-2">Last run</h3>
-          <p className={part.kind === 'check' && last.ok === false ? 'm-0 text-body text-needs-text' : 'm-0 text-body'}>
-            {last.text} · {ago(last.at)}
-          </p>
-          {last.detail && (
-            <pre className="m-0 max-h-48 overflow-auto rounded-row bg-term p-2.5 font-mono text-meta whitespace-pre-wrap text-ink-2">
-              {last.detail}
-            </pre>
-          )}
-        </section>
-      )}
-
-      {factory.problems.length > 0 && (part.kind === 'check' || part.kind === 'knowledge') && (
-        <section className="flex flex-col gap-1.5">
-          <h3 className="m-0 text-body font-medium text-ink-2">Couldn't set up</h3>
-          {factory.problems.map((p) => (
-            <p key={p} className="m-0 text-body text-ink-2">
-              {p}
-            </p>
-          ))}
-        </section>
-      )}
-    </Panel>
-  );
-}
-
-function KnowledgeFields({
-  factory,
-  part,
-  update,
-  onOpen,
-}: {
-  factory: Factory;
-  part: Part;
-  update: (patch: Partial<Part>) => void;
-  onOpen: () => void;
-}) {
-  const [text, setText] = useState<string | null>(null);
-  const [dirty, setDirty] = useState(false);
-  useEffect(() => {
-    if (dirty) return;
-    api.knowledge(factory.id).then(
-      (k) => setText(k.text),
-      () => setText(''),
-    );
-  }, [factory.id, factory.knowledgeChanged, dirty]);
-
-  const save = async () => {
-    if (!dirty || text === null) return;
-    try {
-      await api.saveKnowledge(factory.id, text);
-      setDirty(false);
-      await refreshFactories();
-    } catch (e) {
-      showProblem(e);
-    }
-  };
-  const review = async (approve: boolean) => {
-    try {
-      await (approve ? api.approveKnowledge(factory.id) : api.undoKnowledge(factory.id));
-      setDirty(false);
-      await refreshFactories();
-    } catch (e) {
-      showProblem(e);
-    }
-  };
-
-  return (
-    <>
-      {factory.knowledgeChanged && (
-        <NeedsBar
-          action={
-            <Button variant="solid" size="sm" onClick={() => void review(true)}>
-              Approve
-            </Button>
-          }
-        >
-          Changed by an agent
-        </NeedsBar>
-      )}
-      <fieldset className="m-0 flex flex-col gap-1.5 border-0 p-0">
-        <legend className="mb-1.5 p-0 text-body font-medium text-ink-2">Read as</legend>
-        {harnessFiles.map((file) => (
-          <label key={file} className="flex items-center gap-2 font-mono text-meta">
-            <input
-              type="checkbox"
-              className="accent-ink"
-              checked={part.readAs.includes(file)}
-              onChange={(e) =>
-                update({ readAs: e.currentTarget.checked ? [...part.readAs, file] : part.readAs.filter((x) => x !== file) })
-              }
-            />
-            {file}
-          </label>
-        ))}
-        {part.readAs.length === 0 && <p className="m-0 text-meta text-needs-text">Pick at least one, or no harness reads it.</p>}
-      </fieldset>
-      <Field label="Text" description={dirty ? 'Saved when you leave the field.' : undefined}>
-        <TextArea
-          rows={12}
-          value={text ?? ''}
-          disabled={text === null}
-          onChange={(e) => {
-            setText(e.currentTarget.value);
-            setDirty(true);
-          }}
-          onBlur={() => void save()}
-        />
-      </Field>
-      <div className="flex gap-2">
-        <Button variant="quiet" onClick={onOpen}>
-          Open in Knowledge
-        </Button>
-        {factory.knowledgeChanged && (
-          <Button variant="quiet" onClick={() => void review(false)}>
-            Undo the agent's changes
-          </Button>
-        )}
-      </div>
-    </>
-  );
-}
-
-function TriggerFields({ part, update }: { part: Part; update: (patch: Partial<Part>) => void }) {
-  // With no terminal to come from, a trigger has to start one.
-  const sourceless = part.when === 'schedule' || part.when === 'ticketFed';
-  const runsIn = Object.entries(runsInWords)
-    .filter(([value]) => !(sourceless && value === 'same'))
-    .map(([value, label]) => ({ value, label }));
-  const effectiveRunsIn = sourceless && part.runsIn === 'same' ? 'new' : part.runsIn;
-  return (
-    <>
-      <Field label="When">
-        <Select
-          items={Object.entries(whenWords).map(([value, label]) => ({ value, label }))}
-          value={part.when}
-          onValueChange={(v) => {
-            if (!v) return;
-            const when = v as Part['when'];
-            const patch: Partial<Part> = { when };
-            if ((when === 'schedule' || when === 'ticketFed') && part.runsIn === 'same') patch.runsIn = 'new';
-            if (when === 'schedule' && !part.schedule) patch.schedule = 'every day 09:00';
-            update(patch);
-          }}
-        />
-      </Field>
-      {part.when === 'schedule' && (
-        <Field label="Schedule" description="every day 09:00 · every monday 09:00 · every 30 minutes">
-          <TextInput value={part.schedule} onChange={(e) => update({ schedule: e.currentTarget.value })} />
-        </Field>
-      )}
-      <Field label="Runs in">
-        <Select items={runsIn} value={effectiveRunsIn} onValueChange={(v) => v && update({ runsIn: v as Part['runsIn'] })} />
-      </Field>
-      {effectiveRunsIn !== 'same' && (
-        <HarnessField
-          label="Start command"
-          description="What the trigger's terminal runs."
-          value={part.harness}
-          onChange={(harness) => update({ harness })}
-        />
-      )}
-      <Field label="Prompt" description="Typed into the terminal once it's ready.">
-        <TextArea
-          rows={6}
-          value={part.prompt}
-          placeholder="What it types into the terminal"
-          onChange={(e) => update({ prompt: e.currentTarget.value })}
-        />
-      </Field>
-    </>
-  );
-}
-
-/** Pick a harness by name, or type any other command. */
-function HarnessField({
-  label,
-  description,
-  value,
-  onChange,
-  allowShell = false,
-}: {
-  label: string;
-  description?: ReactNode;
-  value: string;
-  onChange: (value: string) => void;
-  allowShell?: boolean;
-}) {
-  const agents = useStore((s) => s.agents);
-  const installed = useStore((s) => s.installed);
-  const known = agents.includes(value) || (allowShell && value === '');
-  const [other, setOther] = useState(!known && value !== '');
-  const items = [
-    ...(allowShell ? [{ value: '', label: 'Shell' }] : []),
-    ...agents.map((a) => ({ value: a, label: installed && !installed.includes(a) ? `${a} (not found)` : a })),
-    { value: '__other', label: 'Other command' },
-  ];
-  return (
-    <>
-      <Field label={label} description={other ? undefined : description}>
-        <Select
-          mono
-          items={items}
-          value={other ? '__other' : value}
-          placeholder="Pick a harness"
-          onValueChange={(v) => {
-            if (v === '__other') {
-              setOther(true);
-              onChange('');
-            } else {
-              setOther(false);
-              onChange(v ?? '');
-            }
-          }}
-        />
-      </Field>
-      {other && (
-        <Field label="Command" description="Any command that starts a harness.">
-          <TextInput mono value={value} onChange={(e) => onChange(e.currentTarget.value)} />
-        </Field>
-      )}
-    </>
-  );
 }
 
 // ---- Terminals ----------------------------------------------------------------
@@ -386,7 +71,7 @@ function TerminalPanel({ terminal: t, onClose, onOpenTerminal }: EditPanelProps 
   };
 
   return (
-    <Panel icon="terminal" title="Terminal" onClose={onClose} className="min-h-0 overflow-y-auto">
+    <Panel icon="terminal" title={t.name} onClose={onClose} className="min-h-0 overflow-y-auto">
       <Field label="Name">
         <TextInput
           value={name}

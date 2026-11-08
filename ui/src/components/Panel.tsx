@@ -7,34 +7,63 @@ import { Tooltip } from './Tooltip';
 
 export interface PanelProps extends React.ComponentPropsWithoutRef<'aside'> {
   icon: IconName;
-  /** The kind of part being edited: "Guardrail", "Knowledge base". */
+  /** What's open: the part's name, or the file inside it. */
   title: string;
   onClose?: () => void;
   onDelete?: () => void;
   /** Defaults to "Delete <title>". */
   deleteLabel?: string;
+  /** Shows a back arrow in place of the icon, for a file opened from a list. */
+  onBack?: () => void;
+  backLabel?: string;
+  /** Icon buttons before Delete and Close: Edit, Settings. */
+  actions?: React.ReactNode;
+  /** Wider, for reading a file. */
+  wide?: boolean;
 }
 
 /**
  * The edit panel on the right. Whatever is selected on the canvas or in the list is
  * edited here, in place. Fields stack with 18px between them.
  */
-export function Panel({ icon, title, onClose, onDelete, deleteLabel, className, children, ...props }: PanelProps) {
+export function Panel({
+  icon,
+  title,
+  onClose,
+  onDelete,
+  deleteLabel,
+  onBack,
+  backLabel = 'Back',
+  actions,
+  wide,
+  className,
+  children,
+  ...props
+}: PanelProps) {
   const id = React.useId();
   return (
     <aside
       aria-labelledby={id}
       className={cx(
-        'box-border flex w-[350px] min-w-[290px] flex-col gap-[18px] border-l border-line bg-raised pt-2.5 pr-3.5 pb-7 pl-[18px]',
+        'box-border flex min-w-[290px] shrink-0 flex-col gap-[18px] border-l border-line bg-raised pt-2.5 pr-3.5 pb-7 pl-[18px]',
+        'transition-[width] duration-200 ease-calm motion-reduce:transition-none',
         className,
       )}
       {...props}
+      style={{ width: wide ? 640 : 350, maxWidth: wide ? '55vw' : undefined, ...props.style }}
     >
       <div className="flex h-8 items-center gap-2">
-        <Icon name={icon} size={16} className="text-ink-2" />
-        <h2 id={id} className="m-0 grow text-title font-semibold">
+        {onBack ? (
+          <Tooltip label={backLabel}>
+            <IconButton icon="back" label={backLabel} onClick={onBack} className="-ml-2" />
+          </Tooltip>
+        ) : (
+          <Icon name={icon} size={16} className="shrink-0 text-ink-2" />
+        )}
+        <h2 id={id} className="m-0 min-w-0 grow truncate text-title font-semibold">
           {title}
         </h2>
+        {actions}
         {onDelete && (
           <Tooltip label="Delete">
             <IconButton icon="trash" label={deleteLabel ?? `Delete ${title}`} onClick={onDelete} />

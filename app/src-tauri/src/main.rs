@@ -453,6 +453,78 @@ fn undo_knowledge(app: State<'_, App>, id: String) -> Result<(), Failure> {
     Ok(())
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct FileEntry {
+    /// Relative to the folder.
+    path: String,
+    title: String,
+    /// The first line of text after the title, if any.
+    summary: String,
+    /// Last change, in ms since the epoch.
+    modified: u64,
+}
+
+/// A Markdown file's title (its first heading, or its name) and its first line of text.
+fn describe(text: &str, path: &str) -> (String, String) {
+    let name = Path::new(path)
+        .file_stem()
+        .map(|s| s.to_string_lossy().replace(['-', '_'], " "))
+        .unwrap_or_default();
+    let mut title = None;
+    let mut summary = String::new();
+    let mut in_code = false;
+    for line in text.lines() {
+        let line = line.trim();
+        if line.starts_with("```") {
+            in_code = !in_code;
+            continue;
+        }
+        if in_code || line.is_empty() || line.starts_with("<!--") || line.starts_with("---") {
+            continue;
+        }
+        if let Some(h) = line.strip_prefix('#') {
+            if title.is_none() {
+                title = Some(h.trim_start_matches('#').trim().to_string());
+            }
+            continue;
+        }
+        let plain: String = line
+            .trim_start_matches(['-', '*', '>', ' '])
+            .chars()
+            .filter(|c| !matches!(c, '*' | '`' | '_'))
+            .collect();
+        summary = plain.chars().take(160).collect();
+        break;
+    }
+    (title.filter(|t| !t.is_empty()).unwrap_or(name), summary)
+}
+
+/// The Markdown files in a folder part, each with its title and first line.
+#[tauri::command(async)]
+fn folder_files(app: State<'_, App>, id: String, part_id: String) -> Result<Vec<FileEntry>, Failure> {
+    let factory = app.store.get(&id).map_err(fail)?;
+    let part = factory
+        .parts
+        .iter()
+        .find(|p| p.id == part_id)
+        .ok_or_else(|| Failure::new("invalid_params", "there's no such part"))?;
+    let dir = app.inside(&id, part.folder.trim())?;
+    let mut out = Vec::new();
+    for rel in markdown_files(&dir, 500) {
+        let file = dir.join(&rel);
+        let text = std::fs::read_to_string(&file).unwrap_or_default();
+        let (title, summary) = describe(&text, &rel);
+        let modified = std::fs::metadata(&file)
+            .and_then(|m| m.modified())
+            .ok()
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map_or(0, |d| d.as_millis() as u64);
+        out.push(FileEntry { path: rel, title, summary, modified });
+    }
+    Ok(out)
+}
+
 #[tauri::command(async)]
 fn read_file(app: State<'_, App>, id: String, path: String) -> Result<String, Failure> {
     let file = app.inside(&id, &path)?;
@@ -585,6 +657,7 @@ fn main() {
             undo_knowledge,
             read_file,
             write_file,
+            folder_files,
             list_tickets,
             feed_tickets,
             nearby_folders,
@@ -604,4 +677,22 @@ fn main() {
         #[cfg(not(target_os = "macos"))]
         let _ = (handle, event);
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::describe;
+
+    #[test]
+    fn describes_a_markdown_file() {
+        assert_eq!(
+            describe("# Tax\n\nCanadian invoices show **GST** as its own line.\n", "tax.md"),
+            ("Tax".to_string(), "Canadian invoices show GST as its own line.".to_string())
+        );
+        assert_eq!(
+            describe("<!-- note -->\n- first point\n", "partial-refunds.md"),
+            ("partial refunds".to_string(), "first point".to_string())
+        );
+        assert_eq!(describe("", "x.md"), ("x".to_string(), String::new()));
+    }
 }

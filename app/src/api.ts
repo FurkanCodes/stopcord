@@ -90,6 +90,16 @@ export interface Knowledge {
   folders: { partId: string; name: string; folder: string; exists: boolean; files: string[] }[];
 }
 
+/** A Markdown file in a folder part. */
+export interface FileEntry {
+  /** Relative to the folder. */
+  path: string;
+  title: string;
+  /** Its first line of text after the title. */
+  summary: string;
+  modified: number;
+}
+
 export interface ProjectInfo {
   git: boolean;
   branch: string | null;
@@ -149,6 +159,7 @@ export const api = {
   undoKnowledge: (id: string) => invoke<void>('undo_knowledge', { id }),
   readFile: (id: string, path: string) => invoke<string>('read_file', { id, path }),
   writeFile: (id: string, path: string, text: string) => invoke<void>('write_file', { id, path, text }),
+  folderFiles: (id: string, partId: string) => invoke<FileEntry[]>('folder_files', { id, partId }),
   listTickets: (id: string) => invoke<Ticket[]>('list_tickets', { id }),
   feedTickets: (id: string, tickets: Ticket[]) => invoke<Factory>('feed_tickets', { id, tickets }),
   nearbyFolders: () => invoke<FolderSuggestion[]>('nearby_folders'),
