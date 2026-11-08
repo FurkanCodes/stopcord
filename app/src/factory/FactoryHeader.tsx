@@ -16,7 +16,9 @@ export function FactoryHeader({ factory, tab, extra }: { factory: Factory; tab: 
     <>
       <Brand />
       <Sep ch="›" />
-      <span style={{ fontWeight: 600 }}>{factory.name}</span>
+      <button type="button" className="t-key" style={{ padding: '0 6px', fontWeight: 600, color: 'var(--ink)' }} title="Open the factory map" onClick={() => openFactory(factory.id, 'overview')}>
+        {factory.name}
+      </button>
       <Sep />
       <nav aria-label="Factory sections" style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
         {tabs.map(([id, k, label]) => (

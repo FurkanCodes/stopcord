@@ -134,7 +134,21 @@ export function Titled({ k, children, strong }: { k?: string; children: ReactNod
   );
 }
 
-export type Hint = [keys: string, words: string];
+/** A key and what it does. Pass `false` third for a hint that must not be clicked. */
+export type Hint = [keys: string, words: string] | [keys: string, words: string, clickable: false];
+
+/** The key a click on a hint presses, or null when the hint names several keys or a gesture. */
+function keyOf(keys: string): KeyboardEventInit | null {
+  const named: Record<string, KeyboardEventInit> = {
+    esc: { key: 'Escape' },
+    space: { key: ' ' },
+    '⌘S': { key: 's', metaKey: true },
+    '⌘O': { key: 'o', metaKey: true },
+    '⌘↑': { key: 'ArrowUp', metaKey: true },
+  };
+  if (named[keys]) return named[keys];
+  return [...keys].length === 1 && !/[\s⏎]/.test(keys) ? { key: keys } : null;
+}
 
 let shown: Hint[] = [];
 
@@ -149,11 +163,30 @@ export function Hints({ keys }: { keys: Hint[] }) {
   });
   return (
     <div className="t-hints">
-      {keys.map(([k, words]) => (
-        <span key={k + words}>
-          <b>{k}</b> {words}
-        </span>
-      ))}
+      {keys.map(([k, words, clickable]) => {
+        const press = clickable === false ? null : keyOf(k);
+        if (!press) {
+          return (
+            <span key={k + words}>
+              <b>{k}</b> {words}
+            </span>
+          );
+        }
+        return (
+          <button
+            key={k + words}
+            type="button"
+            className="t-hint"
+            // Keep focus where it is, so the key acts on what you were on.
+            onMouseDown={(e) => {
+              if (press.key !== 'ArrowUp') e.preventDefault();
+            }}
+            onClick={() => window.dispatchEvent(new KeyboardEvent('keydown', { ...press, bubbles: true }))}
+          >
+            <b>{k}</b> {words}
+          </button>
+        );
+      })}
     </div>
   );
 }

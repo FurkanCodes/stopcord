@@ -219,6 +219,21 @@ textarea::placeholder {
   font-weight: 400;
   color: var(--ink);
 }
+/* A hint is also a button: clicking it presses its key. */
+.t-hints .t-hint {
+  all: unset;
+  cursor: pointer;
+  border-radius: 3px;
+  padding: 0 3px;
+  margin: 0 -3px;
+}
+.t-hints .t-hint:hover {
+  background: var(--bar-2);
+  color: var(--ink-2);
+}
+.t-hints .t-hint:focus-visible {
+  outline: 1px solid var(--line-focus);
+}
 
 .t-status {
   display: flex;

@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { factoryOf, harnessOf, lampOf, openFactory, useStore } from '../store';
-import { currentHints, Glyph, Pane, Titled } from './kit';
+import { currentHints, Glyph, Key, Pane, Titled, type Hint } from './kit';
 import { holdKeys, useKeys } from './keys';
 
 function useHold() {
@@ -76,7 +76,16 @@ export function Search({ onClose }: { onClose: () => void }) {
 
   return (
     <div className="t-overlay" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <Pane title={<Titled k="/">search</Titled>} right={`${hits.length} found`} style={{ paddingTop: 14 }} role="dialog" aria-label="Search">
+      <Pane
+        title={<Titled k="/">search</Titled>}
+        right={
+          <span style={{ display: 'inline-flex', gap: 8, alignItems: 'center' }}>
+            {hits.length} found
+            <Key k="esc" size="xs" onClick={onClose}>
+              close
+            </Key>
+          </span>
+        } style={{ paddingTop: 14 }} role="dialog" aria-label="Search">
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, margin: '0 14px 8px', paddingBottom: 4, borderBottom: '1px solid var(--line)' }}>
           <label htmlFor="search" className="t-dim">
             /<span className="sr-only">Search factories and terminals</span>
@@ -155,7 +164,7 @@ export function Help({ onClose }: { onClose: () => void }) {
       return true;
     }, { overlay: true, whileTyping: true });
   const here = currentHints().filter(([k]) => k !== '?');
-  const row = ([k, words]: [string, string]) => (
+  const row = ([k, words]: Hint) => (
     <li key={k + words} style={{ display: 'flex', gap: 16, padding: '1px 14px' }}>
       <span style={{ width: '12ch', flexShrink: 0, color: 'var(--ink)' }}>{k}</span>
       <span className="t-muted">{words}</span>
@@ -163,7 +172,14 @@ export function Help({ onClose }: { onClose: () => void }) {
   );
   return (
     <div className="t-overlay" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <Pane title={<Titled k="?">all keys</Titled>} scroll style={{ padding: '12px 0 10px' }} role="dialog" aria-label="All keys">
+      <Pane
+        title={<Titled k="?">all keys</Titled>}
+        right={
+          <Key k="esc" size="xs" onClick={onClose}>
+            close
+          </Key>
+        }
+        scroll style={{ padding: '12px 0 10px' }} role="dialog" aria-label="All keys">
         <h2 className="t-dim" style={{ fontSize: 12, fontWeight: 400, padding: '0 14px 2px' }}>
           ── this screen
         </h2>

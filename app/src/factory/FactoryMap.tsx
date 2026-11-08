@@ -749,9 +749,14 @@ export function FactoryMap(props: FactoryMapProps) {
               background: 'var(--bg)',
             }}
           >
-            <h2 id="parts-title" style={{ margin: '0 12px', fontSize: 12, fontWeight: 400, color: 'var(--ink-2)' }}>
-              <span className="t-dim">[p]</span> add parts
-            </h2>
+            <div style={{ display: 'flex', alignItems: 'center', margin: '0 8px 0 12px' }}>
+              <h2 id="parts-title" style={{ flexGrow: 1, fontSize: 12, fontWeight: 400, color: 'var(--ink-2)' }}>
+                <span className="t-dim">[p]</span> add parts
+              </h2>
+              <Key k="esc" size="xs" onClick={() => setDrawer(false)} aria-label="Close add parts">
+                close
+              </Key>
+            </div>
             <p className="t-dim" style={{ margin: '0 12px 6px', fontSize: 12 }}>
               drag onto the map, or click to add
             </p>

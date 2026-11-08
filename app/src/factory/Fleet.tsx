@@ -263,7 +263,7 @@ export function Fleet({ route, onSearch, git }: { route: Extract<Route, { screen
         ['j/k', 'other terminals, once out of the form'],
       ] : typing ? [
         ['⌘↑', 'back to Sawtooth'],
-        ['esc', `goes to ${cur ? harnessOf(cur) : 'the terminal'}: it stops its turn`],
+        ['esc', `goes to ${cur ? harnessOf(cur) : 'the terminal'}: it stops its turn`, false],
         ['click outside', 'also takes you back'],
       ] : [
         ['j/k', 'move'],
@@ -286,7 +286,7 @@ export function Fleet({ route, onSearch, git }: { route: Extract<Route, { screen
         as="nav"
         aria-label="Factories and terminals"
         title={<Titled>terminals</Titled>}
-        scroll style={{ flex: '1 1 270px', maxWidth: 310, minHeight: 0, overflow: 'auto', padding: '12px 4px 10px', display: 'flex', flexDirection: 'column', gap: 12 }}
+        scroll style={{ flex: '1 1 270px', maxWidth: 310, minHeight: 0, maxHeight: '100%', overflow: 'auto', padding: '12px 4px 10px', display: 'flex', flexDirection: 'column', gap: 12 }}
       >
         <div role="group" aria-label="Show terminals" style={{ display: 'flex', flexWrap: 'wrap', gap: 2, padding: '0 4px' }}>
           {chips.map(([id, k, label]) => {
@@ -377,7 +377,7 @@ export function Fleet({ route, onSearch, git }: { route: Extract<Route, { screen
       </Pane>
 
       {draft && routeFactory ? (
-        <Pane as="main" focus scroll title={<Titled strong>{draft.name}</Titled>} right={<span className="t-dim">not started</span>} style={{ flex: '999 1 520px', minHeight: 0, padding: '18px 16px' }}>
+        <Pane as="main" focus scroll title={<Titled strong>{draft.name}</Titled>} right={<span className="t-dim">not started</span>} style={{ flex: '999 1 520px', minHeight: 0, maxHeight: '100%', padding: '18px 16px' }}>
           <div style={{ maxWidth: 640 }}>
             <NewTerminal factory={routeFactory} draft={draft} git={git} onDiscard={() => openFactory(routeFactory.id, 'terminals')} />
           </div>
@@ -504,7 +504,7 @@ function Current({
         </span>
         )
       }
-      style={{ flex: '999 1 520px', minHeight: 0, display: 'flex', flexDirection: 'column', paddingTop: 6 }}
+      style={{ flex: '999 1 520px', minHeight: 0, maxHeight: '100%', display: 'flex', flexDirection: 'column', paddingTop: 6 }}
     >
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: '2px 14px', padding: '6px 14px 8px', borderBottom: '1px solid var(--line-soft)', fontSize: 12 }}>
         {!factory && <span className="t-dim">outside every factory · make a factory for its folder to see it on a map</span>}
@@ -662,7 +662,7 @@ function Side({
   ];
 
   return (
-    <div style={{ flex: '1 1 260px', maxWidth: 320, minHeight: 0, display: 'flex', flexDirection: 'column', gap: 14 }}>
+    <div style={{ flex: '1 1 260px', maxWidth: 320, minHeight: 0, maxHeight: '100%', display: 'flex', flexDirection: 'column', gap: 14 }}>
       <Pane title={<Titled>run</Titled>} style={{ padding: '14px 12px 10px', display: 'flex', flexDirection: 'column', gap: 8 }}>
         <dl style={{ display: 'grid', gridTemplateColumns: 'max-content minmax(0, 1fr)', gap: '2px 16px' }}>
           {stats.map(([label, value, on]) => (

@@ -87,6 +87,12 @@ export function Knowledge({ factory, file }: { factory: Factory; file?: string }
     await readFile(next, data ?? (await load()));
   }
 
+  /** Puts the file back as it is on disk, without your unsaved edit. */
+  async function drop() {
+    setDirty(false);
+    await readFile(section, data ?? (await load()));
+  }
+
   async function save() {
     if (!dirty) return;
     try {
@@ -195,7 +201,7 @@ export function Knowledge({ factory, file }: { factory: Factory; file?: string }
       ]}
       status={{ mode: 'KNOWLEDGE', path: `${factory.name}/${label}`, info: state }}
     >
-      <Pane as="nav" aria-labelledby="files-title" title={<span id="files-title"><Titled>files</Titled></span>} scroll style={{ flex: '1 1 220px', maxWidth: 260, minHeight: 0, overflow: 'auto', padding: '14px 4px 10px' }}>
+      <Pane as="nav" aria-labelledby="files-title" title={<span id="files-title"><Titled>files</Titled></span>} scroll style={{ flex: '1 1 220px', maxWidth: 260, minHeight: 0, maxHeight: '100%', overflow: 'auto', padding: '14px 4px 10px' }}>
         <ul>
           {sections.map((sct) => (
             <li key={sct.key}>
@@ -238,7 +244,7 @@ export function Knowledge({ factory, file }: { factory: Factory; file?: string }
         title={<Titled strong>{label}</Titled>}
         right={<span style={{ color: dirty ? 'var(--ink)' : 'var(--ink-3)' }}>{state}</span>}
         className="t-editor"
-        style={{ flex: '999 1 520px', minHeight: 0, display: 'flex', flexDirection: 'column', paddingTop: 8 }}
+        style={{ flex: '999 1 520px', minHeight: 0, maxHeight: '100%', display: 'flex', flexDirection: 'column', paddingTop: 8 }}
       >
         <div style={{ flex: '1 1 0', minHeight: 0, overflow: 'auto' }}>
           {!isFolder && (kbPart || section.kind === 'file') && (
@@ -304,9 +310,14 @@ export function Knowledge({ factory, file }: { factory: Factory; file?: string }
             </Key>
           )}
           {dirty ? (
-            <Key k="⌘s" size="xs" onClick={() => void save()}>
-              save
-            </Key>
+            <span style={{ display: 'inline-flex', gap: 4 }}>
+              <Key size="xs" onClick={() => void drop()}>
+                drop my edit
+              </Key>
+              <Key k="⌘s" size="xs" onClick={() => void save()}>
+                save
+              </Key>
+            </span>
           ) : (
             <span>{isFolder ? 'agents open these when they need them' : 'markdown · edit in place'}</span>
           )}
@@ -322,7 +333,7 @@ export function Knowledge({ factory, file }: { factory: Factory; file?: string }
           </span>
         }
         hot={pending.length > 0}
-        scroll style={{ flex: '1 1 280px', maxWidth: 330, minHeight: 0, overflow: 'auto', padding: '14px 0 10px' }}
+        scroll style={{ flex: '1 1 280px', maxWidth: 330, minHeight: 0, maxHeight: '100%', overflow: 'auto', padding: '14px 0 10px' }}
       >
         {pending.length === 0 ? (
           <Empty>nothing to review</Empty>
@@ -330,7 +341,7 @@ export function Knowledge({ factory, file }: { factory: Factory; file?: string }
           <ul>
             {dirty && section.kind === 'kb' && (
               <li className="t-dim" style={{ padding: '0 12px 8px', fontSize: 12 }}>
-                save or drop your own edit first
+                save or drop your own edit first, below the editor
               </li>
             )}
             {pending.map((it) => (
