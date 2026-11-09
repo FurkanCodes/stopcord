@@ -34,8 +34,10 @@ pub type Emit = Arc<dyn Fn(&str, Value) + Send + Sync>;
 const TICK: Duration = Duration::from_secs(2);
 const READY_TIMEOUT: Duration = Duration::from_secs(90);
 /// How long a typed prompt holds the terminal while its turn gets going.
-const TURN_START: Duration = Duration::from_secs(5);
+const TURN_START: Duration = Duration::from_secs(10);
 const TYPING_POLL: Duration = Duration::from_millis(500);
+/// How long a terminal must stay idle first: a harness looks idle while it's still loading.
+const STEADY_IDLE: Duration = Duration::from_secs(2);
 const QUIET_CHECK_TIMEOUT: Duration = Duration::from_secs(600);
 /// A schedule this close to its time counts as on time.
 const ON_TIME_MINUTES: i64 = 2;
@@ -362,7 +364,7 @@ impl Engine {
             program,
             emit,
             state: Mutex::new(State::default()),
-            typist: Typist::new(READY_TIMEOUT, TURN_START, TYPING_POLL),
+            typist: Typist::new(READY_TIMEOUT, TURN_START, TYPING_POLL, STEADY_IDLE),
         })
     }
 
@@ -606,13 +608,7 @@ impl Engine {
                         part.name,
                         runs::last_lines(&output, 20)
                     );
-                    self.state
-                        .lock()
-                        .unwrap()
-                        .engine_turns
-                        .insert(id.to_string());
-                    if let Err(e) = self.type_prompt(id, &prompt) {
-                        self.state.lock().unwrap().engine_turns.remove(id);
+                    if let Err(e) = self.type_engine_turn(id, &prompt) {
                         self.alert(&factory.id, &format!("fix:{id}:quiet"), &format!("{} failed: {e}", part.name), Some(id));
                         self.log(
                             &factory.id,
@@ -671,8 +667,7 @@ impl Engine {
                 return;
             }
         };
-        self.state.lock().unwrap().engine_turns.insert(id.clone());
-        match self.type_prompt(&id, &part.prompt) {
+        match self.type_engine_turn(&id, &part.prompt) {
             Ok(()) => {
                 self.clear_alert(&factory.id, &format!("trigger:{}", part.id));
                 self.log(
@@ -687,7 +682,6 @@ impl Engine {
                 );
             }
             Err(e) => {
-                self.state.lock().unwrap().engine_turns.remove(&id);
                 self.alert(&factory.id, &format!("trigger:{}", part.id), &format!("{}: {e}", part.name), Some(&id));
                 self.log(
                     &factory.id,
@@ -739,7 +733,22 @@ impl Engine {
     /// Types `prompt` into the terminal once it's safe to. See `typing.rs`.
     fn type_prompt(&self, id: &str, prompt: &str) -> Result<(), String> {
         self.typist
-            .type_prompt(&self.bridge, id, prompt, &self.name_of(id))
+            .type_prompt(&self.bridge, id, prompt, &self.name_of(id), &|| ())
+    }
+
+    /// Types a prompt and counts the turn it starts as the engine's own. The mark goes on
+    /// only at the moment of typing: put on while waiting, it'd be used up by the turn
+    /// still running, and the engine's own turn would look like a person's.
+    fn type_engine_turn(&self, id: &str, prompt: &str) -> Result<(), String> {
+        let typed = std::sync::atomic::AtomicBool::new(false);
+        let result = self.typist.type_prompt(&self.bridge, id, prompt, &self.name_of(id), &|| {
+            typed.store(true, std::sync::atomic::Ordering::SeqCst);
+            self.state.lock().unwrap().engine_turns.insert(id.to_string());
+        });
+        if result.is_err() && typed.load(std::sync::atomic::Ordering::SeqCst) {
+            self.state.lock().unwrap().engine_turns.remove(id);
+        }
+        result
     }
 
     /// The window sent a person's keys to a terminal.

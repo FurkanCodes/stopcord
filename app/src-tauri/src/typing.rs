@@ -24,6 +24,8 @@ pub struct Typist {
     ready: Duration,
     settle: Duration,
     poll: Duration,
+    /// How long a terminal must stay idle before it counts as ready.
+    steady: Duration,
 }
 
 /// How many characters are waiting unsent after a person sends `data` to a terminal.
@@ -71,13 +73,14 @@ pub fn draft_after(mut len: usize, data: &[u8]) -> usize {
 }
 
 impl Typist {
-    pub fn new(ready: Duration, settle: Duration, poll: Duration) -> Typist {
+    pub fn new(ready: Duration, settle: Duration, poll: Duration, steady: Duration) -> Typist {
         Typist {
             locks: Mutex::default(),
             drafts: Mutex::default(),
             ready,
             settle,
             poll,
+            steady,
         }
     }
 
@@ -102,28 +105,39 @@ impl Typist {
         self.drafts.lock().unwrap().get(id).is_some_and(|n| *n > 0)
     }
 
-    /// Waits until an agent is at its prompt and nobody is writing, then types
-    /// `prompt` and presses Enter. Holds the terminal until the turn has begun,
-    /// so the next prompt can't take the idle screen from before this one for
-    /// a free terminal.
+    /// Waits until an agent has sat steadily at its prompt and nobody is writing,
+    /// then types `prompt` and presses Enter. Holds the terminal until the turn
+    /// has begun, so the next prompt can't take the idle screen from before this
+    /// one for a free terminal. Only says it worked once the agent has started.
     pub fn type_prompt(
         &self,
         port: &dyn Port,
         id: &str,
         prompt: &str,
         name: &str,
+        about_to_type: &dyn Fn(),
     ) -> Result<(), String> {
         let lock = Arc::clone(self.locks.lock().unwrap().entry(id.to_string()).or_default());
         let _held = lock.lock().unwrap();
-        let deadline = Instant::now() + self.ready;
+        let mut deadline = Instant::now() + self.ready;
+        let mut idle_since: Option<Instant> = None;
         loop {
             let t = port.get(id).map_err(|e| format!("{name} is gone: {e}"))?;
             if t["state"] == "exited" {
                 return Err(format!("{name} ended before the prompt could be typed"));
             }
+            // It's asking a person something and already shows as needing them. Waiting on
+            // that isn't the agent being slow, so it doesn't use up the time.
+            if t["state"] == "blocked" {
+                deadline = Instant::now() + self.ready;
+            }
             let writing = self.writing(id);
             if !t["agent"].is_null() && t["state"] == "idle" && !writing {
-                break;
+                if idle_since.get_or_insert_with(Instant::now).elapsed() >= self.steady {
+                    break;
+                }
+            } else {
+                idle_since = None;
             }
             if Instant::now() > deadline {
                 return Err(if writing {
@@ -137,6 +151,7 @@ impl Typist {
             }
             thread::sleep(self.poll);
         }
+        about_to_type();
         let paste = format!("\x1b[200~{}\x1b[201~", prompt.trim());
         port.send(id, paste.as_bytes())?;
         thread::sleep(self.poll.min(PASTE_GAP));
@@ -145,10 +160,12 @@ impl Typist {
         while Instant::now() < settled {
             match port.get(id) {
                 Ok(t) if t["state"] == "idle" => thread::sleep(self.poll),
-                _ => break,
+                _ => return Ok(()),
             }
         }
-        Ok(())
+        Err(format!(
+            "The prompt was typed into {name}, but the agent didn't start on it"
+        ))
     }
 }
 
@@ -163,6 +180,9 @@ mod tests {
         state: Mutex<String>,
         sent: Mutex<Vec<String>>,
         turn: Duration,
+        /// The harness isn't really ready: Enter doesn't start a turn.
+        deaf: bool,
+        first_send: Mutex<Option<Instant>>,
     }
 
     impl Fake {
@@ -171,6 +191,8 @@ mod tests {
                 state: Mutex::new("idle".into()),
                 sent: Mutex::default(),
                 turn,
+                deaf: false,
+                first_send: Mutex::default(),
             })
         }
 
@@ -189,7 +211,8 @@ mod tests {
         fn send(&self, _id: &str, data: &[u8]) -> Result<(), String> {
             let text = String::from_utf8_lossy(data).into_owned();
             self.0.sent.lock().unwrap().push(text.clone());
-            if text == "\r" {
+            self.0.first_send.lock().unwrap().get_or_insert_with(Instant::now);
+            if text == "\r" && !self.0.deaf {
                 *self.0.state.lock().unwrap() = "working".into();
                 let me = Arc::clone(&self.0);
                 thread::spawn(move || {
@@ -206,6 +229,7 @@ mod tests {
             Duration::from_millis(ready_ms),
             Duration::from_millis(500),
             Duration::from_millis(5),
+            Duration::from_millis(40),
         ))
     }
 
@@ -243,11 +267,11 @@ mod tests {
 
     #[test]
     fn waits_until_the_person_has_sent_what_they_were_writing() {
-        let fake = Fake::idle(Duration::from_millis(1));
+        let fake = Fake::idle(Duration::from_millis(50));
         let t = typist(2000);
         t.person_typed("t1", b"half a thou");
         let (t2, f2) = (Arc::clone(&t), Arc::clone(&fake));
-        let job = thread::spawn(move || t2.type_prompt(&Shared(f2), "t1", "fix it", "term"));
+        let job = thread::spawn(move || t2.type_prompt(&Shared(f2), "t1", "fix it", "term", &|| ()));
         thread::sleep(Duration::from_millis(100));
         assert!(fake.sent().is_empty(), "typed over a draft: {:?}", fake.sent());
         t.person_typed("t1", b"\r");
@@ -257,10 +281,10 @@ mod tests {
 
     #[test]
     fn gives_up_rather_than_type_over_a_person() {
-        let fake = Fake::idle(Duration::from_millis(1));
+        let fake = Fake::idle(Duration::from_millis(50));
         let t = typist(60);
         t.person_typed("t1", b"still writing");
-        let err = t.type_prompt(&Shared(Arc::clone(&fake)), "t1", "fix it", "term").unwrap_err();
+        let err = t.type_prompt(&Shared(Arc::clone(&fake)), "t1", "fix it", "term", &|| ()).unwrap_err();
         assert!(fake.sent().is_empty());
         assert!(err.contains("writing"), "{err}");
     }
@@ -271,9 +295,103 @@ mod tests {
         let t = typist(60);
         t.person_typed("t1", b"1");
         t.turn_began("t1");
-        let fake = Fake::idle(Duration::from_millis(1));
-        t.type_prompt(&Shared(Arc::clone(&fake)), "t1", "go", "term").unwrap();
+        let fake = Fake::idle(Duration::from_millis(50));
+        t.type_prompt(&Shared(Arc::clone(&fake)), "t1", "go", "term", &|| ()).unwrap();
         assert_eq!(fake.sent().len(), 2);
+    }
+
+    #[test]
+    fn a_question_on_screen_stops_the_clock() {
+        // A harness that asks something at startup waits for a person, however long that takes.
+        let fake = Fake::idle(Duration::from_millis(50));
+        *fake.state.lock().unwrap() = "blocked".into();
+        let t = typist(60);
+        let f2 = Arc::clone(&fake);
+        let t2 = Arc::clone(&t);
+        let job = thread::spawn(move || t2.type_prompt(&Shared(f2), "t1", "go", "term", &|| ()));
+        thread::sleep(Duration::from_millis(250));
+        assert!(!job.is_finished(), "gave up while a person was being asked");
+        *fake.state.lock().unwrap() = "idle".into();
+        job.join().unwrap().unwrap();
+        assert!(fake.sent()[0].contains("go"));
+    }
+
+    #[test]
+    fn it_waits_for_a_steady_idle_after_a_question() {
+        // The screen goes idle the moment a dialog closes, while the harness is still loading.
+        let fake = Fake::idle(Duration::from_millis(50));
+        *fake.state.lock().unwrap() = "blocked".into();
+        let t = typist(2000);
+        let (t2, f2) = (Arc::clone(&t), Arc::clone(&fake));
+        let job = thread::spawn(move || t2.type_prompt(&Shared(f2), "t1", "go", "term", &|| ()));
+        thread::sleep(Duration::from_millis(30));
+        *fake.state.lock().unwrap() = "idle".into();
+        let idle_at = Instant::now();
+        job.join().unwrap().unwrap();
+        let waited = fake.first_send.lock().unwrap().unwrap() - idle_at;
+        assert!(waited >= Duration::from_millis(40), "typed after only {waited:?}");
+    }
+
+    #[test]
+    fn a_flicker_of_idle_starts_the_wait_over() {
+        let fake = Fake::idle(Duration::from_millis(50));
+        *fake.state.lock().unwrap() = "working".into();
+        let t = typist(2000);
+        let (t2, f2) = (Arc::clone(&t), Arc::clone(&fake));
+        let job = thread::spawn(move || t2.type_prompt(&Shared(f2), "t1", "go", "term", &|| ()));
+        for _ in 0..3 {
+            *fake.state.lock().unwrap() = "idle".into();
+            thread::sleep(Duration::from_millis(15));
+            *fake.state.lock().unwrap() = "working".into();
+            thread::sleep(Duration::from_millis(15));
+        }
+        assert!(fake.sent().is_empty(), "typed during a flicker");
+        *fake.state.lock().unwrap() = "idle".into();
+        job.join().unwrap().unwrap();
+    }
+
+    #[test]
+    fn it_says_so_when_the_prompt_started_nothing() {
+        let fake = Arc::new(Fake {
+            state: Mutex::new("idle".into()),
+            deaf: true,
+            ..Fake::default()
+        });
+        let t = Typist::new(
+            Duration::from_millis(500),
+            Duration::from_millis(60),
+            Duration::from_millis(5),
+            Duration::from_millis(10),
+        );
+        let err = t.type_prompt(&Shared(fake), "t1", "go", "term", &|| ()).unwrap_err();
+        assert!(err.contains("didn't start"), "{err}");
+    }
+
+    #[test]
+    fn a_turn_is_only_marked_when_the_prompt_is_really_going_in() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let fake = Fake::idle(Duration::from_millis(50));
+        *fake.state.lock().unwrap() = "working".into();
+        let marked = Arc::new(AtomicBool::new(false));
+        let t = typist(2000);
+        let (t2, f2, m2) = (Arc::clone(&t), Arc::clone(&fake), Arc::clone(&marked));
+        let job = thread::spawn(move || {
+            t2.type_prompt(&Shared(f2), "t1", "go", "term", &|| m2.store(true, Ordering::SeqCst))
+        });
+        thread::sleep(Duration::from_millis(60));
+        assert!(!marked.load(Ordering::SeqCst), "marked while the agent's own turn was running");
+        *fake.state.lock().unwrap() = "idle".into();
+        job.join().unwrap().unwrap();
+        assert!(marked.load(Ordering::SeqCst));
+
+        // A prompt that never gets typed never marks anything.
+        let quiet = Arc::new(AtomicBool::new(false));
+        let t = typist(30);
+        t.person_typed("t1", b"writing");
+        let q2 = Arc::clone(&quiet);
+        let fake = Fake::idle(Duration::from_millis(50));
+        assert!(t.type_prompt(&Shared(fake), "t1", "go", "term", &|| q2.store(true, Ordering::SeqCst)).is_err());
+        assert!(!quiet.load(Ordering::SeqCst));
     }
 
     #[test]
@@ -284,7 +402,7 @@ mod tests {
             .into_iter()
             .map(|p| {
                 let (t, f) = (Arc::clone(&t), Arc::clone(&fake));
-                thread::spawn(move || t.type_prompt(&Shared(f), "t1", p, "term"))
+                thread::spawn(move || t.type_prompt(&Shared(f), "t1", p, "term", &|| ()))
             })
             .collect();
         for j in jobs {
