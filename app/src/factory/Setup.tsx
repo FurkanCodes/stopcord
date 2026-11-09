@@ -151,6 +151,7 @@ export function Setup({ factory, onRemove }: { factory: Factory; onRemove: () =>
                 <ListText id={`st-pr-${i}`} label="protected tests" value={s.protect} placeholder="tests/**, **/*.test.ts" onChange={(v) => stage(i, { protect: v })} />
               </>
             )}
+            {s.kind === 'agent' && <Pick id={`st-iso-${i}`} label="works in" value={s.isolated ? 'copy' : ''} options={[['', 'the real branch'], ['copy', 'a throwaway copy']]} onChange={(v) => stage(i, v === 'copy' ? { isolated: true } : { isolated: false, keep: [] })} />}
             <Pick id={`st-then-${i}`} label="then" value={s.then ?? ''} options={[['', 'end of the line'], ...stageIds]} onChange={(then) => stage(i, { then })} />
             {s.kind !== 'human' || s.then ? null : <Text id={`st-mg-${i}`} label="merge with" value={s.merge ?? ''} placeholder="empty merges locally, or a command like gh pr create --fill" onChange={(merge) => stage(i, { merge })} />}
             {s.kind === 'human' && !s.then && s.merge && <Text id={`st-ld-${i}`} label="landed when" value={s.landed ?? ''} placeholder="gh pr view --json state -q .state | grep -qx MERGED" onChange={(landed) => stage(i, { landed })} />}

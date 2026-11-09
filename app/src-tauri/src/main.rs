@@ -247,6 +247,7 @@ fn start_terminal(
             cols,
             task,
             runner: None,
+            workspace: None,
         },
     )
 }

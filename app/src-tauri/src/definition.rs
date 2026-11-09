@@ -499,6 +499,17 @@ fn validate_line(line: &[LineStage], agents: &BTreeSet<&str>, checks: &BTreeSet<
             }
             _ => {}
         }
+        if s.isolated && s.kind != StageKind::Agent {
+            out.push(format!("stage {} is isolated, and only agent stages can be", s.id));
+        }
+        if !s.isolated && !s.keep.is_empty() {
+            out.push(format!("stage {} has keep, which only means something on an isolated stage", s.id));
+        }
+        for name in &s.keep {
+            if name.is_empty() || name == "." || name == ".." || name.contains(['/', '\\']) {
+                out.push(format!("stage {} keeps {name:?}, and keep takes file names in the top folder", s.id));
+            }
+        }
         for (label, to) in [("then", &s.then), ("onFail", &s.on_fail)] {
             if !to.is_empty() && !line.iter().any(|t| &t.id == to) {
                 out.push(format!("stage {} has {label}: {to}, and there's no such stage", s.id));
@@ -982,6 +993,12 @@ mod tests {
     #[test]
     fn a_line_must_end_and_its_loops_must_be_limited() {
         assert!(line_problems(|f| f.line[1].max_loops = 0).contains("no maxLoops"));
+        assert!(line_problems(|f| f.line[1].keep = vec!["PLAN.md".into()]).contains("only means something"));
+        assert!(line_problems(|f| {
+            f.line[1].isolated = true;
+            f.line[1].kind = StageKind::Human;
+        })
+        .contains("only agent stages"));
         assert!(line_problems(|f| f.line[2].then = "build".into()).contains("no end"));
         let circle = line_problems(|f| {
             f.line[0].then = "verify".into();

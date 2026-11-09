@@ -205,6 +205,12 @@ pub struct LineStage {
     pub on_fail: String,
     #[serde(skip_serializing_if = "zero")]
     pub max_loops: u32,
+    /// Agent stages: works in a throwaway clone of the branch, so nothing it does reaches the real work.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub isolated: bool,
+    /// Isolated stages: files in the top folder that come back from the copy and get committed.
+    #[serde(skip_serializing_if = "none")]
+    pub keep: Vec<String>,
     /// The last stage: how to merge. Empty merges the branch locally; anything else is a shell command.
     #[serde(skip_serializing_if = "no_text")]
     pub merge: String,

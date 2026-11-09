@@ -119,6 +119,15 @@ fn setup_markers(cwd: &Path) -> Option<(PathBuf, PathBuf)> {
     Some((done, failed))
 }
 
+/// A copy of a set-up worktree has its dependencies already, so it needn't run setup again.
+pub fn carry_setup(from: &Path, to: &Path) {
+    if let (Some((done, _)), Some((target, _))) = (setup_markers(from), setup_markers(to))
+        && done.exists()
+    {
+        let _ = std::fs::copy(done, target);
+    }
+}
+
 /// Puts a runner's setup in front of the command, so it runs under the same confinement as the
 /// agent: `npm ci` runs the repo's own scripts. Once per worktree, and no agent on a failed setup.
 fn with_setup(setup: &[String], command: &str) -> String {
@@ -176,7 +185,9 @@ pub fn prepare(
         let _ = std::fs::remove_file(failed);
     }
     let run_command = command.map(|c| {
-        let c = if contained { harness::sandboxed_command(harness, c, &factory.path) } else { c.to_string() };
+        // A throwaway copy is a repository of its own, so that's what a harness has to trust.
+        let trusted = if cwd.join(".git").is_dir() { cwd.display().to_string() } else { factory.path.clone() };
+        let c = if contained { harness::sandboxed_command(harness, c, &trusted) } else { c.to_string() };
         with_setup(setup, &c)
     });
     let argv = shell::argv(&shell_path, run_command.as_deref());

@@ -89,6 +89,8 @@ export interface LineStage {
   then?: string;
   onFail?: string;
   maxLoops?: number;
+  isolated?: boolean;
+  keep?: string[];
   merge?: string;
   landed?: string;
 }

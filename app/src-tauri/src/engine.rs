@@ -63,6 +63,8 @@ pub struct StartRequest {
     pub task: Option<String>,
     /// The runner to use. Empty or missing means the factory's default.
     pub runner: Option<String>,
+    /// Start in this folder rather than the branch's worktree. Used for throwaway copies.
+    pub workspace: Option<PathBuf>,
 }
 
 fn failure(e: anyhow::Error) -> Failure {
@@ -79,6 +81,7 @@ pub fn start_terminal(store: &Store, bridge: &Bridge, program: &Path, req: Start
     };
     let branch = req.branch.clone().unwrap_or_default();
     let cwd = match &factory {
+        Some(_) if req.workspace.is_some() => req.workspace.as_ref().map(|d| d.display().to_string()).unwrap_or_default(),
         Some(f) => {
             let project = Path::new(&f.path);
             let dir =

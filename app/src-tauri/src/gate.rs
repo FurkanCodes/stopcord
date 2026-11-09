@@ -53,7 +53,7 @@ pub fn changed_protected(worktree: &Path, base: &str, patterns: &[String]) -> Re
 
 /// Copies what git ignores, such as `node_modules`, so checks don't have to reinstall.
 /// On APFS and reflink filesystems this costs almost nothing.
-fn copy_ignored(from: &Path, to: &Path) -> Result<()> {
+pub(crate) fn copy_ignored(from: &Path, to: &Path) -> Result<()> {
     let list = git(from, &["ls-files", "--others", "--ignored", "--exclude-standard", "--directory"])?;
     for entry in list.lines() {
         let entry = entry.trim_end_matches('/');

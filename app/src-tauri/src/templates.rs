@@ -47,6 +47,8 @@ pub fn standard_line(f: &mut Factory, harness: &str, reviewer: &str, tests: Opti
     let mut line = vec![
         LineStage {
             agent: "planner".into(),
+            isolated: true,
+            keep: vec!["PLAN.md".into()],
             ..stage("plan", StageKind::Agent, "approve")
         },
         stage("approve", StageKind::Human, "build"),
@@ -66,6 +68,7 @@ pub fn standard_line(f: &mut Factory, harness: &str, reviewer: &str, tests: Opti
     }
     line.push(LineStage {
         agent: "reviewer".into(),
+        isolated: true,
         on_fail: "build".into(),
         max_loops: 2,
         ..stage("review", StageKind::Agent, "handoff")

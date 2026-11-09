@@ -53,6 +53,12 @@ pub fn answer_alert(key: &str) -> String {
     format!("answer:{key}")
 }
 
+/// Tells an agent in a throwaway copy what will survive it.
+fn copy_note(stage: &LineStage) -> String {
+    let back = if stage.keep.is_empty() { "Nothing you change here comes back.".to_string() } else { format!("Only {} comes back from it.", stage.keep.join(", ")) };
+    format!("This folder is a throwaway copy of the branch, deleted when the work ends. {back}")
+}
+
 fn item_of<'a>(f: &'a Factory, key: &str) -> Option<&'a WorkItem> {
     f.work.iter().find(|w| w.ticket.key == key)
 }
@@ -190,6 +196,7 @@ impl Engine {
                 for t in w.agents.values() {
                     let _ = self.bridge.call("terminal.close", json!({ "id": t }));
                 }
+                let _ = std::fs::remove_dir_all(self.copies_root(factory, &w));
                 self.log(factory, Run::new("line", format!("{key} {outcome}")).ok(true).work(&w.id).by("engine"));
                 if w.bench.is_none() {
                     self.report_back(&f, &w, &outcome, &format!("{key} {outcome}"));
@@ -229,6 +236,17 @@ impl Engine {
             self.state.lock().unwrap().terminals.get(t).is_some_and(|v| v["state"] != "exited")
         };
         let existing = w.agents.get(agent_id).filter(|t| alive(t)).cloned();
+        let isolated = f.line.iter().find(|s| s.id == stage && s.isolated).cloned();
+        let copy = match &isolated {
+            Some(_) => match self.prepare_copy(&f, &w, stage, existing.is_some()) {
+                Ok(copy) => copy,
+                Err(why) => {
+                    self.fail_step(factory, key, format!("{key} couldn't make a copy for {stage}: {why}"));
+                    return;
+                }
+            },
+            None => None,
+        };
         let st = self.store.home().join("bin/st").display().to_string();
         let skills: Vec<(String, String, String)> = f
             .skills
@@ -268,6 +286,7 @@ impl Engine {
                 name: Some(format!("{key} · {stage}")),
                 branch: Some(w.branch.clone()),
                 runner: agent.as_ref().map(|a| a.runner.clone()),
+                workspace: copy.as_ref().map(|(_, c)| c.clone()),
                 ..StartRequest::default()
             };
             let t = match crate::engine::start_terminal(&self.store, &self.bridge, &self.program, req) {
@@ -291,10 +310,12 @@ impl Engine {
                 self.fail_step(factory, key, format!("{key} couldn't start {stage}: {why}"));
                 return;
             }
+            // The work item records the real worktree, even when this stage runs in a copy of it.
+            let real = copy.as_ref().map_or_else(|| cwd.clone(), |(r, _)| r.display().to_string());
             let base = worktree::git(Path::new(&f.path), &["rev-parse", "HEAD"])
-                .and_then(|head| worktree::git(Path::new(&cwd), &["merge-base", &head, "HEAD"]))
+                .and_then(|head| worktree::git(Path::new(&real), &["merge-base", &head, "HEAD"]))
                 .unwrap_or_default();
-            let on_worktree = if cwd == f.path { String::new() } else { cwd };
+            let on_worktree = if real == f.path { String::new() } else { real };
             let _ = self.store.update(factory, |fa| {
                 if let Some(i) = fa.work.iter_mut().find(|i| i.ticket.key == key) {
                     i.worktree = on_worktree.clone();
@@ -305,6 +326,10 @@ impl Engine {
             });
             let text = if note.is_empty() { brief } else { format!("{brief}\n\n{note}") };
             (id, text)
+        };
+        let text = match (&isolated, &copy) {
+            (Some(s), Some(_)) => format!("{text}\n\n{}", copy_note(s)),
+            _ => text,
         };
         let _ = self.store.update(factory, |fa| {
             if let Some(i) = fa.work.iter_mut().find(|i| i.ticket.key == key) {
@@ -323,6 +348,63 @@ impl Engine {
             ),
             Err(e) => self.fail_step(factory, key, format!("{key} has a terminal for {stage} but never got its brief: {e}")),
         }
+    }
+
+    fn copies_root(&self, factory: &str, w: &WorkItem) -> PathBuf {
+        self.store.worktrees_dir(factory).join(".copies").join(&w.id)
+    }
+
+    fn copy_dir(&self, factory: &str, w: &WorkItem, stage: &str) -> PathBuf {
+        let name: String = stage.chars().map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '-' }).collect();
+        self.copies_root(factory, w).join(name)
+    }
+
+    /// Makes an isolated stage's copy, or refreshes the one its open terminal is in. Returns the
+    /// real worktree and the copy, or nothing when the project has no worktree to protect.
+    fn prepare_copy(&self, f: &Factory, w: &WorkItem, stage: &str, reuse: bool) -> Result<Option<(PathBuf, PathBuf)>, String> {
+        let project = Path::new(&f.path);
+        let real = worktree::ensure(project, &self.store.worktrees_dir(&f.id), &w.branch).map_err(|e| format!("{e:#}"))?;
+        if real == project {
+            return Ok(None);
+        }
+        let copy = self.copy_dir(&f.id, w, stage);
+        let made = if reuse && copy.join(".git").is_dir() {
+            worktree::refresh_copy(&copy, &real, &w.branch)
+        } else {
+            worktree::throwaway_copy(project, &real, &w.branch, &copy)
+        };
+        made.map_err(|e| format!("{e:#}"))?;
+        crate::runner::carry_setup(&real, &copy);
+        if let Some(part) = f.knowledge() {
+            crate::kb::link(&self.store.knowledge_file(&f.id), &copy, &part.read_as);
+        }
+        Ok(Some((real, copy)))
+    }
+
+    /// An isolated stage is over: its kept files come back and everything else stays behind.
+    fn finish_copy(&self, factory: &str, key: &str) -> Result<(), String> {
+        let Ok(f) = self.store.get(factory) else { return Ok(()) };
+        let Some(w) = item_of(&f, key) else { return Ok(()) };
+        let Some(stage) = f.line.iter().find(|s| s.id == w.line_stage && s.isolated) else { return Ok(()) };
+        let (copy, real) = (self.copy_dir(factory, w, &stage.id), PathBuf::from(&w.worktree));
+        if w.worktree.is_empty() || !copy.join(".git").is_dir() {
+            return Ok(());
+        }
+        let head = worktree::git(&real, &["rev-parse", "HEAD"]).map_err(|e| format!("{e:#}"))?;
+        let links = f.knowledge().map(|p| p.read_as.clone()).unwrap_or_default();
+        let thrown: Vec<String> = gate::changed_since(&copy, &head)
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|file| !stage.keep.contains(file) && !links.contains(file))
+            .collect();
+        if !thrown.is_empty() {
+            self.log(factory, Run::new("line", format!("{key}: {} changed {} in its copy, and that was thrown away", stage.id, thrown.join(", "))).work(&w.id).by("engine"));
+        }
+        let taken = worktree::take_kept(&copy, &real, &stage.keep).map_err(|e| format!("{e:#}"))?;
+        if !taken.is_empty() {
+            worktree::commit_files(&real, &taken, &format!("{} for {key}", stage.id)).map_err(|e| format!("{e:#}"))?;
+        }
+        Ok(())
     }
 
     /// Runs one gate's checks on a clean copy of the agent's commit.
@@ -522,7 +604,13 @@ impl Engine {
         let work_id = self.store.get(&factory).ok().and_then(|f| item_of(&f, &key).map(|w| w.id.clone())).unwrap_or_default();
         self.log(&factory, Run::new("agent", format!("{verb}: {text}")).terminal(Some(terminal)).work(&work_id).by("agent"));
         let step = match verb {
-            "done" => self.store.update(&factory, |f| line::agent_done(f, &key, &text)),
+            "done" => {
+                if let Err(why) = self.finish_copy(&factory, &key) {
+                    self.fail_step(&factory, &key, format!("{key} finished, but its copy couldn't be collected: {why}"));
+                    return;
+                }
+                self.store.update(&factory, |f| line::agent_done(f, &key, &text))
+            }
             "ask" => self.store.update(&factory, |f| {
                 let question = line::question_text(f, &key, &text);
                 line::agent_stopped(f, &key, &question)
@@ -754,6 +842,9 @@ impl Engine {
             }
             other => return Err(format!("unknown action {other}")),
         };
+        if matches!(act, Action::TreatAsDone) {
+            self.finish_copy(factory, key)?;
+        }
         let step = self.store.update(factory, |fa| line::person(fa, key, act)).map_err(|e| format!("{e:#}"))?;
         self.step(factory, key, step);
         Ok(())
