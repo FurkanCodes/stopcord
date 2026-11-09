@@ -104,7 +104,7 @@ function SandboxCard({ index: i, factory, runner: r, info, startOpen, onChange, 
     <div style={open ? card : undefined} data-sandbox={r.id}>
       <button type="button" className="t-key" aria-expanded={open} style={{ width: '100%', justifyContent: 'flex-start', gap: 8 }} onClick={() => setOpen(!open)}>
         <span className="t-dim" aria-hidden="true">{open ? '▾' : '▸'}</span>
-        <span style={{ color: 'var(--ink)' }}>{r.id}</span>
+        <span className="t-name">{r.id}</span>
         <span className="t-muted" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{summary}</span>
       </button>
       {open && (

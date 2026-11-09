@@ -391,8 +391,20 @@ textarea::placeholder {
 }
 .t-key[aria-pressed='true'] .t-dim,
 .t-key[aria-current='page'] .t-dim,
-.t-key[aria-expanded='true'] .t-dim {
+.t-key[aria-expanded='true'] .t-dim,
+.t-key[aria-pressed='true'] .t-muted,
+.t-key[aria-current='page'] .t-muted,
+.t-key[aria-expanded='true'] .t-muted {
   color: oklch(0.35 0.006 260);
+}
+/* The bright part of a key's label, such as a fold's name. Follows the key when it inverts. */
+.t-key .t-name {
+  color: var(--ink);
+}
+.t-key[aria-pressed='true'] .t-name,
+.t-key[aria-current='page'] .t-name,
+.t-key[aria-expanded='true'] .t-name {
+  color: inherit;
 }
 .t-key:disabled {
   opacity: 0.5;

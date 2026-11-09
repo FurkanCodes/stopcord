@@ -250,7 +250,7 @@ function Fold({ title, hint, logo, children }: { title: string; hint?: string; l
       <button type="button" className="t-key" aria-expanded={open} style={{ width: '100%', justifyContent: 'flex-start', gap: 8 }} onClick={() => setOpen(!open)}>
         <span className="t-dim" aria-hidden="true">{open ? '▾' : '▸'}</span>
         <Logo name={logo} />
-        <span style={{ color: 'var(--ink)' }}>{title}</span>
+        <span className="t-name">{title}</span>
         {hint && <span className="t-muted" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{hint}</span>}
       </button>
       {open && children}
