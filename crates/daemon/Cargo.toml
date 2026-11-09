@@ -12,6 +12,7 @@ serde.workspace = true
 serde_json.workspace = true
 sawtooth-term = { path = "../term" }
 sawtooth-detect = { path = "../detect" }
+sawtooth-sandbox = { path = "../sandbox" }
 
 [dev-dependencies]
 tempfile.workspace = true

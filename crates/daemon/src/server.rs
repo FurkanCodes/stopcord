@@ -18,6 +18,7 @@ use sawtooth_detect::{RuleBook, Screen};
 use sawtooth_term::{Event, SpawnSpec, Terminal};
 use serde_json::{Value, json};
 
+use crate::confine::{Confine, Notify};
 use crate::identify::identify;
 use crate::paths;
 use crate::tracker::Tracker;
@@ -52,6 +53,9 @@ struct Inner {
     next_id: AtomicU64,
     subscribers: Mutex<Vec<Subscriber>>,
     stopping: AtomicBool,
+    /// Sockets and filters made for terminals, by token.
+    confines: Mutex<BTreeMap<String, Arc<Confine>>>,
+    next_confine: AtomicU64,
 }
 
 struct Entry {
@@ -68,6 +72,7 @@ struct Entry {
     /// Set once the program ends: its exit code, when it had one.
     exit: Arc<Mutex<Option<Option<u32>>>>,
     status: Mutex<Status>,
+    confine: Option<String>,
 }
 
 #[derive(Default)]
@@ -131,6 +136,8 @@ impl Daemon {
                 next_id: AtomicU64::new(1),
                 subscribers: Mutex::new(Vec::new()),
                 stopping: AtomicBool::new(false),
+                confines: Mutex::new(BTreeMap::new()),
+                next_confine: AtomicU64::new(1),
             }),
         }
     }
@@ -138,6 +145,7 @@ impl Daemon {
     /// Listens on the socket until `daemon.shutdown`. Fails if another daemon owns it.
     pub fn serve(&self) -> Result<()> {
         let listener = bind(&self.inner.socket)?;
+        let _ = std::fs::remove_dir_all(self.inner.run_dir());
         eprintln!("sawtooth: listening on {}", self.inner.socket.display());
 
         let detecting = Arc::clone(&self.inner);
@@ -232,6 +240,57 @@ impl Inner {
         self.broadcast(&json!({ "event": kind, "terminal": entry.info() }), None);
     }
 
+    fn run_dir(&self) -> PathBuf {
+        self.socket.parent().map(|p| p.join("run")).unwrap_or_else(|| PathBuf::from("run"))
+    }
+
+    fn confine(&self, token: &str) -> std::result::Result<Arc<Confine>, ApiError> {
+        self.confines
+            .lock()
+            .unwrap()
+            .get(token)
+            .cloned()
+            .ok_or_else(|| err("no_confine", format!("there is no confine {token:?}")))
+    }
+
+    /// The confine of a terminal, by terminal id.
+    fn confine_of(&self, id: &str) -> std::result::Result<Arc<Confine>, ApiError> {
+        match self.entry(id)?.confine.clone() {
+            Some(token) => self.confine(&token),
+            None => Err(err("no_confine", format!("{id} has no report socket"))),
+        }
+    }
+
+    fn release(&self, token: &str) {
+        if let Some(c) = self.confines.lock().unwrap().remove(token)
+            && let Ok(c) = Arc::try_unwrap(c)
+        {
+            c.close();
+        }
+    }
+
+    /// Makes the report socket and, with `allow`, the network filter a terminal will use.
+    fn prepare(self: &Arc<Self>, params: &Value) -> Reply {
+        let allow = params.get("allow").and_then(Value::as_array).map(|a| {
+            a.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect::<Vec<_>>()
+        });
+        let token = format!("c{}", self.next_confine.fetch_add(1, Ordering::SeqCst));
+        let weak: Weak<Inner> = Arc::downgrade(self);
+        let notify: Notify = Arc::new(move |kind, mut event| {
+            if let Some(inner) = weak.upgrade() {
+                event["event"] = json!(kind);
+                inner.broadcast(&event, None);
+            }
+        });
+        let confine = Confine::start(&self.run_dir(), &token, allow, notify)
+            .map_err(|e| err("confine_failed", format!("{e:#}")))?;
+        let info = confine.info();
+        self.confines.lock().unwrap().insert(token, Arc::new(confine));
+        Ok(info)
+    }
+
     fn shutdown_terminals(&self) {
         for entry in self.entries() {
             let _ = entry.term.kill();
@@ -302,6 +361,14 @@ impl Inner {
             }
         }
 
+        let confine = params.get("confine").and_then(Value::as_str).map(String::from);
+        if let Some(token) = &confine {
+            let c = self.confine(token)?;
+            c.bind(&id);
+            spec.env
+                .push(("SAWTOOTH_REPORT".into(), c.report.display().to_string()));
+        }
+
         let dirty = Arc::new(AtomicBool::new(true));
         let exit = Arc::new(Mutex::new(None));
         let weak: Weak<Inner> = Arc::downgrade(self);
@@ -336,6 +403,7 @@ impl Inner {
             dirty,
             exit,
             status: Mutex::new(Status::default()),
+            confine,
         });
         self.terminals
             .lock()
@@ -530,6 +598,25 @@ fn handle(inner: &Arc<Inner>, method: &str, params: &Value) -> Reply {
 
         "terminal.start" => inner.start(params),
 
+        "confine.prepare" => inner.prepare(params),
+
+        "confine.release" => {
+            inner.release(str_param(params, "token")?);
+            Ok(json!({ "released": true }))
+        }
+
+        "confine.allow" => {
+            let c = inner.confine_of(str_param(params, "id")?)?;
+            let always = params.get("always").and_then(Value::as_bool).unwrap_or(false);
+            let done = c.allow(str_param(params, "host")?, always);
+            Ok(json!({ "allowed": done, "list": c.allowed() }))
+        }
+
+        "terminal.reports" => {
+            let c = inner.confine_of(str_param(params, "id")?)?;
+            Ok(json!({ "reports": c.take_reports() }))
+        }
+
         "terminal.list" => {
             Ok(json!({ "terminals": inner.entries().iter().map(|e| e.info()).collect::<Vec<_>>() }))
         }
@@ -674,6 +761,9 @@ fn handle(inner: &Arc<Inner>, method: &str, params: &Value) -> Reply {
             let entry = inner.entry(str_param(params, "id")?)?;
             let _ = entry.term.kill();
             inner.terminals.lock().unwrap().remove(&entry.num);
+            if let Some(token) = &entry.confine {
+                inner.release(token);
+            }
             inner.broadcast(&json!({ "event": "terminal.closed", "id": entry.id }), None);
             Ok(json!({ "closed": entry.id }))
         }

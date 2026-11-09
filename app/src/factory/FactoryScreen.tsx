@@ -7,13 +7,16 @@ import { plain, useKeys } from '../tui/keys';
 import { FactoryMap } from './FactoryMap';
 import { Fleet } from './Fleet';
 import { Knowledge } from './Knowledge';
+import { Inbox } from './Inbox';
 import { Runs } from './Runs';
+import { Setup } from './Setup';
+import { Work } from './Work';
 import { fromTemplate, type Template } from './parts';
 
 type FactoryRoute = Extract<Route, { screen: 'factory' }>;
 
 const NO_DRAFTS: Draft[] = [];
-const tabKeys: Record<string, Tab> = { '1': 'overview', '2': 'terminals', '3': 'knowledge', '4': 'runs' };
+const tabKeys: Record<string, Tab> = { '1': 'overview', '2': 'terminals', '3': 'knowledge', '4': 'runs', '5': 'work', '6': 'inbox', '7': 'setup' };
 
 /** One factory: its map, its terminals, its knowledge and its runs. */
 export function FactoryScreen({ id, onSearch }: { id: string; onSearch: () => void }) {
@@ -119,6 +122,9 @@ export function FactoryScreen({ id, onSearch }: { id: string; onSearch: () => vo
 
   if (route.tab === 'knowledge') return <Knowledge factory={factory} file={route.file} />;
   if (route.tab === 'runs') return <Runs factory={factory} runs={runs} terminals={terminals} />;
+  if (route.tab === 'work') return <Work factory={factory} runs={runs} terminals={terminals} selected={route.work} />;
+  if (route.tab === 'inbox') return <Inbox factory={factory} />;
+  if (route.tab === 'setup') return <Setup factory={factory} />;
   return (
     <FactoryMap
       factory={factory}

@@ -45,6 +45,96 @@ export interface Part {
   prompt: string;
   harness: string;
   atOnce: number;
+  network?: boolean;
+  every?: string;
+  webhook?: string;
+  secret?: string;
+  autoStart?: boolean;
+}
+
+export type Level = 'worktree' | 'contained' | 'vm';
+
+export interface Runner {
+  id: string;
+  description?: string;
+  level: Level;
+  networkAllow?: string[];
+  write?: string[];
+  denyRead?: string[];
+  vmCommand?: string;
+  setupCommands?: string[];
+}
+
+export interface Agent {
+  id: string;
+  description: string;
+  harness: string;
+  runner: string;
+  prompt: string;
+}
+
+export interface Skill {
+  id: string;
+  agent: string;
+  description: string;
+  body: string;
+}
+
+export type StageKind = 'agent' | 'gate' | 'human';
+
+export interface LineStage {
+  id: string;
+  kind: StageKind;
+  agent?: string;
+  checks?: string[];
+  protect?: string[];
+  then?: string;
+  onFail?: string;
+  maxLoops?: number;
+  merge?: string;
+}
+
+export interface Report {
+  id: string;
+  on: string[];
+  command: string;
+}
+
+export interface Defaults {
+  harness?: string;
+  runner?: string;
+  atOnce?: number;
+}
+
+export type WorkStage = 'proposed' | 'queued' | 'starting' | 'running' | 'ended';
+export type Waiting = 'no' | 'approve' | 'handoff' | 'question' | 'failed';
+
+export interface Finding {
+  file: string;
+  line: number;
+  severity: string;
+  text: string;
+  stage: string;
+}
+
+export interface WorkItem {
+  id: string;
+  ticket: Ticket;
+  stage: WorkStage;
+  branch: string;
+  terminal: string | null;
+  worktree: string;
+  outcome: string;
+  endedAt: number;
+  source: string;
+  lineStage: string;
+  startAt: string;
+  loops: Record<string, number>;
+  waiting: Waiting;
+  agents: Record<string, string>;
+  findings: Finding[];
+  summary: string;
+  base: string;
 }
 
 export interface Ticket {
@@ -64,6 +154,9 @@ export interface Alert {
   at: number;
   text: string;
   terminal: string | null;
+  kind?: string;
+  work?: string;
+  host?: string;
 }
 
 export interface Factory {
@@ -71,6 +164,13 @@ export interface Factory {
   name: string;
   path: string;
   parts: Part[];
+  agents: Agent[];
+  skills: Skill[];
+  runners: Runner[];
+  line: LineStage[];
+  defaults: Defaults;
+  reports: Report[];
+  work: WorkItem[];
   layout: Record<string, Pos>;
   queue: Ticket[];
   running: Record<string, string>;
@@ -84,12 +184,53 @@ export interface Factory {
 
 export interface Run {
   at: number;
-  kind: 'check' | 'trigger' | 'ticket' | 'terminal' | 'knowledge' | 'factory';
+  kind: 'check' | 'trigger' | 'ticket' | 'terminal' | 'knowledge' | 'factory' | 'line' | 'agent' | 'network' | 'source' | 'webhook' | 'report';
   text: string;
   ok?: boolean;
   part?: string;
   terminal?: string;
+  work?: string;
+  by?: 'engine' | 'person' | 'agent';
   detail?: string;
+}
+
+export type TunnelKind = 'none' | 'cloudflaredQuick' | 'cloudflaredNamed' | 'tailscaleFunnel' | 'ngrok' | 'custom';
+
+export interface Settings {
+  webhooks: { enabled: boolean; port: number };
+  tunnel: { kind: TunnelKind; command: string; publicUrl: string; tokenSecret: string; autoStart: boolean };
+  slack: { enabled: boolean; appTokenSecret: string; botTokenSecret: string; allowUsers: string[]; factory: string };
+  keepAwake: boolean;
+}
+
+export interface Machine {
+  settings: Settings;
+  tunnel: { running: boolean; url: string; error: string; output: string[] };
+  port: number;
+  problem: string;
+  /** Why this machine can't sandbox. Missing means it can. */
+  sandbox: string | null;
+}
+
+export interface SourceTemplate {
+  id: string;
+  name: string;
+  command: string;
+  webhook: string;
+  secret: string;
+  every: string;
+  needs: string;
+}
+
+export interface HarnessProfile {
+  id: string;
+  commands: string[];
+  write: string[];
+  readOnly: string[];
+  domains: string[];
+  sandboxedArgs: string;
+  oneShot: string;
+  trust: { contains: string; answer: string; auto: boolean } | null;
 }
 
 export interface Knowledge {
@@ -169,7 +310,7 @@ export const api = {
   factories: () => invoke<Factory[]>('factories'),
   brokenFactories: () => invoke<string[]>('broken_factories'),
   dismissAlert: (id: string, key: string) => invoke<void>('dismiss_alert', { id, key }),
-  createFactory: (args: { path: string; name: string; template: 'open' | 'reviewed'; readAs: string[] }) =>
+  createFactory: (args: { path: string; name: string; template: 'open' | 'reviewed' | 'line'; readAs: string[]; harness?: string; reviewer?: string; level?: Level }) =>
     invoke<Factory>('create_factory', args),
   saveFactory: (factory: Factory) => invoke<Factory>('save_factory', { factory }),
   removeFactory: (id: string) => invoke<void>('remove_factory', { id }),
@@ -193,6 +334,22 @@ export const api = {
   folderFiles: (id: string, partId: string) => invoke<FileEntry[]>('folder_files', { id, partId }),
   listTickets: (id: string) => invoke<Ticket[]>('list_tickets', { id }),
   feedTickets: (id: string, tickets: Ticket[]) => invoke<Factory>('feed_tickets', { id, tickets }),
+  workAction: (id: string, key: string, action: 'approve' | 'sendBack' | 'treatAsDone' | 'drop' | 'merge', note?: string) =>
+    invoke<Factory>('work_action', { id, key, action, note }),
+  acceptProposal: (id: string, key: string, startAt: string) => invoke<Factory>('accept_proposal', { id, key, startAt }),
+  rejectProposal: (id: string, key: string) => invoke<Factory>('reject_proposal', { id, key }),
+  pullSource: (id: string, part: string) => invoke<number>('pull_source', { id, part }),
+  answerDenied: (id: string, key: string, allow: boolean, always: boolean) => invoke<void>('answer_denied', { id, key, allow, always }),
+  sourceTemplates: () => invoke<SourceTemplate[]>('source_templates'),
+  machine: () => invoke<Machine>('machine'),
+  saveMachine: (settings: Settings) => invoke<Machine>('save_machine', { settings }),
+  startTunnel: () => invoke<Machine>('start_tunnel'),
+  stopTunnel: () => invoke<Machine>('stop_tunnel'),
+  setSecret: (name: string, value: string) => invoke<void>('set_secret', { name, value }),
+  hasSecrets: (names: string[]) => invoke<string[]>('has_secrets', { names }),
+  hookUrl: (id: string, part: string) => invoke<string>('hook_url', { id, part }),
+  harnesses: () => invoke<HarnessProfile[]>('harnesses'),
+  saveHarness: (harness: HarnessProfile) => invoke<void>('save_harness', { harness }),
   nearbyFolders: () => invoke<FolderSuggestion[]>('nearby_folders'),
   detectProject: (path: string) => invoke<ProjectInfo>('detect_project', { path }),
   installed: (names: string[]) => invoke<string[]>('installed', { names }),

@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from 'react';
 import type { Changes, Factory, Part, Pos, Run, Terminal } from '../api';
 import { askOf } from '../Home';
-import { changeFactory, harnessOf, lampOf, loadChanges, stateWords, useStore, type Draft } from '../store';
+import { changeFactory, go, harnessOf, lampOf, loadChanges, stateWords, useStore, type Draft } from '../store';
 import { ago, clock } from '../time';
 import { Glyph, Key, Screen, Titled } from '../tui/kit';
 import { plain, useKeys } from '../tui/keys';
 import { FactoryHeader } from './FactoryHeader';
+import { LineStrip } from './LineStrip';
 import { G, LOG_ID, MIN_Y, PULSE_MS, SANDBOX_ID, ROW_H, layoutMap, litFrom, returnCheck, sizeFor, snapX, snapY, type Rect } from './map';
 import { drawerGroups, metaOf, runsOnWords, whenWords, type Template } from './parts';
 import { SidePane } from './SidePane';
@@ -418,12 +419,19 @@ export function FactoryMap(props: FactoryMapProps) {
       }
       bodyStyle={{ padding: '12px 8px 6px' }}
       message={
+        <>
+        {factory.line.length > 0 && (
+          <div style={{ padding: '6px 0', borderTop: '1px solid var(--line)' }}>
+            <LineStrip factory={factory} onPick={(key) => go({ screen: 'factory', id: factory.id, tab: 'work', work: key })} />
+          </div>
+        )}
         <div role="status" className="t-message">
           <Key k="space" size="xs" onClick={() => setPaused(!paused)} aria-label={paused ? 'Light the lines again' : 'Stop lighting the lines'}>
             {paused ? 'play' : 'pause'}
           </Key>
           <span style={{ color: 'var(--ink)' }}>▸ {sentence}</span>
         </div>
+        </>
       }
       hints={[
         ['drag', 'move a part'],

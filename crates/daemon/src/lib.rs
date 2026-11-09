@@ -7,6 +7,7 @@
 //! `docs/terminal-daemon.md` lists every method.
 
 pub mod client;
+pub mod confine;
 pub mod identify;
 pub mod paths;
 pub mod server;

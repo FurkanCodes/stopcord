@@ -25,7 +25,7 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
 use crate::factories::{
-    Agent, Defaults, Factory, Kind, Level, LineStage, Part, Runner, RunsIn, RunsOn, Skill,
+    Agent, Defaults, Factory, Kind, LineStage, Part, Report, Runner, RunsIn, RunsOn, Skill,
     StageKind, When,
 };
 
@@ -71,6 +71,8 @@ struct CheckDoc {
     command: String,
     #[serde(default)]
     runs_on: RunsOn,
+    #[serde(default, skip_serializing_if = "is_false")]
+    network: bool,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -85,6 +87,14 @@ struct SourceDoc {
     harness: String,
     #[serde(default, skip_serializing_if = "is_zero")]
     at_once: u32,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    every: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    webhook: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    secret: String,
+    #[serde(default, skip_serializing_if = "is_false")]
+    auto_start: bool,
 }
 
 /// `factory.yaml`.
@@ -106,6 +116,8 @@ struct FactoryDoc {
     sources: Vec<SourceDoc>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     line: Vec<LineStage>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    reports: Vec<Report>,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -285,6 +297,7 @@ pub fn load(dir: &Path) -> Result<Factory> {
         name: c.name,
         command: c.command,
         runs_on: c.runs_on,
+        network: c.network,
         ..Part::default()
     }));
     parts.extend(doc.sources.into_iter().map(|s| Part {
@@ -294,6 +307,10 @@ pub fn load(dir: &Path) -> Result<Factory> {
         command: s.command,
         harness: s.harness,
         at_once: s.at_once,
+        every: s.every,
+        webhook: s.webhook,
+        secret: s.secret,
+        auto_start: s.auto_start,
         ..Part::default()
     }));
     let autos = dir.join("automations");
@@ -366,6 +383,7 @@ pub fn load(dir: &Path) -> Result<Factory> {
         skills,
         runners,
         line: doc.line,
+        reports: doc.reports,
         defaults: doc.agent_defaults,
         ..Factory::default()
     };
@@ -511,6 +529,7 @@ fn render(f: &Factory) -> Result<BTreeMap<PathBuf, String>> {
                 name: p.name.clone(),
                 command: p.command.clone(),
                 runs_on: p.runs_on,
+                network: p.network,
             })
             .collect(),
         sources: parts(Kind::Tickets)
@@ -520,9 +539,14 @@ fn render(f: &Factory) -> Result<BTreeMap<PathBuf, String>> {
                 command: p.command.clone(),
                 harness: p.harness.clone(),
                 at_once: p.at_once,
+                every: p.every.clone(),
+                webhook: p.webhook.clone(),
+                secret: p.secret.clone(),
+                auto_start: p.auto_start,
             })
             .collect(),
         line: f.line.clone(),
+        reports: f.reports.clone(),
     };
     let mut files = BTreeMap::new();
     files.insert(PathBuf::from(FACTORY_FILE), serde_yaml_ng::to_string(&doc)?);
@@ -700,6 +724,7 @@ pub fn newest(dir: &Path) -> Option<std::time::SystemTime> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::factories::Level;
 
     fn sample() -> Factory {
         Factory {

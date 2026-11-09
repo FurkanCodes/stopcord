@@ -1,13 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
 import { open } from '@tauri-apps/plugin-dialog';
-import { api, failureText, type FolderSuggestion, type ProjectInfo } from './api';
+import { api, failureText, type FolderSuggestion, type Level, type ProjectInfo } from './api';
 import { harnessFiles } from './factory/parts';
 import { go, openFactory, refreshFactories, sawtoothHome, useStore } from './store';
 import { tilde } from './text';
-import { Brand, Check, Key, Pane, Radio, Screen, Sep } from './tui/kit';
+import { Brand, Check, FieldRow, Key, Pane, Radio, Screen, Sep } from './tui/kit';
 import { plain, useKeys } from './tui/keys';
 
-type Template = 'open' | 'reviewed';
+type Template = 'open' | 'reviewed' | 'line';
 
 /** "my-project" from a name the way the app makes factory ids. */
 function idOf(name: string): string {
@@ -25,7 +25,10 @@ export function NewFactory() {
   const [folder, setFolder] = useState('');
   const [name, setName] = useState('');
   const [nameTouched, setNameTouched] = useState(false);
-  const [template, setTemplate] = useState<Template>('open');
+  const [template, setTemplate] = useState<Template>('line');
+  const [harness, setHarness] = useState('claude');
+  const [reviewer, setReviewer] = useState('codex');
+  const [level, setLevel] = useState<Level>('contained');
   const [links, setLinks] = useState<string[]>(['AGENTS.md', 'CLAUDE.md']);
   const [nearby, setNearby] = useState<FolderSuggestion[] | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -75,7 +78,7 @@ export function NewFactory() {
     setBusy(true);
     setError(null);
     try {
-      const factory = await api.createFactory({ path: folder.trim(), name: name.trim(), template, readAs: links });
+      const factory = await api.createFactory({ path: folder.trim(), name: name.trim(), template, readAs: links, harness, reviewer, level });
       await refreshFactories();
       openFactory(factory.id);
     } catch (e) {
@@ -120,6 +123,7 @@ export function NewFactory() {
   const templates: [Template, string, string[]][] = [
     ['open', 'open', ['terminals', 'knowledge base']],
     ['reviewed', 'reviewed', reviewedParts],
+    ['line', 'a line', ['plan', 'approve', 'build', info?.testCommand ? 'verify' : '', 'review', 'handoff'].filter(Boolean)],
   ];
 
   // What the app will write, as it really does it.
@@ -128,10 +132,10 @@ export function NewFactory() {
   const where = folder.trim() ? tilde(folder.trim()) : `~/projects/${id}`;
   const tree = [
     `${home}/factories/${id}/`,
-    '├── factory.json        settings',
-    `├── knowledge.md        the knowledge base${template === 'reviewed' ? '' : ''}`,
-    '├── knowledge.approved.md',
-    '└── runs.jsonl          the run log',
+    '├── definition/         what you edit, under git',
+    '│   ├── factory.yaml',
+    '│   └── knowledge.md    the knowledge base',
+    '└── state/              the engine\'s, including the run log',
     '',
     `${where}/   and every worktree`,
     ...(links.length
@@ -284,6 +288,24 @@ export function NewFactory() {
               ))}
             </div>
           </div>
+
+          {template === 'line' && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <FieldRow id="nf-h" label="harness">
+                <input id="nf-h" className="t-field" value={harness} onChange={(e) => setHarness(e.currentTarget.value)} />
+              </FieldRow>
+              <FieldRow id="nf-r" label="reviewer">
+                <input id="nf-r" className="t-field" value={reviewer} onChange={(e) => setReviewer(e.currentTarget.value)} />
+              </FieldRow>
+              <FieldRow id="nf-l" label="runner">
+                <select id="nf-l" className="t-field" value={level} onChange={(e) => setLevel(e.currentTarget.value as Level)}>
+                  <option value="contained">contained: OS sandbox and web filter</option>
+                  <option value="worktree">worktree: its own folder and branch</option>
+                  <option value="vm">vm: a Linux virtual machine</option>
+                </select>
+              </FieldRow>
+            </div>
+          )}
 
           <div role="group" aria-labelledby="link-as-label" style={{ display: 'flex', gap: 12 }}>
             <span id="link-as-label" className="t-dim" style={{ width: '9ch', flexShrink: 0, paddingTop: 3 }}>

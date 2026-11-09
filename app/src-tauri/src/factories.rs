@@ -90,6 +90,16 @@ pub struct Part {
     pub harness: String,
     /// Ticket source: how many ticket terminals run at once.
     pub at_once: u32,
+    /// Check at a gate: whether it may use the network. Off by default.
+    pub network: bool,
+    /// Ticket source: how often to pull, such as "every 5 minutes". Empty pulls only by hand.
+    pub every: String,
+    /// Ticket source: how webhook deliveries are signed. Empty means it takes none.
+    pub webhook: String,
+    /// Ticket source: the name of the secret deliveries are signed with.
+    pub secret: String,
+    /// Ticket source: start new items with no person. Off by default, since outside text reaches an agent.
+    pub auto_start: bool,
 }
 
 /// How much an agent is confined.
@@ -199,6 +209,19 @@ pub struct LineStage {
     pub on_fail: String,
     #[serde(skip_serializing_if = "zero")]
     pub max_loops: u32,
+    /// The last stage: how to merge. Empty merges the branch locally; anything else is a shell command.
+    #[serde(skip_serializing_if = "no_text")]
+    pub merge: String,
+}
+
+/// A command run when work reaches an event, to tell the outside world.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default, deny_unknown_fields)]
+pub struct Report {
+    pub id: String,
+    /// handoff, approve, question, failed, merged or dropped.
+    pub on: Vec<String>,
+    pub command: String,
 }
 
 /// `agentDefaults` in `factory.yaml`.
@@ -233,11 +256,40 @@ pub struct Ticket {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum Stage {
+    /// Came from outside and waits for a person to start it.
+    Proposed,
     #[default]
     Queued,
     Starting,
     Running,
     Ended,
+}
+
+/// Why a work item on a line is waiting for a person.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Waiting {
+    #[default]
+    No,
+    /// A person stage: approve, or send back.
+    Approve,
+    /// The end of the line: merge, send back or drop.
+    Handoff,
+    /// The agent asked something, or stopped without saying it was done.
+    Question,
+    /// It failed more times than the line allows, or lost its terminal.
+    Failed,
+}
+
+/// Something a reviewer reported.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct Finding {
+    pub file: String,
+    pub line: u64,
+    pub severity: String,
+    pub text: String,
+    pub stage: String,
 }
 
 /// One ticket and what has happened to it.
@@ -260,6 +312,22 @@ pub struct WorkItem {
     pub ended_at: u64,
     /// How it ended, in words.
     pub outcome: String,
+    /// Which part it came from, for reporting back.
+    pub source: String,
+    /// The line stage it's at. Empty when the factory has no line, or before it starts.
+    pub line_stage: String,
+    /// Where a person chose to start it. Empty means the first stage.
+    pub start_at: String,
+    /// Times each stage has failed.
+    pub loops: BTreeMap<String, u32>,
+    pub waiting: Waiting,
+    /// The terminal each agent has, so work coming back goes to the same conversation.
+    pub agents: BTreeMap<String, String>,
+    pub findings: Vec<Finding>,
+    /// What the last stage to report said.
+    pub summary: String,
+    /// The commit it started from.
+    pub base: String,
 }
 
 /// Something the engine had to stop or give up on, which needs a person to look.
@@ -272,6 +340,12 @@ pub struct Alert {
     pub text: String,
     /// The terminal to go to, when there is one.
     pub terminal: Option<String>,
+    /// question, approve, handoff, blocked, denied or failed. Empty for older alerts.
+    pub kind: String,
+    /// The work item it's about, by id.
+    pub work: String,
+    /// For a denied site: the host.
+    pub host: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
@@ -288,12 +362,15 @@ pub struct Factory {
     /// The stages work moves through. Empty means no line: a factory works as a set of parts.
     pub line: Vec<LineStage>,
     pub defaults: Defaults,
+    pub reports: Vec<Report>,
     /// Where parts were dragged to on the canvas, by node id. Others sit where the layout puts them.
     pub layout: BTreeMap<String, Pos>,
     /// Every ticket fed to this factory and where it stands. The engine owns this.
     pub work: Vec<WorkItem>,
     /// What's waiting for a person to look at. The engine owns this.
     pub alerts: Vec<Alert>,
+    /// Outside items already proposed, so they don't come back. The engine owns this.
+    pub seen: Vec<String>,
     /// When each schedule last fired, by part id, in milliseconds. The engine owns this.
     pub fired: BTreeMap<String, u64>,
     /// For the window: tickets waiting for a terminal. Always rebuilt from `work`.
@@ -346,6 +423,7 @@ struct State {
     alerts: Vec<Alert>,
     fired: BTreeMap<String, u64>,
     layout: BTreeMap<String, Pos>,
+    seen: Vec<String>,
 }
 
 fn write_atomic(file: &Path, text: &str) -> Result<()> {
@@ -477,6 +555,7 @@ impl Store {
                 factory.alerts = state.alerts;
                 factory.fired = state.fired;
                 factory.layout = state.layout;
+                factory.seen = state.seen;
             }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
             Err(e) => return Err(e).with_context(|| format!("couldn't read {}", file.display())),
@@ -573,6 +652,7 @@ impl Store {
         next.work = current.work;
         next.fired = current.fired;
         next.alerts = current.alerts;
+        next.seen = current.seen;
         next.queue = current.queue;
         next.running = current.running;
         self.write_files(&next, "Change the factory")?;
@@ -617,6 +697,7 @@ impl Store {
             alerts: factory.alerts.clone(),
             fired: factory.fired.clone(),
             layout: factory.layout.clone(),
+            seen: factory.seen.clone(),
         };
         let file = self.state_file(&factory.id);
         let text = serde_json::to_string_pretty(&state)?;
@@ -756,6 +837,7 @@ mod tests {
                 at: 5,
                 text: "look".into(),
                 terminal: None,
+                ..Alert::default()
             }],
             layout: BTreeMap::from([("n".to_string(), Pos { x: 1.0, y: 2.0 })]),
             ..Factory::default()

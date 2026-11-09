@@ -6,19 +6,21 @@ import { listen } from '@tauri-apps/api/event';
 import { api, daemon, failureText, sendLine, type Changes, type Factory, type Run, type Terminal } from './api';
 
 export type LampState = 'working' | 'needs' | 'idle';
-export type Tab = 'overview' | 'terminals' | 'knowledge' | 'runs';
+export type Tab = 'overview' | 'terminals' | 'knowledge' | 'runs' | 'work' | 'inbox' | 'setup';
 export type View = 'canvas' | 'list';
 
 export type Route =
   | { screen: 'home' }
   | { screen: 'new' }
+  /** Settings that belong to this machine: webhooks, tunnels, Slack. */
+  | { screen: 'settings' }
   /** The factory's ticket source: list tickets and feed some in. */
   | { screen: 'tickets'; id: string }
   /**
    * `id` is a factory's id, or '' for terminals outside every factory.
    * `file` opens a library file in the knowledge tab, as "<part id>:<path>".
    */
-  | { screen: 'factory'; id: string; tab: Tab; terminal?: string; file?: string };
+  | { screen: 'factory'; id: string; tab: Tab; terminal?: string; file?: string; work?: string };
 
 /** A terminal added on the canvas but not started yet. It lives only in the window. */
 export interface Draft {
@@ -383,9 +385,11 @@ export interface Need {
   text: string;
   /** A terminal id, or a part id. */
   target: string;
-  kind: 'terminal' | 'knowledge' | 'alert';
+  kind: 'terminal' | 'knowledge' | 'alert' | 'work' | 'denied';
   /** An alert's terminal, when it has one. */
   terminal?: string | null;
+  /** The work item's ticket key, for something on the line. */
+  work?: string;
 }
 
 export interface FleetNeed extends Need {
@@ -409,6 +413,8 @@ export function allNeeds(s: Pick<State, 'terminals' | 'factories'>): FleetNeed[]
 export function openNeed(n: FleetNeed) {
   if (n.kind === 'terminal') openFactory(n.factoryId, 'terminals', n.target);
   else if (n.kind === 'knowledge') openFactory(n.factoryId, 'knowledge');
+  else if (n.kind === 'work') go({ screen: 'factory', id: n.factoryId, tab: 'work', work: n.work });
+  else if (n.kind === 'denied') go({ screen: 'factory', id: n.factoryId, tab: 'work' });
   else {
     if (n.terminal) openFactory(n.factoryId, 'terminals', n.terminal);
     else openFactory(n.factoryId, 'runs');
@@ -433,6 +439,15 @@ export function needsOf(f: Factory | undefined, terminals: Terminal[]): Need[] {
     const kb = f.parts.find((p) => p.kind === 'knowledge');
     out.push({ text: 'Review changes to the knowledge base', target: kb?.id ?? 'kb', kind: 'knowledge' });
   }
-  for (const a of f?.alerts ?? []) out.push({ text: a.text, target: a.key, kind: 'alert', terminal: a.terminal });
+  for (const a of f?.alerts ?? []) {
+    if (a.kind === 'denied') {
+      out.push({ text: a.text, target: a.key, kind: 'denied', terminal: a.terminal });
+    } else if (a.work) {
+      const key = f?.work.find((w) => w.id === a.work)?.ticket.key;
+      out.push({ text: a.text, target: a.key, kind: 'work', terminal: a.terminal, work: key });
+    } else {
+      out.push({ text: a.text, target: a.key, kind: 'alert', terminal: a.terminal });
+    }
+  }
   return out;
 }

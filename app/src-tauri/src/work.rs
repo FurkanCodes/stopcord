@@ -7,7 +7,7 @@
 
 use std::collections::{BTreeMap, HashSet};
 
-use crate::factories::{Alert, Factory, Stage, Ticket, WorkItem, slug};
+use crate::factories::{Alert, Factory, Stage, Ticket, Waiting, WorkItem, slug};
 
 /// Tries to start a ticket before giving up on it.
 pub const MAX_START_ATTEMPTS: u32 = 3;
@@ -17,6 +17,8 @@ const RETRY_AFTER_MS: [u64; 2] = [30_000, 120_000];
 const KEEP_ENDED: usize = 50;
 /// Alerts kept. Past this the oldest go, so a stuck factory can't grow without end.
 const KEEP_ALERTS: usize = 30;
+/// Proposals remembered so a rejected one doesn't come back.
+const KEEP_SEEN: usize = 2000;
 
 /// A terminal the daemon says is alive.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -36,6 +38,8 @@ pub enum Change {
     Requeued { key: String },
     /// It was starting when the app stopped, and its terminal is open. Nobody knows if it got the ticket.
     Adopted { key: String, terminal: String },
+    /// A stage's terminal went away. The line decides what that means.
+    StageLost { key: String },
 }
 
 /// What happens after a ticket fails to start.
@@ -64,7 +68,16 @@ pub fn raise(f: &mut Factory, key: &str, text: &str, terminal: Option<&str>, now
         at: now,
         text: text.to_string(),
         terminal: terminal.map(String::from),
+        ..Alert::default()
     });
+    let extra = f.alerts.len().saturating_sub(KEEP_ALERTS);
+    f.alerts.drain(..extra);
+}
+
+/// Adds an alert a person can act on from NEEDS.
+pub fn raise_kind(f: &mut Factory, alert: Alert) {
+    clear(f, &alert.key);
+    f.alerts.push(alert);
     let extra = f.alerts.len().saturating_sub(KEEP_ALERTS);
     f.alerts.drain(..extra);
 }
@@ -174,16 +187,57 @@ pub fn feed(f: &mut Factory, tickets: Vec<Ticket>) -> usize {
     added
 }
 
+/// Adds tickets from outside as proposals, which wait for a person. A ticket already
+/// here, or seen from this source before, is left out. Returns how many were new.
+pub fn propose(f: &mut Factory, source: &str, tickets: Vec<Ticket>, auto_start: bool) -> usize {
+    let mut added = 0;
+    for ticket in tickets {
+        if ticket.key.is_empty() {
+            continue;
+        }
+        let seen_key = format!("{source}:{}", ticket.key);
+        if f.work.iter().any(|w| w.ticket.key == ticket.key) || f.seen.contains(&seen_key) {
+            continue;
+        }
+        f.seen.push(seen_key);
+        let mut item = queued(ticket, new_id(f));
+        item.source = source.to_string();
+        item.stage = if auto_start { Stage::Queued } else { Stage::Proposed };
+        f.work.push(item);
+        added += 1;
+    }
+    let extra = f.seen.len().saturating_sub(KEEP_SEEN);
+    f.seen.drain(..extra);
+    added
+}
+
+/// A person accepted a proposal. It joins the queue, to start at `start_at`, or the first stage when empty.
+pub fn accept(f: &mut Factory, key: &str, start_at: &str) -> bool {
+    match item(f, key) {
+        Some(w) if w.stage == Stage::Proposed => {
+            w.stage = Stage::Queued;
+            w.start_at = start_at.to_string();
+            true
+        }
+        _ => false,
+    }
+}
+
+/// A person doesn't want a proposal. It's forgotten, and `seen` stops it coming back.
+pub fn reject(f: &mut Factory, key: &str) -> bool {
+    let before = f.work.len();
+    f.work.retain(|w| !(w.ticket.key == key && w.stage == Stage::Proposed));
+    f.work.len() != before
+}
+
 /// Marks the next ticket as starting, if there's room. Tickets still starting
 /// count against `room`, and two tickets on one branch never run together.
 pub fn claim(f: &mut Factory, room: usize, now: u64) -> Option<WorkItem> {
-    let busy: Vec<String> = f
-        .work
-        .iter()
-        .filter(|w| matches!(w.stage, Stage::Starting | Stage::Running))
-        .map(|w| w.branch.clone())
-        .collect();
-    if busy.len() >= room {
+    let live = |w: &&WorkItem| matches!(w.stage, Stage::Starting | Stage::Running);
+    let busy: Vec<String> = f.work.iter().filter(live).map(|w| w.branch.clone()).collect();
+    // Work waiting for a person isn't using a seat.
+    let seated = f.work.iter().filter(live).filter(|w| w.waiting == Waiting::No).count();
+    if seated >= room {
         return None;
     }
     let item = f
@@ -245,6 +299,14 @@ pub fn settle(
     for w in &mut f.work {
         let key = w.ticket.key.clone();
         match w.stage {
+            Stage::Running if !w.line_stage.is_empty() => {
+                // Work on a line outlives any one terminal. Only a stage in progress can lose one.
+                let gone = w.terminal.as_ref().is_some_and(|t| !live.iter().any(|l| &l.id == t));
+                if gone && w.waiting == Waiting::No {
+                    w.terminal = None;
+                    changes.push(Change::StageLost { key });
+                }
+            }
             Stage::Running => {
                 let alive = w
                     .terminal
@@ -603,5 +665,77 @@ mod tests {
         }
         assert_eq!(f.work.len(), KEEP_ENDED);
         assert!(f.work.iter().all(|w| w.ended_at >= 5));
+    }
+}
+
+#[cfg(test)]
+mod proposal_tests {
+    use super::*;
+
+    fn t(key: &str) -> Ticket {
+        Ticket {
+            key: key.into(),
+            ..Ticket::default()
+        }
+    }
+
+    #[test]
+    fn proposals_wait_for_a_person_and_never_start_by_themselves() {
+        let mut f = Factory::default();
+        assert_eq!(propose(&mut f, "sentry", vec![t("S-1")], false), 1);
+        assert_eq!(f.work[0].stage, Stage::Proposed);
+        assert!(claim(&mut f, 5, 0).is_none());
+        assert!(accept(&mut f, "S-1", "build"));
+        assert_eq!(f.work[0].start_at, "build");
+        assert!(claim(&mut f, 5, 0).is_some());
+    }
+
+    #[test]
+    fn the_same_ticket_is_only_proposed_once() {
+        let mut f = Factory::default();
+        propose(&mut f, "sentry", vec![t("S-1")], false);
+        assert_eq!(propose(&mut f, "sentry", vec![t("S-1"), t("S-2")], false), 1);
+        assert_eq!(f.work.len(), 2);
+    }
+
+    #[test]
+    fn a_rejected_proposal_doesnt_come_back() {
+        let mut f = Factory::default();
+        propose(&mut f, "sentry", vec![t("S-1")], false);
+        assert!(reject(&mut f, "S-1"));
+        assert!(f.work.is_empty());
+        assert_eq!(propose(&mut f, "sentry", vec![t("S-1")], false), 0);
+    }
+
+    #[test]
+    fn starting_by_itself_is_a_choice_made_per_source() {
+        let mut f = Factory::default();
+        propose(&mut f, "gh", vec![t("A")], true);
+        assert_eq!(f.work[0].stage, Stage::Queued);
+    }
+
+    #[test]
+    fn work_waiting_for_a_person_doesnt_take_a_seat() {
+        let mut f = Factory::default();
+        feed(&mut f, vec![t("A"), t("B")]);
+        let a = claim(&mut f, 1, 0).unwrap();
+        started(&mut f, &a.ticket.key, "t1", "");
+        assert!(claim(&mut f, 1, 0).is_none());
+        f.work[0].waiting = Waiting::Handoff;
+        assert_eq!(claim(&mut f, 1, 0).unwrap().ticket.key, "B");
+    }
+
+    #[test]
+    fn line_work_doesnt_end_when_a_terminal_closes() {
+        let mut f = Factory::default();
+        feed(&mut f, vec![t("A")]);
+        f.work[0].stage = Stage::Running;
+        f.work[0].line_stage = "build".into();
+        f.work[0].terminal = Some("t1".into());
+        let changes = settle(&mut f, &[], &HashSet::new(), false, 0);
+        assert_eq!(changes, vec![Change::StageLost { key: "A".into() }]);
+        assert_eq!(f.work[0].stage, Stage::Running);
+        f.work[0].waiting = Waiting::Handoff;
+        assert!(settle(&mut f, &[], &HashSet::new(), false, 0).is_empty());
     }
 }

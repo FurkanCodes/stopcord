@@ -115,6 +115,8 @@ export function Home({ onSearch }: { onSearch: () => void }) {
         return setState({ homeView: 'list' }), true;
       case '+':
         return go({ screen: 'new' }), true;
+      case ',':
+        return go({ screen: 'settings' }), true;
     }
   });
 
@@ -152,6 +154,9 @@ export function Home({ onSearch }: { onSearch: () => void }) {
           <Key k="/" aria-label="Search factories and terminals" onClick={onSearch}>
             search
           </Key>
+          <Key k="," onClick={() => go({ screen: 'settings' })}>
+            settings
+          </Key>
           <Key k="+" onClick={() => go({ screen: 'new' })}>
             new factory
           </Key>
@@ -164,6 +169,7 @@ export function Home({ onSearch }: { onSearch: () => void }) {
         ['a/!', 'all or needs you'],
         ['c/v', 'canvas or list'],
         ['+', 'new factory'],
+        [',', 'settings'],
         ['/', 'search'],
         ['?', 'all keys'],
       ]}
@@ -317,7 +323,7 @@ function FactoryPane({ card: c, runs, onOpen }: { card: Card; runs: Run[] | unde
               !
             </span>
             <span className="t-dim" style={{ width: '10ch', flexShrink: 0 }}>
-              stopped
+              {alert.kind || 'stopped'}
             </span>
             <span style={{ flexGrow: 1, minWidth: 0 }}>{alert.text}</span>
           </span>

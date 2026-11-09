@@ -26,7 +26,7 @@ use crate::factories::{Factory, Kind, Part, RunsIn, RunsOn, Stage, Store, Ticket
 use crate::runs::{self, Run};
 use crate::typing::{Port, Typist};
 use crate::work::{self, Change, Live, Retry};
-use crate::{hooks, kb, shell, worktree};
+use crate::{hooks, kb, runner, shell, worktree};
 
 /// Sends an event to the window.
 pub type Emit = Arc<dyn Fn(&str, Value) + Send + Sync>;
@@ -61,6 +61,8 @@ pub struct StartRequest {
     pub cols: Option<u16>,
     /// What the person will ask it first, for the run log. The window types it in.
     pub task: Option<String>,
+    /// The runner to use. Empty or missing means the factory's default.
+    pub runner: Option<String>,
 }
 
 fn failure(e: anyhow::Error) -> Failure {
@@ -70,7 +72,13 @@ fn failure(e: anyhow::Error) -> Failure {
 /// Starts a terminal. In a factory with a branch, it gets its own worktree with
 /// the knowledge base linked in. With a command, it runs in the login shell and
 /// the shell stays after it ends.
-pub fn start_terminal(store: &Store, bridge: &Bridge, req: StartRequest) -> Result<Value, Failure> {
+pub fn start_terminal(store: &Store, bridge: &Bridge, program: &Path, req: StartRequest) -> Result<Value, Failure> {
+    let deny = crate::settings::load(store.home()).map(|s| vec![s.webhooks.port]).unwrap_or_default();
+    start_terminal_with(store, bridge, program, req, deny)
+}
+
+/// `start_terminal`, with the local ports a confined agent must not reach.
+pub fn start_terminal_with(store: &Store, bridge: &Bridge, program: &Path, req: StartRequest, deny_ports: Vec<u16>) -> Result<Value, Failure> {
     let factory = match &req.factory_id {
         Some(id) => Some(store.get(id).map_err(failure)?),
         None => None,
@@ -104,6 +112,14 @@ pub fn start_terminal(store: &Store, bridge: &Bridge, req: StartRequest) -> Resu
         .filter(|n| !n.trim().is_empty())
         .unwrap_or(fallback);
     let mut params = json!({ "argv": shell::argv(&shell, command), "cwd": cwd, "name": name });
+    if let Some(f) = &factory {
+        let chosen = runner::pick(f, req.runner.as_deref());
+        let started = runner::prepare(store, bridge, f, chosen, command, Path::new(&cwd), program, deny_ports)?;
+        params["argv"] = json!(started.argv);
+        params["confine"] = json!(started.confine);
+        let env: serde_json::Map<String, Value> = started.env.into_iter().map(|(k, v)| (k, json!(v))).collect();
+        params["env"] = Value::Object(env);
+    }
     if let (Some(rows), Some(cols)) = (req.rows, req.cols) {
         params["rows"] = json!(rows);
         params["cols"] = json!(cols);
@@ -248,7 +264,7 @@ pub fn due(schedule: Schedule, last: NaiveDateTime, now: NaiveDateTime) -> Due {
     }
 }
 
-fn local(ms: u64) -> NaiveDateTime {
+pub(crate) fn local(ms: u64) -> NaiveDateTime {
     Local
         .timestamp_millis_opt(ms as i64)
         .single()
@@ -304,9 +320,9 @@ impl FixLimit {
 // ---- The engine -------------------------------------------------------------
 
 #[derive(Default)]
-struct State {
+pub(crate) struct State {
     /// The daemon's terminals as last heard, by id.
-    terminals: HashMap<String, Value>,
+    pub(crate) terminals: HashMap<String, Value>,
     /// True once the terminal list came from the daemon.
     synced: bool,
     /// Terminals whose current turn the engine started by typing a prompt.
@@ -326,21 +342,27 @@ struct State {
     /// How often "when a check fails" triggers have asked in a row.
     fix_limit: FixLimit,
     /// Tickets this run of the app is starting right now: (factory, key).
-    starting: HashSet<(String, String)>,
+    pub(crate) starting: HashSet<(String, String)>,
     /// The terminal list was just read afresh, so a missing terminal went unwatched.
     resync: bool,
     /// Factories whose files can't be read, as last told to the window.
     broken: Vec<(String, String)>,
+    /// Work items a thread is acting on right now: (factory, key).
+    pub(crate) stepping: HashSet<(String, String)>,
+    /// Terminals already told to trust their folder.
+    pub(crate) trusted: HashSet<String>,
     ticks: u64,
 }
 
 pub struct Engine {
-    store: Arc<Store>,
-    bridge: Bridge,
-    program: PathBuf,
+    pub(crate) store: Arc<Store>,
+    pub(crate) bridge: Bridge,
+    pub(crate) program: PathBuf,
     emit: Emit,
-    state: Mutex<State>,
+    pub(crate) state: Mutex<State>,
     typist: Typist,
+    pub(crate) intake: Mutex<crate::intake::Intake>,
+    pub tunnel: crate::tunnel::Tunnel,
 }
 
 impl Port for Bridge {
@@ -365,6 +387,8 @@ impl Engine {
             emit,
             state: Mutex::new(State::default()),
             typist: Typist::new(READY_TIMEOUT, TURN_START, TYPING_POLL, STEADY_IDLE),
+            intake: Mutex::default(),
+            tunnel: crate::tunnel::Tunnel::default(),
         })
     }
 
@@ -383,6 +407,7 @@ impl Engine {
                     .insert(f.id.clone(), knowledge_differs(&self.store, &f.id));
             }
         }
+        self.apply_settings();
         let events = Arc::clone(self);
         thread::Builder::new()
             .name("sawtooth-engine-events".into())
@@ -417,6 +442,13 @@ impl Engine {
                         st.synced = true;
                         st.resync = true;
                     }
+                    let waiting: Vec<String> = self.state.lock().unwrap().terminals.keys().cloned().collect();
+                    let me = Arc::clone(&self);
+                    thread::spawn(move || {
+                        for id in waiting {
+                            me.collect_reports(&id);
+                        }
+                    });
                     self.pump_tickets();
                     for event in events {
                         let Ok(event) = event else { break };
@@ -438,6 +470,16 @@ impl Engine {
                 }
                 self.pump_tickets();
             }
+            Some("terminal.report") => {
+                if let Some(id) = event["id"].as_str() {
+                    let (me, id) = (Arc::clone(self), id.to_string());
+                    thread::spawn(move || me.collect_reports(&id));
+                }
+            }
+            Some("terminal.denied") => {
+                let (me, event) = (Arc::clone(self), event.clone());
+                thread::spawn(move || me.on_denied(&event));
+            }
             Some(kind) => {
                 let terminal = &event["terminal"];
                 let Some(id) = terminal["id"].as_str() else {
@@ -453,6 +495,12 @@ impl Engine {
                 if terminal["state"] == "working" && !was_working {
                     self.typist.turn_began(id);
                     self.state.lock().unwrap().turn_started.insert(id.to_string(), Instant::now());
+                    let (me, tid) = (Arc::clone(self), id.to_string());
+                    thread::spawn(move || me.line_turn_began(&tid));
+                }
+                if terminal["state"] == "blocked" {
+                    let (me, terminal) = (Arc::clone(self), terminal.clone());
+                    thread::spawn(move || me.maybe_trust(&terminal));
                 }
                 if kind == "terminal.changed" && was_working && terminal["state"] == "idle" {
                     let me = Arc::clone(self);
@@ -468,7 +516,7 @@ impl Engine {
     }
 
     /// The factory a terminal works for: its folder is the project or one of the factory's worktrees.
-    fn factory_of(&self, terminal: &Value) -> Option<Factory> {
+    pub(crate) fn factory_of(&self, terminal: &Value) -> Option<Factory> {
         let cwd = terminal["cwd"].as_str()?;
         let real = Path::new(cwd).canonicalize().ok();
         self.store.list().ok()?.into_iter().find(|f| {
@@ -483,7 +531,7 @@ impl Engine {
         })
     }
 
-    fn log(&self, factory: &str, run: Run) {
+    pub(crate) fn log(&self, factory: &str, run: Run) {
         let _ = runs::append(&self.store, factory, &run);
     }
 
@@ -494,11 +542,11 @@ impl Engine {
         });
     }
 
-    fn clear_alert(&self, factory: &str, key: &str) {
+    pub(crate) fn clear_alert(&self, factory: &str, key: &str) {
         let _ = self.store.update(factory, |f| work::clear(f, key));
     }
 
-    fn name_of(&self, id: &str) -> String {
+    pub(crate) fn name_of(&self, id: &str) -> String {
         self.state
             .lock()
             .unwrap()
@@ -549,6 +597,10 @@ impl Engine {
         };
         if !engine_turn {
             let _ = self.store.update(&factory.id, |f| work::clear_fixes(f, id));
+        }
+        // Work on a line has gates. The checks below are for terminals outside one.
+        if self.line_turn_finished(id, engine_turn) {
+            return;
         }
         let checks: Vec<&Part> = factory
             .parts
@@ -724,7 +776,7 @@ impl Engine {
             name: Some(name.to_string()),
             ..StartRequest::default()
         };
-        let t = start_terminal(&self.store, &self.bridge, req).map_err(|f| f.message)?;
+        let t = start_terminal(&self.store, &self.bridge, &self.program, req).map_err(|f| f.message)?;
         let id = t["id"].as_str().unwrap_or_default().to_string();
         self.state.lock().unwrap().terminals.insert(id.clone(), t);
         Ok(id)
@@ -739,7 +791,7 @@ impl Engine {
     /// Types a prompt and counts the turn it starts as the engine's own. The mark goes on
     /// only at the moment of typing: put on while waiting, it'd be used up by the turn
     /// still running, and the engine's own turn would look like a person's.
-    fn type_engine_turn(&self, id: &str, prompt: &str) -> Result<(), String> {
+    pub(crate) fn type_engine_turn(&self, id: &str, prompt: &str) -> Result<(), String> {
         let typed = std::sync::atomic::AtomicBool::new(false);
         let result = self.typist.type_prompt(&self.bridge, id, prompt, &self.name_of(id), &|| {
             typed.store(true, std::sync::atomic::Ordering::SeqCst);
@@ -763,6 +815,10 @@ impl Engine {
     // ---- Tickets ------------------------------------------------------------
 
     /// Queues tickets for a factory. Returns how many were new.
+    pub fn pump(self: &Arc<Self>) {
+        self.pump_tickets();
+    }
+
     pub fn feed(self: &Arc<Self>, id: &str, tickets: Vec<Ticket>) -> anyhow::Result<usize> {
         let added = self.store.update(id, |f| work::feed(f, tickets))?;
         if added > 0 {
@@ -792,9 +848,11 @@ impl Engine {
         }
         for factory in self.store.list().unwrap_or_default() {
             let source = factory.tickets().cloned();
-            let can_start = source
-                .as_ref()
-                .is_some_and(|s| !s.harness.trim().is_empty());
+            let on_line = !factory.line.is_empty();
+            let can_start = on_line
+                || source
+                    .as_ref()
+                    .is_some_and(|s| !s.harness.trim().is_empty());
             if let Some(s) = &source
                 && !can_start
                 && !factory.queue.is_empty()
@@ -804,7 +862,12 @@ impl Engine {
                 self.alert(&factory.id, "source", text, None);
                 self.log(&factory.id, Run::new("ticket", text).ok(false).part(&s.id));
             }
-            let room = source.as_ref().map_or(1, |s| s.at_once.max(1) as usize);
+            let room = source
+                .as_ref()
+                .map(|s| s.at_once)
+                .filter(|n| *n > 0)
+                .or(Some(factory.defaults.at_once).filter(|n| *n > 0))
+                .unwrap_or(1) as usize;
             let now = runs::now_ms();
             let id = factory.id.clone();
             let result = self.store.update(&id, |f| {
@@ -852,12 +915,26 @@ impl Engine {
                         self.alert(&id, &work::ticket_alert(key), &run.text, Some(terminal));
                     }
                     Change::Closed { .. } | Change::Requeued { .. } => {}
+                    Change::StageLost { key } => {
+                        let step = self.store.update(&id, |f| crate::line::terminal_lost(f, key));
+                        if let Ok(step) = step {
+                            self.step(&id, key, step);
+                        }
+                    }
                 }
                 self.log(&id, run);
             }
-            if let (Some(item), Some(source)) = (next, source) {
-                let me = Arc::clone(self);
-                thread::spawn(move || me.start_ticket(&factory, &source, item));
+            match (next, source) {
+                (Some(item), _) if on_line => {
+                    let me = Arc::clone(self);
+                    let (fid, key) = (id.clone(), item.ticket.key.clone());
+                    thread::spawn(move || me.begin_on_line(&fid, &key));
+                }
+                (Some(item), Some(source)) => {
+                    let me = Arc::clone(self);
+                    thread::spawn(move || me.start_ticket(&factory, &source, item));
+                }
+                _ => {}
             }
         }
         if lost {
@@ -885,7 +962,7 @@ impl Engine {
             branch: Some(branch.clone()),
             ..StartRequest::default()
         };
-        let id = match start_terminal(&self.store, &self.bridge, req) {
+        let id = match start_terminal(&self.store, &self.bridge, &self.program, req) {
             Ok(t) => {
                 let id = t["id"].as_str().unwrap_or_default().to_string();
                 let cwd = t["cwd"].as_str().unwrap_or_default().to_string();
@@ -954,7 +1031,10 @@ impl Engine {
         for f in &factories {
             self.watch_files(f);
             self.check_schedules(f);
+            self.resume(f);
+            self.pull_due(f);
         }
+        self.keep_awake(&factories);
         self.pump_tickets();
         self.watch_broken();
         let sweep = {
@@ -1237,6 +1317,7 @@ fn change_run(change: &Change) -> Run {
             "ticket",
             format!("{key} was starting when Sawtooth stopped, so it's queued again."),
         ),
+        Change::StageLost { key } => Run::new("line", format!("{key} lost its terminal")).ok(false),
         Change::Adopted { key, terminal } => Run::new(
             "ticket",
             format!("{key} was starting when Sawtooth stopped and its terminal is still open. Check that it got the ticket."),

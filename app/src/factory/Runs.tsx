@@ -28,6 +28,12 @@ const glyphOf: Record<Run['kind'], string> = {
   terminal: '▸',
   knowledge: '+',
   factory: '·',
+  line: '▸',
+  agent: '›',
+  network: '×',
+  source: '↓',
+  webhook: '↓',
+  report: '↑',
 };
 
 const cols = '6ch 2ch 12ch minmax(0, 1fr) 10ch';

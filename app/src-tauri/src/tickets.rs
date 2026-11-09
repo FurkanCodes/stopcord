@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 use anyhow::{Result, anyhow, bail};
 use serde_json::Value;
 
-use crate::factories::{Factory, Ticket};
+use crate::factories::{Factory, Part, Ticket};
 use crate::shell;
 
 const TIMEOUT: Duration = Duration::from_secs(60);
@@ -20,6 +20,11 @@ pub fn run(factory: &Factory) -> Result<Vec<Ticket>> {
     let part = factory
         .tickets()
         .ok_or_else(|| anyhow!("This factory has no ticket source. Add one from Add parts."))?;
+    run_part(factory, part)
+}
+
+/// Runs one source's command and reads the tickets it prints.
+pub fn run_part(factory: &Factory, part: &Part) -> Result<Vec<Ticket>> {
     if part.command.trim().is_empty() {
         bail!("The ticket source has no command yet. Give it one that prints tickets as JSON.");
     }

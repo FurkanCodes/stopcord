@@ -31,7 +31,7 @@ pub fn argv(shell: &str, command: Option<&str>) -> Vec<String> {
     }
 }
 
-fn quote(s: &str) -> String {
+pub fn quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', r"'\''"))
 }
 

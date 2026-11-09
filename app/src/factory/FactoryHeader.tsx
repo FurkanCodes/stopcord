@@ -8,6 +8,9 @@ const tabs: [Tab, string, string][] = [
   ['terminals', '2', 'terminals'],
   ['knowledge', '3', 'knowledge'],
   ['runs', '4', 'runs'],
+  ['work', '5', 'work'],
+  ['inbox', '6', 'inbox'],
+  ['setup', '7', 'setup'],
 ];
 
 /** sawtooth › factory │ [1] overview [2] terminals [3] knowledge [4] runs … [t] feed tickets */

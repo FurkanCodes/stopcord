@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Home } from './Home';
 import { NewFactory } from './NewFactory';
+import { MachineSettings } from './MachineSettings';
 import { FeedTickets } from './FeedTickets';
 import { FactoryScreen } from './factory/FactoryScreen';
 import { useStore } from './store';
@@ -28,6 +29,7 @@ export function App() {
     <>
       {route.screen === 'home' && <Home onSearch={() => setOverlay('search')} />}
       {route.screen === 'new' && <NewFactory />}
+      {route.screen === 'settings' && <MachineSettings />}
       {route.screen === 'tickets' && <FeedTickets key={route.id} id={route.id} />}
       {route.screen === 'factory' && <FactoryScreen key={route.id} id={route.id} onSearch={() => setOverlay('search')} />}
       {overlay === 'search' && <Search onClose={() => setOverlay(null)} />}

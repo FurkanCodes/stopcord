@@ -13,17 +13,28 @@ mod bridge;
 mod definition;
 mod engine;
 mod factories;
+mod flow;
+mod gate;
 mod git;
+mod harness;
 mod hooks;
+mod intake;
 mod kb;
 mod leave_key;
+mod line;
 mod project;
+mod runner;
 mod runs;
+mod settings;
 mod shell;
+mod st;
+mod templates;
 #[cfg(debug_assertions)]
 mod testbridge;
 mod tickets;
+mod tunnel;
 mod typing;
+mod webhook;
 mod work;
 mod worktree;
 
@@ -34,7 +45,7 @@ use std::time::Duration;
 
 use bridge::{Bridge, Failure};
 use engine::{Engine, StartRequest};
-use factories::{Factory, Kind, Part, RunsOn, Store, Ticket};
+use factories::{Factory, Kind, Level, Part, RunsOn, Store, Ticket};
 use project::{FolderSuggestion, ProjectInfo};
 use runs::Run;
 use sawtooth_daemon::{Config, Daemon, paths};
@@ -223,6 +234,7 @@ fn start_terminal(
     engine::start_terminal(
         &app.store,
         &bridge,
+        &app.program,
         StartRequest {
             factory_id,
             cwd,
@@ -232,6 +244,7 @@ fn start_terminal(
             rows,
             cols,
             task,
+            runner: None,
         },
     )
 }
@@ -293,6 +306,9 @@ fn create_factory(
     name: String,
     template: String,
     read_as: Vec<String>,
+    harness: Option<String>,
+    reviewer: Option<String>,
+    level: Option<String>,
 ) -> Result<FactoryInfo, Failure> {
     let folder = Path::new(&path);
     let mut parts = vec![Part {
@@ -302,7 +318,7 @@ fn create_factory(
         read_as,
         ..Part::default()
     }];
-    if template == "reviewed" {
+    if template == "reviewed" || template == "line" {
         if let Some(test) = project::test_command(folder) {
             parts.push(Part {
                 id: "tests".into(),
@@ -322,7 +338,19 @@ fn create_factory(
             ..Part::default()
         });
     }
-    let factory = app.store.create(folder, &name, parts).map_err(fail)?;
+    let test = parts.iter().find(|p| p.id == "tests").map(|p| p.command.clone());
+    let mut factory = app.store.create(folder, &name, parts).map_err(fail)?;
+    if template == "line" {
+        let harness = harness.filter(|h| !h.trim().is_empty()).unwrap_or_else(|| "claude".to_string());
+        let reviewer = reviewer.filter(|h| !h.trim().is_empty()).unwrap_or_else(|| harness.clone());
+        let level = match level.as_deref() {
+            Some("contained") => Level::Contained,
+            Some("vm") => Level::Vm,
+            _ => Level::Worktree,
+        };
+        templates::standard_line(&mut factory, &harness, &reviewer, test.as_deref(), level);
+        factory = app.store.save(&factory).map_err(fail)?;
+    }
     let seed = kb::seed(&factory.name);
     std::fs::write(app.store.knowledge_file(&factory.id), &seed).map_err(|e| fail(e.into()))?;
     std::fs::write(app.store.approved_knowledge_file(&factory.id), &seed)
@@ -601,6 +629,140 @@ fn feed_tickets(
 }
 
 #[tauri::command(async)]
+fn work_action(
+    app: State<'_, App>,
+    engine: State<'_, Arc<Engine>>,
+    id: String,
+    key: String,
+    action: String,
+    note: Option<String>,
+) -> Result<FactoryInfo, Failure> {
+    engine
+        .work_action(&id, &key, &action, note.as_deref().unwrap_or_default())
+        .map_err(|e| Failure::new("work", e))?;
+    Ok(app.info(app.store.get(&id).map_err(fail)?))
+}
+
+#[tauri::command(async)]
+fn accept_proposal(
+    app: State<'_, App>,
+    engine: State<'_, Arc<Engine>>,
+    id: String,
+    key: String,
+    start_at: String,
+) -> Result<FactoryInfo, Failure> {
+    app.store.update(&id, |f| work::accept(f, &key, &start_at)).map_err(fail)?;
+    engine.pump();
+    Ok(app.info(app.store.get(&id).map_err(fail)?))
+}
+
+#[tauri::command(async)]
+fn reject_proposal(app: State<'_, App>, id: String, key: String) -> Result<FactoryInfo, Failure> {
+    app.store.update(&id, |f| work::reject(f, &key)).map_err(fail)?;
+    Ok(app.info(app.store.get(&id).map_err(fail)?))
+}
+
+#[tauri::command(async)]
+fn pull_source(engine: State<'_, Arc<Engine>>, id: String, part: String) -> Result<usize, Failure> {
+    engine.pull(&id, &part).map_err(|e| Failure::new("source", e))
+}
+
+#[tauri::command(async)]
+fn answer_denied(
+    engine: State<'_, Arc<Engine>>,
+    id: String,
+    key: String,
+    allow: bool,
+    always: bool,
+) -> Result<(), Failure> {
+    engine.answer_denied(&id, &key, allow, always).map_err(|e| Failure::new("network", e))
+}
+
+#[tauri::command]
+fn source_templates() -> Vec<templates::SourceTemplate> {
+    templates::source_templates()
+}
+
+/// The machine's settings, and how the things they control are doing.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct Machine {
+    settings: settings::Settings,
+    tunnel: tunnel::Status,
+    /// The port the webhook listener is on. 0 when it's off.
+    port: u16,
+    problem: String,
+    sandbox: Option<String>,
+}
+
+fn machine_of(app: &App, engine: &Engine) -> Result<Machine, Failure> {
+    Ok(Machine {
+        settings: settings::load(app.store.home()).map_err(fail)?,
+        tunnel: engine.tunnel.status(),
+        port: engine.intake.lock().unwrap().port,
+        problem: engine.intake_problem(),
+        sandbox: sawtooth_sandbox::available().err(),
+    })
+}
+
+#[tauri::command(async)]
+fn machine(app: State<'_, App>, engine: State<'_, Arc<Engine>>) -> Result<Machine, Failure> {
+    machine_of(&app, &engine)
+}
+
+#[tauri::command(async)]
+fn save_machine(
+    app: State<'_, App>,
+    engine: State<'_, Arc<Engine>>,
+    settings: settings::Settings,
+) -> Result<Machine, Failure> {
+    settings::save(app.store.home(), &settings).map_err(fail)?;
+    engine.apply_settings();
+    machine_of(&app, &engine)
+}
+
+#[tauri::command(async)]
+fn start_tunnel(app: State<'_, App>, engine: State<'_, Arc<Engine>>) -> Result<Machine, Failure> {
+    let settings = settings::load(app.store.home()).map_err(fail)?;
+    engine.start_tunnel(&settings).map_err(|e| Failure::new("tunnel", e))?;
+    machine_of(&app, &engine)
+}
+
+#[tauri::command(async)]
+fn stop_tunnel(app: State<'_, App>, engine: State<'_, Arc<Engine>>) -> Result<Machine, Failure> {
+    engine.tunnel.stop();
+    machine_of(&app, &engine)
+}
+
+#[tauri::command(async)]
+fn set_secret(app: State<'_, App>, name: String, value: String) -> Result<(), Failure> {
+    settings::set_secret(app.store.home(), &name, &value).map_err(fail)
+}
+
+#[tauri::command(async)]
+fn has_secrets(app: State<'_, App>, names: Vec<String>) -> Vec<String> {
+    names.into_iter().filter(|n| settings::has_secret(app.store.home(), n)).collect()
+}
+
+#[tauri::command(async)]
+fn hook_url(engine: State<'_, Arc<Engine>>, id: String, part: String) -> String {
+    engine.hook_url(&id, &part)
+}
+
+#[tauri::command(async)]
+fn harnesses(app: State<'_, App>) -> Vec<harness::Harness> {
+    harness::load(&app.store.home().join("harnesses")).0
+}
+
+#[tauri::command(async)]
+fn save_harness(app: State<'_, App>, harness: harness::Harness) -> Result<(), Failure> {
+    let dir = app.store.home().join("harnesses");
+    std::fs::create_dir_all(&dir).map_err(|e| fail(e.into()))?;
+    let text = serde_yaml_ng::to_string(&harness).map_err(|e| fail(e.into()))?;
+    std::fs::write(dir.join(format!("{}.yaml", factories::slug(&harness.id))), text).map_err(|e| fail(e.into()))
+}
+
+#[tauri::command(async)]
 fn nearby_folders(app: State<'_, App>) -> Vec<FolderSuggestion> {
     let Some(home) = std::env::var_os("HOME") else {
         return Vec::new();
@@ -641,11 +803,16 @@ fn main() {
             let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
             std::process::exit(hooks::run_hook(&store, id, hook, &cwd));
         }
+        Some("st") => std::process::exit(st::main(&args[2..])),
+        Some("sandbox-bridge") => std::process::exit(sawtooth_sandbox::bridge_main(&args[2..])),
         _ => {}
     }
 
     let program = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("sawtooth-app"));
     let store = Arc::new(Store::new(paths::home()));
+    if let Err(e) = st::install(store.home(), &program) {
+        eprintln!("sawtooth: couldn't install st: {e}");
+    }
     let app = App {
         store: Arc::clone(&store),
         program: program.clone(),
@@ -727,6 +894,21 @@ fn main() {
             feed_tickets,
             nearby_folders,
             detect_project,
+            work_action,
+            accept_proposal,
+            reject_proposal,
+            pull_source,
+            answer_denied,
+            source_templates,
+            machine,
+            save_machine,
+            start_tunnel,
+            stop_tunnel,
+            set_secret,
+            has_secrets,
+            hook_url,
+            harnesses,
+            save_harness,
         ])
         .build(tauri::generate_context!())
         .expect("Sawtooth couldn't open its window");
