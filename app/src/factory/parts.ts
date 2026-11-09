@@ -134,7 +134,6 @@ export function drawerGroups(f: Factory): { group: string; items: DrawerItem[] }
           template: 'tickets',
           name: 'Ticket source',
           description: 'Lists your tickets with a command you write, like gh issue list.',
-          off: has('tickets') ? 'Already on the canvas. A factory has one.' : undefined,
         },
         { template: 'trigger', name: 'Trigger', description: 'Types a prompt into a terminal when something happens.' },
         { template: 'testsQuiet', name: 'Tests when quiet', description: 'Asks a terminal to run the tests once it stops.' },

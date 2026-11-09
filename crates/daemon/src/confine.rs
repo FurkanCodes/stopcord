@@ -57,6 +57,10 @@ pub fn clean_report(raw: &str) -> Result<Value, String> {
     let verb = text("verb");
     match verb.as_str() {
         "done" | "ask" | "note" => Ok(json!({ "verb": verb, "text": text("text") })),
+        "score" => match v["score"].as_u64().filter(|n| *n <= 10) {
+            Some(score) => Ok(json!({ "verb": verb, "score": score, "text": text("text") })),
+            None => Err("a score is a whole number from 0 to 10".to_string()),
+        },
         "finding" => {
             let severity = match text("severity").as_str() {
                 s @ ("high" | "medium" | "low") => s.to_string(),

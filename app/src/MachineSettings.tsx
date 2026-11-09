@@ -162,7 +162,7 @@ export function MachineSettings() {
           </Pane>
 
           <Pane title="slack" style={paneStyle}>
-            <p className="t-muted">an @mention becomes a proposal in a factory. needs your own slack app with socket mode on. only the people listed below can send work.</p>
+            <p className="t-muted">an @mention becomes a proposal in a factory. needs your own slack app with socket mode on, and the scopes app_mentions:read, chat:write, channels:read, groups:read, channels:history and groups:history. only the people listed below can send work.</p>
             <Check id="sl-on" checked={s.slack.enabled} onChange={(enabled) => void change({ ...s, slack: { ...s.slack, enabled } })}>
               connect to slack
             </Check>
@@ -202,7 +202,7 @@ export function MachineSettings() {
                 <span className="t-muted" style={{ flex: '1 1 240px', fontSize: 12, minWidth: 0 }}>{h.domains.join(' · ') || 'no sites listed'}</span>
                 {h.trust && (
                   <Check id={`tr-${h.id}`} checked={h.trust.auto} onChange={(on) => void trust(h, on)}>
-                    answer its folder-trust question for me
+                    also answer its folder-trust question outside the sandbox
                   </Check>
                 )}
               </div>

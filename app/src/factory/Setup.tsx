@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react';
-import { api, type Agent, type Factory, type LineStage, type Part, type Report, type Runner, type Skill, type SourceTemplate } from '../api';
-import { changeFactory, showProblem } from '../store';
+import { useEffect, useState, type ReactNode } from 'react';
+import { api, type Agent, type BenchResult, type BenchTask, type Factory, type LineStage, type Part, type Report, type Runner, type Skill, type SourceTemplate, type Suite } from '../api';
+import { changeFactory, refreshFactories, showProblem } from '../store';
 import { Check, Empty, FieldRow, Key, Pane, Screen } from '../tui/kit';
 import { FactoryHeader } from './FactoryHeader';
 import { LineStrip } from './LineStrip';
@@ -37,15 +37,15 @@ const paneStyle = { padding: '14px 12px 12px', maxWidth: 960, width: '100%', mar
 const card = { display: 'flex', flexDirection: 'column', gap: 4, paddingBottom: 10, borderBottom: '1px solid var(--line-soft, var(--line))' } as const;
 
 /** Everything a factory is made of, editable where it's shown. Each change is a commit in the definition folder. */
-export function Setup({ factory }: { factory: Factory }) {
+export function Setup({ factory, onRemove }: { factory: Factory; onRemove: () => void }) {
+  const [at, setAt] = useState(0);
   const set = (patch: Partial<Factory>) => changeFactory({ ...factory, ...patch });
-  const agents = factory.agents.map((a): [string, string] => [a.id, a.id]);
+  const agents = [...factory.agents, ...factory.scorers].map((a): [string, string] => [a.id, a.id]);
   const runners: [string, string][] = [['', 'factory default'], ...factory.runners.map((r): [string, string] => [r.id, `${r.id} (${r.level})`])];
   const checks = factory.parts.filter((p) => p.kind === 'check');
   const stageIds: [string, string][] = factory.line.map((s) => [s.id, s.id]);
 
   const stage = (i: number, patch: Partial<LineStage>) => set({ line: factory.line.map((s, j) => (j === i ? { ...s, ...patch } : s)) });
-  const agent = (i: number, patch: Partial<Agent>) => set({ agents: factory.agents.map((a, j) => (j === i ? { ...a, ...patch } : a)) });
   const runner = (i: number, patch: Partial<Runner>) => set({ runners: factory.runners.map((r, j) => (j === i ? { ...r, ...patch } : r)) });
   const skill = (i: number, patch: Partial<Skill>) => set({ skills: factory.skills.map((s, j) => (j === i ? { ...s, ...patch } : s)) });
   const report = (i: number, patch: Partial<Report>) => set({ reports: factory.reports.map((r, j) => (j === i ? { ...r, ...patch } : r)) });
@@ -57,6 +57,7 @@ export function Setup({ factory }: { factory: Factory }) {
     const firstAgent = factory.agents[0]?.id ?? '';
     const added: LineStage = firstAgent ? { id, kind: 'agent', agent: firstAgent } : { id, kind: 'human' };
     set({ line: [...factory.line.map((s) => (s === last ? { ...s, then: id } : s)), added] });
+    setAt(factory.line.length);
   }
   function removeStage(i: number) {
     const id = factory.line[i]!.id;
@@ -65,6 +66,7 @@ export function Setup({ factory }: { factory: Factory }) {
   }
 
   const sources = factory.parts.filter((p) => p.kind === 'tickets');
+  const selected = Math.min(at, Math.max(factory.line.length - 1, 0));
 
   return (
     <Screen
@@ -82,8 +84,8 @@ export function Setup({ factory }: { factory: Factory }) {
       </Pane>
 
       <Pane title="line" right={<Key size="xs" onClick={addStage}>add stage</Key>} style={paneStyle}>
-        <LineStrip factory={factory} />
-        {factory.line.map((s, i) => (
+        <LineStrip factory={factory} selected={selected} onSelect={setAt} />
+        {factory.line.map((s, i) => i !== selected ? null : (
           <div key={i} style={card}>
             <Text id={`st-id-${i}`} label="stage" value={s.id} onChange={(id) => stage(i, { id })} />
             <Pick id={`st-kind-${i}`} label="done by" value={s.kind} options={[['agent', 'an agent'], ['gate', 'the engine: checks that must pass'], ['human', 'a person']]} onChange={(kind) => stage(i, { kind: kind as LineStage['kind'] })} />
@@ -116,25 +118,15 @@ export function Setup({ factory }: { factory: Factory }) {
         ))}
       </Pane>
 
-      <Pane title="agents" right={<Key size="xs" onClick={() => set({ agents: [...factory.agents, { id: uniq('agent', factory.agents.map((a) => a.id)), description: '', harness: '', runner: '', prompt: '' }] })}>add agent</Key>} style={paneStyle}>
-        {factory.agents.length === 0 && <Empty style={{ padding: 0 }}>no agents</Empty>}
-        {factory.agents.map((a, i) => (
-          <div key={i} style={card}>
-            <Text id={`ag-id-${i}`} label="name" value={a.id} onChange={(id) => agent(i, { id })} />
-            <Text id={`ag-d-${i}`} label="what it does" value={a.description} onChange={(description) => agent(i, { description })} />
-            <Text id={`ag-h-${i}`} label="harness" value={a.harness} placeholder="empty uses the default" onChange={(harness) => agent(i, { harness })} />
-            <Pick id={`ag-r-${i}`} label="runner" value={a.runner} options={runners} onChange={(r) => agent(i, { runner: r })} />
-            <FieldRow id={`ag-p-${i}`} label="role prompt" width="14ch" top>
-              <textarea id={`ag-p-${i}`} className="t-field" rows={5} value={a.prompt} onChange={(e) => agent(i, { prompt: e.currentTarget.value })} />
-            </FieldRow>
-            <span><Key size="xs" onClick={() => set({ agents: factory.agents.filter((_, j) => j !== i) })}>remove agent</Key></span>
-          </div>
-        ))}
-      </Pane>
+      <RolePane title="agents" noun="agent" items={factory.agents} runners={runners} onChange={(next) => set({ agents: next })} />
+
+      <RolePane title="scorers" noun="scorer" note="an optional line stage that scores work from 0 to 10. the score shows at handoff and never passes or fails anything" items={factory.scorers} runners={runners} onChange={(next) => set({ scorers: next })} />
+
+      <BenchPane factory={factory} set={set} />
 
       <Pane title="runners" right={<Key size="xs" onClick={() => set({ runners: [...factory.runners, { id: uniq('runner', factory.runners.map((r) => r.id)), level: 'contained' }] })}>add runner</Key>} style={paneStyle}>
         {factory.runners.map((r, i) => (
-          <div key={i} style={card}>
+          <Fold key={i} title={r.id} hint={r.level}>
             <Text id={`rn-id-${i}`} label="name" value={r.id} onChange={(id) => runner(i, { id })} />
             <Pick id={`rn-l-${i}`} label="level" value={r.level} options={[['worktree', 'worktree: its own folder and branch'], ['contained', 'contained: OS sandbox and web filter'], ['vm', 'vm: a Linux virtual machine']]} onChange={(level) => runner(i, { level: level as Runner['level'] })} />
             {r.level === 'contained' && (
@@ -144,9 +136,10 @@ export function Setup({ factory }: { factory: Factory }) {
                 <Text id={`rn-d-${i}`} label="can't read" value={list(r.denyRead)} placeholder="~/.config/mine" onChange={(v) => runner(i, { denyRead: unlist(v) })} />
               </>
             )}
+            <Text id={`rn-s-${i}`} label="setup commands" value={(r.setupCommands ?? []).join(' && ')} placeholder="npm ci && npm run build" onChange={(v) => runner(i, { setupCommands: v.split('&&').map((c) => c.trim()).filter(Boolean) })} />
             {r.level === 'vm' && <Text id={`rn-v-${i}`} label="vm command" value={r.vmCommand ?? ''} placeholder="limactl shell --workdir {dir} default bash -lc {cmd}" onChange={(vmCommand) => runner(i, { vmCommand })} />}
             <span><Key size="xs" onClick={() => set({ runners: factory.runners.filter((_, j) => j !== i) })}>remove runner</Key></span>
-          </div>
+          </Fold>
         ))}
       </Pane>
 
@@ -155,7 +148,7 @@ export function Setup({ factory }: { factory: Factory }) {
       <Pane title="skills" right={<Key size="xs" onClick={() => set({ skills: [...factory.skills, { id: uniq('skill', factory.skills.map((s) => s.id)), agent: '', description: '', body: '' }] })}>add skill</Key>} style={paneStyle}>
         {factory.skills.length === 0 && <Empty style={{ padding: 0 }}>no skills. agents are told where these are and read them when needed</Empty>}
         {factory.skills.map((s, i) => (
-          <div key={i} style={card}>
+          <Fold key={i} title={s.id} hint={s.description}>
             <Text id={`sk-id-${i}`} label="name" value={s.id} onChange={(id) => skill(i, { id })} />
             <Pick id={`sk-a-${i}`} label="for" value={s.agent} options={[['', 'every agent'], ...agents]} onChange={(a) => skill(i, { agent: a })} />
             <Text id={`sk-d-${i}`} label="when to use" value={s.description} onChange={(description) => skill(i, { description })} />
@@ -163,22 +156,26 @@ export function Setup({ factory }: { factory: Factory }) {
               <textarea id={`sk-b-${i}`} className="t-field" rows={4} value={s.body} onChange={(e) => skill(i, { body: e.currentTarget.value })} />
             </FieldRow>
             <span><Key size="xs" onClick={() => set({ skills: factory.skills.filter((_, j) => j !== i) })}>remove skill</Key></span>
-          </div>
+          </Fold>
         ))}
       </Pane>
 
       <Pane title="reporting back" right={<Key size="xs" onClick={() => set({ reports: [...factory.reports, { id: uniq('report', factory.reports.map((r) => r.id)), on: ['handoff', 'failed', 'merged'], command: '' }] })}>add report</Key>} style={paneStyle}>
         {factory.reports.length === 0 && <Empty style={{ padding: 0 }}>nothing reports back yet</Empty>}
         {factory.reports.map((r, i) => (
-          <div key={i} style={card}>
+          <Fold key={i} title={r.id} hint={list(r.on)}>
             <Text id={`rp-id-${i}`} label="name" value={r.id} onChange={(id) => report(i, { id })} />
             <Text id={`rp-on-${i}`} label="when" value={list(r.on)} placeholder="approve, question, handoff, failed, merged, dropped" onChange={(v) => report(i, { on: unlist(v) })} />
             <Text id={`rp-c-${i}`} label="command" value={r.command} placeholder={'curl -d "{\\"text\\":\\"$ST_TEXT\\"}" "$SLACK_WEBHOOK"'} onChange={(command) => report(i, { command })} />
             <span className="t-muted" style={{ fontSize: 12 }}>it gets $ST_EVENT $ST_KEY $ST_TITLE $ST_URL $ST_STAGE $ST_BRANCH $ST_SOURCE $ST_TEXT</span>
             <span><Key size="xs" onClick={() => set({ reports: factory.reports.filter((_, j) => j !== i) })}>remove report</Key></span>
-          </div>
+          </Fold>
         ))}
       </Pane>
+
+      <div style={{ maxWidth: 960, width: '100%', margin: '0 auto' }}>
+        <Key size="sm" title="Take this factory out of Sawtooth. The project folder stays as it is" onClick={onRemove}>remove this factory</Key>
+      </div>
     </Screen>
   );
 }
@@ -214,6 +211,94 @@ function Sources({ factory, sources, part, set }: { factory: Factory; sources: P
   );
 }
 
+/** One line until it's opened, so a long setup page stays readable. */
+function Fold({ title, hint, children }: { title: string; hint?: string; children: ReactNode }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div style={open ? card : undefined}>
+      <button type="button" className="t-key" aria-expanded={open} style={{ width: '100%', justifyContent: 'flex-start', gap: 8 }} onClick={() => setOpen(!open)}>
+        <span className="t-dim" aria-hidden="true">{open ? '▾' : '▸'}</span>
+        <span style={{ color: 'var(--ink)' }}>{title}</span>
+        {hint && <span className="t-muted" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{hint}</span>}
+      </button>
+      {open && children}
+    </div>
+  );
+}
+
+function RolePane({ title, noun, note, items, runners, onChange }: { title: string; noun: string; note?: string; items: Agent[]; runners: [string, string][]; onChange: (next: Agent[]) => void }) {
+  const edit = (i: number, patch: Partial<Agent>) => onChange(items.map((a, j) => (j === i ? { ...a, ...patch } : a)));
+  return (
+    <Pane title={title} right={<Key size="xs" onClick={() => onChange([...items, { id: uniq(noun, items.map((a) => a.id)), description: '', harness: '', runner: '', prompt: '' }])}>add {noun}</Key>} style={paneStyle}>
+      {note && <p className="t-muted">{note}</p>}
+      {items.length === 0 && <Empty style={{ padding: 0 }}>no {title}</Empty>}
+      {items.map((a, i) => (
+        <Fold key={i} title={a.id} hint={a.description}>
+          <Text id={`${noun}-id-${i}`} label="name" value={a.id} onChange={(id) => edit(i, { id })} />
+          <Text id={`${noun}-d-${i}`} label="what it does" value={a.description} onChange={(description) => edit(i, { description })} />
+          <Text id={`${noun}-h-${i}`} label="harness" value={a.harness} placeholder="empty uses the default" onChange={(harness) => edit(i, { harness })} />
+          <Pick id={`${noun}-r-${i}`} label="runner" value={a.runner} options={runners} onChange={(r) => edit(i, { runner: r })} />
+          <FieldRow id={`${noun}-p-${i}`} label="role prompt" width="14ch" top>
+            <textarea id={`${noun}-p-${i}`} className="t-field" rows={5} value={a.prompt} onChange={(e) => edit(i, { prompt: e.currentTarget.value })} />
+          </FieldRow>
+          <span><Key size="xs" onClick={() => onChange(items.filter((_, j) => j !== i))}>remove {noun}</Key></span>
+        </Fold>
+      ))}
+    </Pane>
+  );
+}
+
+/** Fixed tasks run down the line, to see whether a change to the factory helped. */
+function BenchPane({ factory, set }: { factory: Factory; set: (patch: Partial<Factory>) => void }) {
+  const [results, setResults] = useState<BenchResult[]>([]);
+  const running = factory.work.filter((w) => w.bench && w.stage !== 'ended').length;
+  useEffect(() => {
+    api.benchmarkResults(factory.id).then(setResults, () => setResults([]));
+  }, [factory.id, running]);
+  const edit = (i: number, patch: Partial<Suite>) => set({ benchmarks: factory.benchmarks.map((s, j) => (j === i ? { ...s, ...patch } : s)) });
+  const task = (i: number, t: number, patch: Partial<BenchTask>) => edit(i, { tasks: factory.benchmarks[i]!.tasks.map((x, j) => (j === t ? { ...x, ...patch } : x)) });
+  const starts: [string, string][] = [['', 'first stage'], ...factory.line.filter((s) => s.kind === 'agent').map((s): [string, string] => [s.id, s.id])];
+  return (
+    <Pane title="benchmarks" right={<Key size="xs" onClick={() => set({ benchmarks: [...factory.benchmarks, { id: uniq('suite', factory.benchmarks.map((s) => s.id)), description: '', base: '', startAt: '', tasks: [] }] })}>add suite</Key>} style={paneStyle}>
+      {factory.benchmarks.length === 0 && <Empty style={{ padding: 0 }}>no benchmarks</Empty>}
+      {factory.benchmarks.map((s, i) => {
+        const latest = results.find((r) => r.suite === s.id)?.run;
+        const last = results.filter((r) => r.suite === s.id && r.run === latest);
+        return (
+          <Fold key={i} title={s.id} hint={last.length > 0 ? `last run ${last.filter((r) => r.passed).length}/${last.length} passed` : `${s.tasks.length} tasks`}>
+            <Text id={`su-id-${i}`} label="name" value={s.id} onChange={(id) => edit(i, { id })} />
+            <Text id={`su-d-${i}`} label="what it tests" value={s.description} onChange={(description) => edit(i, { description })} />
+            <Text id={`su-b-${i}`} label="start commit" value={s.base} placeholder="keeps runs comparable. empty uses the current commit" onChange={(base) => edit(i, { base })} />
+            <Pick id={`su-s-${i}`} label="start at" value={s.startAt} options={starts} onChange={(startAt) => edit(i, { startAt })} />
+            {s.tasks.map((t, j) => (
+              <div key={j} style={{ paddingLeft: 12, display: 'flex', flexDirection: 'column', gap: 4 }}>
+                <Text id={`su-k-${i}-${j}`} label="task" value={t.key} onChange={(key) => task(i, j, { key })} />
+                <Text id={`su-t-${i}-${j}`} label="title" value={t.title} onChange={(title) => task(i, j, { title })} />
+                <FieldRow id={`su-w-${i}-${j}`} label="what to do" width="14ch" top>
+                  <textarea id={`su-w-${i}-${j}`} className="t-field" rows={2} value={t.body} onChange={(e) => task(i, j, { body: e.currentTarget.value })} />
+                </FieldRow>
+                <Text id={`su-c-${i}-${j}`} label="solved when" value={t.check} placeholder="a command that passes. agents never see it" onChange={(check) => task(i, j, { check })} />
+                <span><Key size="xs" onClick={() => edit(i, { tasks: s.tasks.filter((_, x) => x !== j) })}>remove task</Key></span>
+              </div>
+            ))}
+            {last.length > 0 && (
+              <p className="t-muted">last run: {last.filter((r) => r.passed).length}/{last.length} passed · {last.reduce((n, r) => n + r.seconds, 0)}s · {last.reduce((n, r) => n + r.loops, 0)} loops</p>
+            )}
+            {last.filter((r) => !r.passed).map((r) => (
+              <p key={r.task} className="t-muted" style={{ fontSize: 12, overflowWrap: 'anywhere' }}>✗ {r.task}: {r.why}</p>
+            ))}
+            <span style={{ display: 'inline-flex', gap: 4 }}>
+              <Key size="xs" onClick={() => edit(i, { tasks: [...s.tasks, { key: uniq('task', s.tasks.map((t) => t.key)), title: '', body: '', check: '' }] })}>add task</Key>
+              <Key size="xs" disabled={s.tasks.length === 0 || running > 0} onClick={() => void api.runBenchmark(factory.id, s.id).then(refreshFactories, showProblem)}>{running > 0 ? `${running} running` : 'run'}</Key>
+              <Key size="xs" onClick={() => set({ benchmarks: factory.benchmarks.filter((_, j) => j !== i) })}>remove suite</Key>
+            </span>
+          </Fold>
+        );
+      })}
+    </Pane>
+  );
+}
+
 function SourceCard({ factory, p, part, needs, remove }: { factory: Factory; p: Part; part: (id: string, patch: Partial<Part>) => void; needs?: string; remove: () => void }) {
   const [url, setUrl] = useState('');
   const [secret, setSecret] = useState('');
@@ -235,7 +320,7 @@ function SourceCard({ factory, p, part, needs, remove }: { factory: Factory; p: 
   }
 
   return (
-    <div style={card}>
+    <Fold title={p.name} hint={[p.every, p.webhook && `webhook (${p.webhook})`].filter(Boolean).join(' · ') || 'by hand'}>
       <Text id={`src-n-${p.id}`} label="name" value={p.name} onChange={(name) => part(p.id, { name })} />
       <FieldRow id={`src-c-${p.id}`} label="pull command" width="14ch" top>
         <textarea id={`src-c-${p.id}`} className="t-field" rows={2} value={p.command} onChange={(e) => part(p.id, { command: e.currentTarget.value })} />
@@ -262,6 +347,6 @@ function SourceCard({ factory, p, part, needs, remove }: { factory: Factory; p: 
         start items by itself. outside text will reach an agent with no one looking
       </Check>
       <span><Key size="xs" onClick={remove}>remove source</Key></span>
-    </div>
+    </Fold>
   );
 }

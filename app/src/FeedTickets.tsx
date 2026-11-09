@@ -10,7 +10,9 @@ export function FeedTickets({ id }: { id: string }) {
   const factories = useStore((s) => s.factories);
   const terminals = useStore((s) => s.terminals);
   const factory = factories.find((f) => f.id === id);
-  const part = factory?.parts.find((p) => p.kind === 'tickets');
+  const sources = factory?.parts.filter((p) => p.kind === 'tickets') ?? [];
+  const [sourceId, setSourceId] = useState('');
+  const part = sources.find((p) => p.id === sourceId) ?? sources[0];
   const [tickets, setTickets] = useState<Ticket[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [listedAt, setListedAt] = useState<number | null>(null);
@@ -25,7 +27,7 @@ export function FeedTickets({ id }: { id: string }) {
     if (!part?.command) return;
     setError(null);
     try {
-      setTickets(await api.listTickets(id));
+      setTickets(await api.listTickets(id, part.id));
       setListedAt(Date.now());
     } catch (e) {
       setError(failureText(e));
@@ -34,7 +36,7 @@ export function FeedTickets({ id }: { id: string }) {
   };
   useEffect(() => {
     void list();
-  }, [id, part?.command]);
+  }, [id, part?.id, part?.command]);
   // Keep "listed 4m ago" true.
   useEffect(() => {
     const timer = setInterval(() => tick((n) => n + 1), 30_000);
@@ -56,13 +58,14 @@ export function FeedTickets({ id }: { id: string }) {
     .sort((a, b) => order[stateOf(a)] - order[stateOf(b)]);
   const pickedTickets = all.filter((t) => picked.includes(t.key) && stateOf(t) === 'new');
   const n = pickedTickets.length;
-  const canFeed = n > 0 && !!part?.harness && !feeding;
+  const noStart = !part?.harness && !factory?.line.length;
+  const canFeed = n > 0 && !noStart && !feeding;
 
   async function feed() {
     if (!canFeed) return;
     setFeeding(true);
     try {
-      await api.feedTickets(id, pickedTickets);
+      await api.feedTickets(id, pickedTickets, part?.id);
       setMessage(`✓ ${n} ticket${n === 1 ? '' : 's'} queued · they start when a terminal frees up`);
       setPicked([]);
       await refreshFactories();
@@ -153,7 +156,7 @@ export function FeedTickets({ id }: { id: string }) {
         heading={1}
         right={
           <span className="t-muted">
-            {runningCount} running · {queued.length} queued · {part?.atOnce || 1} at a time
+            {runningCount} running · {queued.length} queued · {part?.atOnce || factory?.defaults.atOnce || 1} at a time
           </span>
         }
         style={{ width: '100%', maxWidth: 960, margin: '0 auto', padding: '16px 0 12px' }}
@@ -171,6 +174,24 @@ export function FeedTickets({ id }: { id: string }) {
         ) : (
           <>
             <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '6px 14px', padding: '0 14px 10px', fontSize: 12, color: 'var(--ink-3)' }}>
+              {sources.length > 1 && (
+                <select
+                  aria-label="Ticket source"
+                  className="t-field"
+                  value={part.id}
+                  onChange={(e) => {
+                    setPicked([]);
+                    setTickets(null);
+                    setSourceId(e.currentTarget.value);
+                  }}
+                >
+                  {sources.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.name}
+                    </option>
+                  ))}
+                </select>
+              )}
               <span style={{ flexGrow: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>$ {part.command || 'no command yet'}</span>
               <span>{listedAt ? `listed ${ago(listedAt)}` : part.command ? 'listing…' : ''}</span>
               <Key k="r" size="sm" onClick={() => void list()} style={{ padding: '0 6px' }}>
@@ -252,9 +273,9 @@ export function FeedTickets({ id }: { id: string }) {
 
             <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '8px 14px', margin: '12px 14px 0', paddingTop: 10, borderTop: '1px dashed var(--line-dash)' }}>
               <p role="status" className="t-muted" style={{ margin: '0 auto 0 0' }}>
-                {!part.harness ? 'pick what each ticket runs first: open the ticket source on the map' : message || `${factoryTerms.length} terminals in ${factory?.name}`}
+                {noStart ? 'pick what each ticket runs first: open the ticket source on the map' : message || `${factoryTerms.length} terminals in ${factory?.name}`}
               </p>
-              {!part.harness && (
+              {noStart && (
                 <Key onClick={() => openFactory(id)} size="sm">
                   open the map
                 </Key>

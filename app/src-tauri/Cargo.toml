@@ -23,6 +23,8 @@ sawtooth-daemon = { path = "../../crates/daemon" }
 sawtooth-sandbox = { path = "../../crates/sandbox" }
 tauri = { version = "2", features = [] }
 tauri-plugin-dialog = "2"
+tungstenite = { version = "0.30.0", features = ["rustls-tls-webpki-roots"] }
+ureq = { version = "2", features = ["json"] }
 
 [dev-dependencies]
 tempfile.workspace = true

@@ -18,7 +18,10 @@ mod gate;
 mod git;
 mod harness;
 mod hooks;
+mod bench;
 mod intake;
+mod learn;
+mod oneshot;
 mod kb;
 mod leave_key;
 mod line;
@@ -27,6 +30,7 @@ mod runner;
 mod runs;
 mod settings;
 mod shell;
+mod slack;
 mod st;
 mod templates;
 #[cfg(debug_assertions)]
@@ -612,9 +616,9 @@ fn write_file(app: State<'_, App>, id: String, path: String, text: String) -> Re
 // ---- Tickets and projects ---------------------------------------------------
 
 #[tauri::command(async)]
-fn list_tickets(app: State<'_, App>, id: String) -> Result<Vec<Ticket>, Failure> {
+fn list_tickets(app: State<'_, App>, id: String, source: Option<String>) -> Result<Vec<Ticket>, Failure> {
     let factory = app.store.get(&id).map_err(fail)?;
-    tickets::run(&factory).map_err(|e| Failure::new("tickets", format!("{e:#}")))
+    tickets::run(&factory, source.as_deref()).map_err(|e| Failure::new("tickets", format!("{e:#}")))
 }
 
 #[tauri::command(async)]
@@ -623,9 +627,25 @@ fn feed_tickets(
     engine: State<'_, Arc<Engine>>,
     id: String,
     tickets: Vec<Ticket>,
+    source: Option<String>,
 ) -> Result<FactoryInfo, Failure> {
-    engine.feed(&id, tickets).map_err(fail)?;
+    engine.feed(&id, tickets, source.as_deref()).map_err(fail)?;
     Ok(app.info(app.store.get(&id).map_err(fail)?))
+}
+
+#[tauri::command(async)]
+fn run_benchmark(engine: State<'_, Arc<Engine>>, id: String, suite: String) -> Result<String, Failure> {
+    engine.run_benchmark(&id, &suite).map_err(|e| Failure::new("benchmark", e))
+}
+
+#[tauri::command(async)]
+fn benchmark_results(app: State<'_, App>, id: String) -> Vec<bench::BenchResult> {
+    bench::results(&app.store, &id)
+}
+
+#[tauri::command(async)]
+fn suggest_start(engine: State<'_, Arc<Engine>>, id: String, key: String) -> Result<String, Failure> {
+    engine.suggest_start(&id, &key).map_err(|e| Failure::new("suggest", e))
 }
 
 #[tauri::command(async)]
@@ -696,10 +716,12 @@ struct Machine {
 }
 
 fn machine_of(app: &App, engine: &Engine) -> Result<Machine, Failure> {
+    // Read first: a guard taken inside the literal would still be held when `intake_problem` locks.
+    let port = engine.intake.lock().unwrap().port;
     Ok(Machine {
         settings: settings::load(app.store.home()).map_err(fail)?,
         tunnel: engine.tunnel.status(),
-        port: engine.intake.lock().unwrap().port,
+        port,
         problem: engine.intake_problem(),
         sandbox: sawtooth_sandbox::available().err(),
     })
@@ -891,6 +913,9 @@ fn main() {
             write_file,
             folder_files,
             list_tickets,
+            run_benchmark,
+            benchmark_results,
+            suggest_start,
             feed_tickets,
             nearby_folders,
             detect_project,

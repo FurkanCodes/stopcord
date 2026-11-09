@@ -133,6 +133,8 @@ export interface WorkItem {
   waiting: Waiting;
   agents: Record<string, string>;
   findings: Finding[];
+  scores: { stage: string; score: number; why: string }[];
+  bench?: { suite: string; run: string; task: string };
   summary: string;
   base: string;
 }
@@ -159,6 +161,33 @@ export interface Alert {
   host?: string;
 }
 
+export interface BenchTask {
+  key: string;
+  title: string;
+  body: string;
+  check: string;
+}
+
+export interface Suite {
+  id: string;
+  description: string;
+  base: string;
+  startAt: string;
+  tasks: BenchTask[];
+}
+
+export interface BenchResult {
+  at: number;
+  suite: string;
+  run: string;
+  task: string;
+  passed: boolean;
+  seconds: number;
+  loops: number;
+  findings: number;
+  why: string;
+}
+
 export interface Factory {
   id: string;
   name: string;
@@ -167,6 +196,8 @@ export interface Factory {
   agents: Agent[];
   skills: Skill[];
   runners: Runner[];
+  scorers: Agent[];
+  benchmarks: Suite[];
   line: LineStage[];
   defaults: Defaults;
   reports: Report[];
@@ -228,6 +259,7 @@ export interface HarnessProfile {
   write: string[];
   readOnly: string[];
   domains: string[];
+  quietDomains: string[];
   sandboxedArgs: string;
   oneShot: string;
   trust: { contains: string; answer: string; auto: boolean } | null;
@@ -332,10 +364,13 @@ export const api = {
   readFile: (id: string, path: string) => invoke<string>('read_file', { id, path }),
   writeFile: (id: string, path: string, text: string) => invoke<void>('write_file', { id, path, text }),
   folderFiles: (id: string, partId: string) => invoke<FileEntry[]>('folder_files', { id, partId }),
-  listTickets: (id: string) => invoke<Ticket[]>('list_tickets', { id }),
-  feedTickets: (id: string, tickets: Ticket[]) => invoke<Factory>('feed_tickets', { id, tickets }),
+  listTickets: (id: string, source?: string) => invoke<Ticket[]>('list_tickets', { id, source }),
+  feedTickets: (id: string, tickets: Ticket[], source?: string) => invoke<Factory>('feed_tickets', { id, tickets, source }),
   workAction: (id: string, key: string, action: 'approve' | 'sendBack' | 'treatAsDone' | 'drop' | 'merge', note?: string) =>
     invoke<Factory>('work_action', { id, key, action, note }),
+  runBenchmark: (id: string, suite: string) => invoke<string>('run_benchmark', { id, suite }),
+  benchmarkResults: (id: string) => invoke<BenchResult[]>('benchmark_results', { id }),
+  suggestStart: (id: string, key: string) => invoke<string>('suggest_start', { id, key }),
   acceptProposal: (id: string, key: string, startAt: string) => invoke<Factory>('accept_proposal', { id, key, startAt }),
   rejectProposal: (id: string, key: string) => invoke<Factory>('reject_proposal', { id, key }),
   pullSource: (id: string, part: string) => invoke<number>('pull_source', { id, part }),

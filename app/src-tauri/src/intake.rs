@@ -13,7 +13,7 @@ use serde_json::Value;
 use crate::engine::{Due, Engine, due, parse_schedule};
 use crate::factories::{Factory, Kind, Part, Stage, Ticket, Waiting};
 use crate::runs::{self, Run};
-use crate::settings::{self, Settings, TunnelKind};
+use crate::settings::{self, Settings, SlackSettings, TunnelKind};
 use crate::tickets;
 use crate::webhook::{self, Listener, Request};
 use crate::work;
@@ -31,6 +31,7 @@ pub struct Intake {
     awake: Option<Child>,
     pulls: std::collections::HashMap<(String, String), Instant>,
     pulling: std::collections::HashSet<(String, String)>,
+    slack: Option<(SlackSettings, Arc<std::sync::atomic::AtomicBool>)>,
 }
 
 fn field<'a>(v: &'a Value, keys: &[&str]) -> Option<&'a str> {
@@ -111,6 +112,18 @@ impl Engine {
                     }
                     Err(e) => intake.problem = format!("{e:#}"),
                 }
+            }
+        }
+        let wanted_slack = Some(settings.slack.clone()).filter(|s| s.enabled && !s.factory.is_empty());
+        if intake.slack.as_ref().map(|(s, _)| s) != wanted_slack.as_ref() {
+            if let Some((_, stop)) = intake.slack.take() {
+                stop.store(true, std::sync::atomic::Ordering::Relaxed);
+            }
+            if let Some(s) = wanted_slack {
+                let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+                intake.slack = Some((s.clone(), Arc::clone(&stop)));
+                let me = Arc::clone(self);
+                std::thread::spawn(move || me.run_slack(s, stop));
             }
         }
         let port = intake.port;
@@ -196,7 +209,7 @@ impl Engine {
         }
     }
 
-    fn propose(self: &Arc<Self>, factory: &str, part: &Part, tickets: Vec<Ticket>) -> usize {
+    pub(crate) fn propose(self: &Arc<Self>, factory: &str, part: &Part, tickets: Vec<Ticket>) -> usize {
         let added = self
             .store
             .update(factory, |f| work::propose(f, &part.id, tickets, part.auto_start))

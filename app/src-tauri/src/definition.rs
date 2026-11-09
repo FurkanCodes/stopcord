@@ -26,7 +26,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::factories::{
     Agent, Defaults, Factory, Kind, LineStage, Part, Report, Runner, RunsIn, RunsOn, Skill,
-    StageKind, When,
+    StageKind, Suite, When,
 };
 
 pub const SCHEMA: &str = "sawtooth/v1";
@@ -358,6 +358,25 @@ pub fn load(dir: &Path) -> Result<Factory> {
         });
     }
 
+    let mut scorers = Vec::new();
+    for id in subdirs(&dir.join("scorers")) {
+        let file = dir.join("scorers").join(&id).join("scorer.md");
+        if file.exists() {
+            let (meta, prompt): (AgentMeta, String) = read_md(&file)?;
+            scorers.push(Agent { id, description: meta.description, harness: meta.harness, runner: meta.runner, prompt });
+        }
+    }
+
+    let mut benchmarks = Vec::new();
+    for id in subdirs(&dir.join("benchmarks")) {
+        let file = dir.join("benchmarks").join(&id).join("suite.yaml");
+        if file.exists() {
+            let mut suite: Suite = serde_yaml_ng::from_str(&read(&file)?).with_context(|| format!("{} isn't valid", file.display()))?;
+            suite.id = id;
+            benchmarks.push(suite);
+        }
+    }
+
     let mut runners = Vec::new();
     if let Ok(entries) = std::fs::read_dir(dir.join("runners")) {
         let mut files: Vec<PathBuf> = entries
@@ -382,6 +401,8 @@ pub fn load(dir: &Path) -> Result<Factory> {
         agents,
         skills,
         runners,
+        scorers,
+        benchmarks,
         line: doc.line,
         reports: doc.reports,
         defaults: doc.agent_defaults,
@@ -409,6 +430,8 @@ pub fn validate(f: &Factory) -> Vec<String> {
         .map(|a| ("agent", a.id.as_str()))
         .chain(f.runners.iter().map(|r| ("runner", r.id.as_str())))
         .chain(f.skills.iter().map(|s| ("skill", s.id.as_str())))
+        .chain(f.scorers.iter().map(|s| ("scorer", s.id.as_str())))
+        .chain(f.benchmarks.iter().map(|s| ("benchmark", s.id.as_str())))
         .chain(
             f.parts
                 .iter()
@@ -420,7 +443,7 @@ pub fn validate(f: &Factory) -> Vec<String> {
             out.push(format!("{what} {id:?} needs a name of letters, digits, dashes and dots"));
         }
     }
-    let agents: BTreeSet<&str> = f.agents.iter().map(|a| a.id.as_str()).collect();
+    let agents: BTreeSet<&str> = f.agents.iter().chain(&f.scorers).map(|a| a.id.as_str()).collect();
     let runners: BTreeSet<&str> = f.runners.iter().map(|r| r.id.as_str()).collect();
     let checks: BTreeSet<&str> = f
         .parts
@@ -431,7 +454,15 @@ pub fn validate(f: &Factory) -> Vec<String> {
     if !f.defaults.runner.is_empty() && !runners.contains(f.defaults.runner.as_str()) {
         out.push(format!("agentDefaults names a runner that doesn't exist: {}", f.defaults.runner));
     }
-    for a in &f.agents {
+    for s in &f.benchmarks {
+        if s.tasks.iter().any(|t| t.key.trim().is_empty() || t.check.trim().is_empty()) {
+            out.push(format!("benchmark {} has a task with no key or no check", s.id));
+        }
+        if !s.start_at.is_empty() && !f.line.iter().any(|l| l.id == s.start_at && l.kind == StageKind::Agent) {
+            out.push(format!("benchmark {} starts at {}, which isn't an agent stage", s.id, s.start_at));
+        }
+    }
+    for a in f.agents.iter().chain(&f.scorers) {
         if !a.runner.is_empty() && !runners.contains(a.runner.as_str()) {
             out.push(format!("agent {} names a runner that doesn't exist: {}", a.id, a.runner));
         }
@@ -574,6 +605,17 @@ fn render(f: &Factory) -> Result<BTreeMap<PathBuf, String>> {
             with_frontmatter(&meta, &a.prompt)?,
         );
     }
+    for a in &f.scorers {
+        let meta = AgentMeta {
+            description: a.description.clone(),
+            harness: a.harness.clone(),
+            runner: a.runner.clone(),
+        };
+        files.insert(Path::new("scorers").join(&a.id).join("scorer.md"), with_frontmatter(&meta, &a.prompt)?);
+    }
+    for s in &f.benchmarks {
+        files.insert(Path::new("benchmarks").join(&s.id).join("suite.yaml"), serde_yaml_ng::to_string(s)?);
+    }
     for s in &f.skills {
         let meta = SkillMeta {
             name: s.id.clone(),
@@ -609,6 +651,12 @@ fn stale(dir: &Path, wanted: &BTreeMap<PathBuf, String>) -> Vec<PathBuf> {
     }
     for id in subdirs(&dir.join("skills")) {
         note(Path::new("skills").join(id).join("SKILL.md"));
+    }
+    for id in subdirs(&dir.join("scorers")) {
+        note(Path::new("scorers").join(id).join("scorer.md"));
+    }
+    for id in subdirs(&dir.join("benchmarks")) {
+        note(Path::new("benchmarks").join(id).join("suite.yaml"));
     }
     for id in subdirs(&dir.join("agents")) {
         note(Path::new("agents").join(&id).join("agent.md"));

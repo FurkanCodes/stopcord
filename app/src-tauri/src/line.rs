@@ -47,11 +47,6 @@ fn item<'a>(f: &'a mut Factory, key: &str) -> Option<&'a mut WorkItem> {
     f.work.iter_mut().find(|w| w.ticket.key == key)
 }
 
-/// Agent stages a person can start work at, in line order.
-pub fn start_points(f: &Factory) -> Vec<String> {
-    f.line.iter().filter(|s| s.kind == StageKind::Agent).map(|s| s.id.clone()).collect()
-}
-
 /// Puts a claimed work item on the line. It starts where a person chose, or at the first stage.
 pub fn begin(f: &mut Factory, key: &str) -> Step {
     let Some(w) = f.work.iter().find(|w| w.ticket.key == key) else {
@@ -268,7 +263,7 @@ pub fn person(f: &mut Factory, key: &str, action: Action) -> Step {
 }
 
 /// What the engine types first for a stage. The role prompt comes first, then the ticket, then how to report.
-pub fn brief(prompt: &str, w: &WorkItem, skills: &[(String, String, String)], st: &str) -> String {
+fn brief_body(prompt: &str, w: &WorkItem, skills: &[(String, String, String)]) -> String {
     let mut out = String::new();
     if !prompt.trim().is_empty() {
         out.push_str(prompt.trim());
@@ -292,10 +287,22 @@ pub fn brief(prompt: &str, w: &WorkItem, skills: &[(String, String, String)], st
             out.push_str(&format!("\n- {name}: {description} ({path})"));
         }
     }
-    out.push_str(&format!(
-        "\n\nCommit your work. When you've finished, run: {st} done \"one line on what you did\". If you need a person, run: {st} ask \"your question\"."
-    ));
     out
+}
+
+pub fn brief(prompt: &str, w: &WorkItem, skills: &[(String, String, String)], st: &str) -> String {
+    format!(
+        "{}\n\nCommit your work. When you've finished, run: {st} done \"one line on what you did\". If you need a person, run: {st} ask \"your question\".",
+        brief_body(prompt, w, skills)
+    )
+}
+
+/// A scorer changes nothing, and its score is what ends its stage.
+pub fn scorer_brief(prompt: &str, w: &WorkItem, skills: &[(String, String, String)], st: &str) -> String {
+    format!(
+        "{}\n\nDon't change or commit anything. Look at this work, then give it a score from 0 to 10 as your last step: {st} score 7 \"one line on why\"",
+        brief_body(prompt, w, skills)
+    )
 }
 
 #[cfg(test)]

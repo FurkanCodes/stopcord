@@ -98,7 +98,6 @@ export function FactoryScreen({ id, onSearch }: { id: string; onSearch: () => vo
     }
     const part = fromTemplate(template, project?.testCommand);
     if (part.kind === 'knowledge' && factory.parts.some((p) => p.kind === 'knowledge')) return;
-    if (part.kind === 'tickets' && factory.parts.some((p) => p.kind === 'tickets')) return;
     const layout = at ? { ...factory.layout, [part.id]: at } : factory.layout;
     changeFactory({ ...factory, parts: [...factory.parts, part], layout });
     setState({ selected: part.id });
@@ -124,7 +123,7 @@ export function FactoryScreen({ id, onSearch }: { id: string; onSearch: () => vo
   if (route.tab === 'runs') return <Runs factory={factory} runs={runs} terminals={terminals} />;
   if (route.tab === 'work') return <Work factory={factory} runs={runs} terminals={terminals} selected={route.work} />;
   if (route.tab === 'inbox') return <Inbox factory={factory} />;
-  if (route.tab === 'setup') return <Setup factory={factory} />;
+  if (route.tab === 'setup') return <Setup factory={factory} onRemove={() => void remove()} />;
   return (
     <FactoryMap
       factory={factory}
@@ -138,7 +137,6 @@ export function FactoryScreen({ id, onSearch }: { id: string; onSearch: () => vo
       onAdd={add}
       onOpenTerminal={(t) => openFactory(id, 'terminals', t)}
       onOpenRuns={() => openFactory(id, 'runs')}
-      onRemove={() => void remove()}
     />
   );
 }

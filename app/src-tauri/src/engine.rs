@@ -819,8 +819,15 @@ impl Engine {
         self.pump_tickets();
     }
 
-    pub fn feed(self: &Arc<Self>, id: &str, tickets: Vec<Ticket>) -> anyhow::Result<usize> {
-        let added = self.store.update(id, |f| work::feed(f, tickets))?;
+    pub fn feed(self: &Arc<Self>, id: &str, tickets: Vec<Ticket>, source: Option<&str>) -> anyhow::Result<usize> {
+        let added = self.store.update(id, |f| {
+            let added = work::feed(f, tickets);
+            if let Some(source) = source {
+                let from = f.work.len() - added;
+                f.work[from..].iter_mut().for_each(|w| w.source = source.to_string());
+            }
+            added
+        })?;
         if added > 0 {
             self.log(
                 id,
@@ -838,7 +845,7 @@ impl Engine {
 
     /// Squares each factory's tickets with the live terminals, then starts what there's room for.
     /// The terminal list is read inside the save, so it can't be older than what it's compared with.
-    fn pump_tickets(self: &Arc<Self>) {
+    pub(crate) fn pump_tickets(self: &Arc<Self>) {
         let (synced, lost) = {
             let st = self.state.lock().unwrap();
             (st.synced, st.resync)
@@ -847,12 +854,10 @@ impl Engine {
             return;
         }
         for factory in self.store.list().unwrap_or_default() {
-            let source = factory.tickets().cloned();
+            let sources: Vec<Part> = factory.parts.iter().filter(|p| p.kind == Kind::Tickets).cloned().collect();
+            let source = sources.first().cloned();
             let on_line = !factory.line.is_empty();
-            let can_start = on_line
-                || source
-                    .as_ref()
-                    .is_some_and(|s| !s.harness.trim().is_empty());
+            let can_start = on_line || sources.iter().any(|s| !s.harness.trim().is_empty());
             if let Some(s) = &source
                 && !can_start
                 && !factory.queue.is_empty()
@@ -862,9 +867,10 @@ impl Engine {
                 self.alert(&factory.id, "source", text, None);
                 self.log(&factory.id, Run::new("ticket", text).ok(false).part(&s.id));
             }
-            let room = source
-                .as_ref()
+            let room = sources
+                .iter()
                 .map(|s| s.at_once)
+                .max()
                 .filter(|n| *n > 0)
                 .or(Some(factory.defaults.at_once).filter(|n| *n > 0))
                 .unwrap_or(1) as usize;
@@ -924,17 +930,21 @@ impl Engine {
                 }
                 self.log(&id, run);
             }
-            match (next, source) {
-                (Some(item), _) if on_line => {
+            match next {
+                Some(item) if on_line => {
                     let me = Arc::clone(self);
                     let (fid, key) = (id.clone(), item.ticket.key.clone());
                     thread::spawn(move || me.begin_on_line(&fid, &key));
                 }
-                (Some(item), Some(source)) => {
-                    let me = Arc::clone(self);
-                    thread::spawn(move || me.start_ticket(&factory, &source, item));
+                Some(item) => {
+                    let usable = |s: &&Part| !s.harness.trim().is_empty();
+                    let chosen = sources.iter().filter(usable).find(|s| s.id == item.source).or_else(|| sources.iter().find(usable)).cloned();
+                    if let Some(source) = chosen {
+                        let me = Arc::clone(self);
+                        thread::spawn(move || me.start_ticket(&factory, &source, item));
+                    }
                 }
-                _ => {}
+                None => {}
             }
         }
         if lost {
@@ -1008,7 +1018,9 @@ impl Engine {
         .filter(|s| !s.is_empty())
         .collect::<Vec<_>>()
         .join("\n\n");
-        match self.type_prompt(&id, &prompt) {
+        let dir = self.state.lock().unwrap().terminals.get(&id).and_then(|t| t["cwd"].as_str().map(PathBuf::from));
+        let setup = dir.map_or(Ok(()), |d| runner::wait_for_setup(runner::pick(factory, None), &d));
+        match setup.and_then(|()| self.type_prompt(&id, &prompt)) {
             Ok(()) => self.log(
                 &factory.id,
                 Run::new("ticket", format!("{} started on {branch}: {}", ticket.key, ticket.title))

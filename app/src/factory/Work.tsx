@@ -150,6 +150,20 @@ function Detail({ factory, item, runs, terminals }: { factory: Factory; item: Wo
         </section>
       )}
 
+      {item.scores.length > 0 && (
+        <section aria-label="Scores">
+          <h3 className="t-dim" style={{ fontSize: 12 }}>scores · advice only</h3>
+          <ul style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            {item.scores.map((s, i) => (
+              <li key={i}>
+                <span className="t-muted">{s.score}/10</span> <span className="t-dim">{s.stage} </span>
+                {s.why}
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
       {item.findings.length > 0 && (
         <section aria-label="Findings">
           <h3 className="t-dim" style={{ fontSize: 12 }}>findings</h3>

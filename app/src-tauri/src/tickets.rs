@@ -10,15 +10,16 @@ use std::time::{Duration, Instant};
 use anyhow::{Result, anyhow, bail};
 use serde_json::Value;
 
-use crate::factories::{Factory, Part, Ticket};
+use crate::factories::{Factory, Kind, Part, Ticket};
 use crate::shell;
 
 const TIMEOUT: Duration = Duration::from_secs(60);
 
-/// Runs the factory's ticket command and reads the tickets it prints.
-pub fn run(factory: &Factory) -> Result<Vec<Ticket>> {
-    let part = factory
-        .tickets()
+/// Runs a ticket source's command, the first one if none is named, and reads the tickets it prints.
+pub fn run(factory: &Factory, source: Option<&str>) -> Result<Vec<Ticket>> {
+    let part = source
+        .and_then(|id| factory.parts.iter().find(|p| p.kind == Kind::Tickets && p.id == id))
+        .or_else(|| factory.tickets())
         .ok_or_else(|| anyhow!("This factory has no ticket source. Add one from Add parts."))?;
     run_part(factory, part)
 }
@@ -180,7 +181,7 @@ mod tests {
             ..Factory::default()
         };
         assert!(
-            run(&f)
+            run(&f, None)
                 .unwrap_err()
                 .to_string()
                 .contains("no ticket source")
@@ -190,8 +191,8 @@ mod tests {
             command: "cat t.json".into(),
             ..Part::default()
         });
-        assert_eq!(run(&f).unwrap()[0].key, "A-1");
+        assert_eq!(run(&f, None).unwrap()[0].key, "A-1");
         f.parts[0].command = "echo nope >&2; exit 3".into();
-        assert!(run(&f).unwrap_err().to_string().contains("nope"));
+        assert!(run(&f, None).unwrap_err().to_string().contains("nope"));
     }
 }

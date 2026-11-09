@@ -28,7 +28,7 @@ pub enum Kind {
     Check,
     /// Types a prompt into a terminal when something happens.
     Trigger,
-    /// A command that lists tickets. A factory has at most one.
+    /// A command that lists tickets. A factory can have several.
     Tickets,
 }
 
@@ -328,6 +328,54 @@ pub struct WorkItem {
     pub summary: String,
     /// The commit it started from.
     pub base: String,
+    /// What scorers said. Shown at handoff and never decides anything.
+    pub scores: Vec<Score>,
+    /// Set when this item is a benchmark task.
+    pub bench: Option<BenchRef>,
+}
+
+/// A scorer's opinion of a piece of work.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct Score {
+    pub stage: String,
+    /// From 0 to 10.
+    pub score: u32,
+    pub why: String,
+}
+
+/// Ties a work item to the benchmark run it belongs to.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct BenchRef {
+    pub suite: String,
+    pub run: String,
+    pub task: String,
+    /// The command that says whether the task was solved.
+    pub check: String,
+    pub begun_at: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default, deny_unknown_fields)]
+pub struct BenchTask {
+    pub key: String,
+    pub title: String,
+    pub body: String,
+    /// Passing means solved. Agents never see it.
+    pub check: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default, deny_unknown_fields)]
+pub struct Suite {
+    pub id: String,
+    pub description: String,
+    /// The commit every task starts from. Empty means the project's current commit.
+    pub base: String,
+    /// The agent stage to start at. Empty means the first stage.
+    pub start_at: String,
+    pub tasks: Vec<BenchTask>,
 }
 
 /// Something the engine had to stop or give up on, which needs a person to look.
@@ -359,6 +407,10 @@ pub struct Factory {
     pub agents: Vec<Agent>,
     pub skills: Vec<Skill>,
     pub runners: Vec<Runner>,
+    /// `scorers/<name>/scorer.md`: agents that give work a score. Advisory, never a gate.
+    pub scorers: Vec<Agent>,
+    /// `benchmarks/<suite>/suite.yaml`.
+    pub benchmarks: Vec<Suite>,
     /// The stages work moves through. Empty means no line: a factory works as a set of parts.
     pub line: Vec<LineStage>,
     pub defaults: Defaults,

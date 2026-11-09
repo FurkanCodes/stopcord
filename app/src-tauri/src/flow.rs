@@ -11,12 +11,12 @@ use sawtooth_sandbox::{Network, Policy, wrap};
 use serde_json::{Value, json};
 
 use crate::engine::{Engine, StartRequest};
-use crate::factories::{Alert, Factory, Finding, LineStage, Stage, StageKind, Waiting, WorkItem};
+use crate::factories::{Alert, Factory, Finding, LineStage, Score, Stage, StageKind, Waiting, WorkItem};
 use crate::line::{self, Action, Step};
 use crate::runs::{self, Run};
 use crate::{gate, harness, hooks, shell, worktree};
 
-const GATE_TIMEOUT: Duration = Duration::from_secs(30 * 60);
+pub(crate) const GATE_TIMEOUT: Duration = Duration::from_secs(30 * 60);
 /// A `st done` usually lands before the terminal looks idle, but not always.
 const REPORT_GRACE: Duration = Duration::from_secs(4);
 
@@ -36,7 +36,7 @@ fn stage_of<'a>(f: &'a Factory, w: &WorkItem) -> Option<&'a LineStage> {
 }
 
 /// Quotes a whole command line for `sh -c`, with its environment in front.
-fn command_line(argv: &[String], env: &[(String, String)]) -> String {
+pub(crate) fn command_line(argv: &[String], env: &[(String, String)]) -> String {
     let mut out: Vec<String> = env.iter().map(|(k, v)| format!("{k}={}", shell::quote(v))).collect();
     if !out.is_empty() {
         out.insert(0, "env".to_string());
@@ -47,7 +47,7 @@ fn command_line(argv: &[String], env: &[(String, String)]) -> String {
 
 /// A check's command, inside a sandbox with no network unless the check asks for it.
 /// The gate is code an agent could have edited, so it never runs unconfined if it can be helped.
-fn confined_check(store_dir: &Path, snapshot: &Path, command: &str, network: bool, program: &Path) -> Result<String, String> {
+pub(crate) fn confined_check(store_dir: &Path, snapshot: &Path, command: &str, network: bool, program: &Path) -> Result<String, String> {
     let login = vec![shell::user_shell(), "-l".to_string(), "-c".to_string(), command.to_string()];
     if sawtooth_sandbox::available().is_err() {
         return Ok(command_line(&login, &[]));
@@ -61,18 +61,26 @@ fn confined_check(store_dir: &Path, snapshot: &Path, command: &str, network: boo
 }
 
 impl Engine {
-    fn harness_for(&self, f: &Factory, agent: Option<&crate::factories::Agent>) -> String {
+    pub(crate) fn harness_for(&self, f: &Factory, agent: Option<&crate::factories::Agent>) -> String {
         agent
             .map(|a| a.harness.clone())
             .filter(|h| !h.trim().is_empty())
             .or_else(|| Some(f.defaults.harness.clone()).filter(|h| !h.trim().is_empty()))
-            .or_else(|| f.tickets().map(|s| s.harness.clone()).filter(|h| !h.trim().is_empty()))
+            .or_else(|| f.parts.iter().filter(|p| p.kind == crate::factories::Kind::Tickets).map(|s| s.harness.clone()).find(|h| !h.trim().is_empty()))
             .unwrap_or_default()
     }
 
     /// Puts a claimed item on the line.
     pub(crate) fn begin_on_line(self: &Arc<Self>, factory: &str, key: &str) {
-        let step = self.store.update(factory, |f| line::begin(f, key)).unwrap_or(Step::Nothing);
+        let step = self
+            .store
+            .update(factory, |f| {
+                if let Some(b) = f.work.iter_mut().find(|w| w.ticket.key == key).and_then(|w| w.bench.as_mut()) {
+                    b.begun_at = runs::now_ms();
+                }
+                line::begin(f, key)
+            })
+            .unwrap_or(Step::Nothing);
         self.state.lock().unwrap().starting.remove(&(factory.to_string(), key.to_string()));
         self.step(factory, key, step);
     }
@@ -97,6 +105,11 @@ impl Engine {
                 let me = Arc::clone(self);
                 let (fid, key) = (factory.to_string(), key.to_string());
                 std::thread::spawn(move || me.run_gate(&fid, &key, &stage));
+            }
+            Step::Person { why, text, .. } if w.bench.is_some() => {
+                let me = Arc::clone(self);
+                let (fid, key) = (factory.to_string(), key.to_string());
+                std::thread::spawn(move || me.finish_bench(&fid, &key, why == Waiting::Handoff, text));
             }
             Step::Person { stage, why, text } => {
                 let (kind, event) = match why {
@@ -141,7 +154,9 @@ impl Engine {
                     let _ = self.bridge.call("terminal.close", json!({ "id": t }));
                 }
                 self.log(factory, Run::new("line", format!("{key} {outcome}")).ok(true).work(&w.id).by("engine"));
-                self.report_back(&f, &w, &outcome, &format!("{key} {outcome}"));
+                if w.bench.is_none() {
+                    self.report_back(&f, &w, &outcome, &format!("{key} {outcome}"));
+                }
             }
         }
     }
@@ -171,7 +186,8 @@ impl Engine {
     fn run_agent_inner(self: &Arc<Self>, factory: &str, key: &str, stage: &str, agent_id: &str, note: &str) {
         let Ok(f) = self.store.get(factory) else { return };
         let Some(w) = item_of(&f, key).cloned() else { return };
-        let agent = f.agents.iter().find(|a| a.id == agent_id).cloned();
+        let agent = f.agents.iter().chain(&f.scorers).find(|a| a.id == agent_id).cloned();
+        let is_scorer = f.scorers.iter().any(|s| s.id == agent_id);
         let alive = |t: &str| {
             self.state.lock().unwrap().terminals.get(t).is_some_and(|v| v["state"] != "exited")
         };
@@ -191,7 +207,8 @@ impl Engine {
                 (s.id.clone(), s.description.clone(), base.join(&s.id).join("SKILL.md").display().to_string())
             })
             .collect();
-        let brief = line::brief(agent.as_ref().map_or("", |a| a.prompt.as_str()), &w, &skills, &st);
+        let write = if is_scorer { line::scorer_brief } else { line::brief };
+        let brief = write(agent.as_ref().map_or("", |a| a.prompt.as_str()), &w, &skills, &st);
         let (id, text) = if let Some(t) = existing {
             let text = if note.is_empty() {
                 brief
@@ -224,6 +241,17 @@ impl Engine {
             let id = t["id"].as_str().unwrap_or_default().to_string();
             let cwd = t["cwd"].as_str().unwrap_or_default().to_string();
             self.state.lock().unwrap().terminals.insert(id.clone(), t);
+            let chosen = crate::runner::pick(&f, agent.as_ref().map(|a| a.runner.as_str()));
+            if let Err(why) = crate::runner::wait_for_setup(chosen, Path::new(&cwd)) {
+                let _ = self.store.update(factory, |fa| {
+                    if let Some(i) = fa.work.iter_mut().find(|i| i.ticket.key == key) {
+                        i.terminal = Some(id.clone());
+                        i.agents.insert(agent_id.to_string(), id.clone());
+                    }
+                });
+                self.fail_step(factory, key, format!("{key} couldn't start {stage}: {why}"));
+                return;
+            }
             let base = worktree::git(Path::new(&f.path), &["rev-parse", "HEAD"])
                 .and_then(|head| worktree::git(Path::new(&cwd), &["merge-base", &head, "HEAD"]))
                 .unwrap_or_default();
@@ -296,6 +324,7 @@ impl Engine {
             if !ok {
                 passed = false;
                 all.push_str(&format!("{} failed:\n{}\n", part.name, runs::last_lines(&output, 40)));
+                self.learn_from_failure(f, part);
             }
         }
         (passed, all)
@@ -404,6 +433,23 @@ impl Engine {
         let step = match verb {
             "done" => self.store.update(&factory, |f| line::agent_done(f, &key, &text)),
             "ask" => self.store.update(&factory, |f| line::agent_stopped(f, &key, &format!("{key} asks: {text}"))),
+            "score" => {
+                let score = report["score"].as_u64().unwrap_or(0) as u32;
+                self.store.update(&factory, |f| {
+                    let Some(i) = f.work.iter_mut().find(|i| i.ticket.key == key) else {
+                        return Step::Nothing;
+                    };
+                    i.scores.push(Score { stage: i.line_stage.clone(), score, why: text.clone() });
+                    let summary = i.summary.clone();
+                    let on_scorer = stage_of(f, item_of(f, &key).expect("just found")).is_some_and(|s| f.scorers.iter().any(|a| a.id == s.agent));
+                    if on_scorer {
+                        // The last stage's summary stays: a score is an opinion about it, not a report.
+                        line::agent_done(f, &key, &summary)
+                    } else {
+                        Step::Nothing
+                    }
+                })
+            }
             "finding" => {
                 let finding = Finding {
                     file: report["file"].as_str().unwrap_or_default().to_string(),
@@ -477,6 +523,12 @@ impl Engine {
         };
         let Some(factory) = self.terminal_factory(terminal) else { return };
         let name = self.name_of(terminal);
+        let agent = self.state.lock().unwrap().terminals.get(terminal).and_then(|t| t["agent"].as_str().map(String::from));
+        let (all, _) = harness::load(&self.store.home().join("harnesses"));
+        if harness::is_quiet(all.iter().find(|h| Some(&h.id) == agent.as_ref()), host) {
+            self.log(&factory, Run::new("network", format!("{name} was blocked from {host}")).terminal(Some(terminal)).by("engine"));
+            return;
+        }
         let _ = self.store.update(&factory, |f| {
             crate::work::raise_kind(
                 f,
@@ -598,6 +650,9 @@ impl Engine {
 
     /// Runs the factory's report commands for this event, with the details in the environment.
     fn report_back(&self, f: &Factory, w: &WorkItem, event: &str, text: &str) {
+        if w.source == crate::slack::SOURCE {
+            self.slack_reply(&w.ticket.url, text);
+        }
         let mine: Vec<_> = f.reports.iter().filter(|r| r.on.iter().any(|e| e == event)).cloned().collect();
         if mine.is_empty() {
             return;
@@ -642,7 +697,8 @@ impl Engine {
             return;
         }
         let (all, _) = harness::load(&self.store.home().join("harnesses"));
-        let Some(trust) = all.iter().find(|h| h.id == agent).and_then(|h| h.trust.clone()).filter(|t| t.auto) else {
+        let sandboxed = harness::in_sandbox(terminal);
+        let Some(trust) = all.iter().find(|h| h.id == agent).and_then(|h| h.trust.clone()).filter(|t| t.auto || sandboxed) else {
             return;
         };
         let Ok(screen) = self.bridge.call("terminal.read", json!({ "id": id, "lines": 40 })) else {

@@ -23,7 +23,6 @@ export interface FactoryMapProps {
   onAdd: (template: Template, at?: Pos) => void;
   onOpenTerminal: (id: string) => void;
   onOpenRuns: () => void;
-  onRemove: () => void;
 }
 
 interface Drag {
@@ -405,13 +404,10 @@ export function FactoryMap(props: FactoryMapProps) {
           extra={
             <>
               <Key k="p" pressed={drawer} onClick={() => setDrawer(!drawer)}>
-                add parts
+                parts
               </Key>
               <Key k="r" onClick={tidy}>
-                tidy up
-              </Key>
-              <Key onClick={props.onRemove} title="Take this factory out of Sawtooth. The project folder stays as it is">
-                remove
+                tidy
               </Key>
             </>
           }
@@ -440,7 +436,7 @@ export function FactoryMap(props: FactoryMapProps) {
         ['r', 'tidy up'],
         ['p', 'add parts'],
         ['+', 'new terminal'],
-        ['1-4', 'sections'],
+        ['1-7', 'sections'],
         ...(factory.parts.some((p) => p.kind === 'tickets') ? ([['t', 'feed tickets']] as [string, string][]) : []),
         ['space', 'pause the lines'],
         ['esc', 'close · back'],

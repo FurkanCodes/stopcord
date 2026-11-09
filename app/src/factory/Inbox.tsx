@@ -11,6 +11,20 @@ export function Inbox({ factory }: { factory: Factory }) {
   const starts = factory.line.filter((s) => s.kind === 'agent').map((s) => s.id);
   const [choice, setChoice] = useState<Record<string, string>>({});
   const [message, setMessage] = useState('');
+  const [asking, setAsking] = useState('');
+
+  async function suggest(id: string, key: string) {
+    setAsking(key);
+    try {
+      const stage = await api.suggestStart(factory.id, key);
+      setChoice((c) => ({ ...c, [id]: stage }));
+      setMessage(`${key}: suggested ${stage}. you still choose`);
+    } catch (e) {
+      showProblem(e);
+    } finally {
+      setAsking('');
+    }
+  }
 
   async function run(fn: () => Promise<unknown>) {
     try {
@@ -47,7 +61,7 @@ export function Inbox({ factory }: { factory: Factory }) {
               <span style={{ flex: '1 1 260px', minWidth: 0 }}>
                 <span style={{ color: 'var(--ink)' }}>{w.ticket.key}</span> {w.ticket.title}
                 <div className="t-muted" style={{ fontSize: 12 }}>
-                  from {w.source || 'by hand'}
+                  from {factory.parts.find((p) => p.id === w.source)?.name ?? (w.source || 'by hand')}
                   {w.ticket.url && ` · ${w.ticket.url}`}
                 </div>
               </span>
@@ -60,6 +74,11 @@ export function Inbox({ factory }: { factory: Factory }) {
                     ))}
                   </select>
                 </label>
+              )}
+              {starts.length > 1 && (
+                <Key size="sm" disabled={asking !== ''} onClick={() => void suggest(w.id, w.ticket.key)}>
+                  {asking === w.ticket.key ? 'asking…' : 'suggest'}
+                </Key>
               )}
               <button type="button" className="t-solid is-sm" onClick={() => void run(() => api.acceptProposal(factory.id, w.ticket.key, choice[w.id] ?? starts[0] ?? ''))}>
                 start

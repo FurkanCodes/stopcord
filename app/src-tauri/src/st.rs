@@ -12,7 +12,7 @@ use std::time::Duration;
 
 use serde_json::{Value, json};
 
-const USAGE: &str = "usage: st done \"what you did\"\n       st ask \"your question\"\n       st note \"something worth keeping\"\n       st finding --file a.rs --line 9 --severity high \"what's wrong\"";
+const USAGE: &str = "usage: st done \"what you did\"\n       st ask \"your question\"\n       st note \"something worth keeping\"\n       st finding --file a.rs --line 9 --severity high \"what's wrong\"\n       st score 7 \"why\"";
 
 /// Writes the script that puts `st` on a terminal's PATH.
 pub fn install(home: &Path, program: &Path) -> std::io::Result<()> {
@@ -33,6 +33,11 @@ pub fn parse(args: &[String]) -> Result<Value, String> {
     let (verb, rest) = args.split_first().ok_or(USAGE)?;
     match verb.as_str() {
         "done" | "ask" | "note" => Ok(json!({ "verb": verb, "text": rest.join(" ") })),
+        "score" => {
+            let (n, why) = rest.split_first().ok_or(USAGE)?;
+            let score: u32 = n.parse().ok().filter(|s| *s <= 10).ok_or(USAGE)?;
+            Ok(json!({ "verb": "score", "score": score, "text": why.join(" ") }))
+        }
         "finding" => {
             let (mut file, mut line, mut severity, mut text) = (String::new(), 0u64, String::new(), Vec::new());
             let mut it = rest.iter();

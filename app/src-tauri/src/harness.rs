@@ -17,8 +17,8 @@ pub struct Trust {
     pub contains: String,
     /// What to type to say yes. Enter (`\r`) is sent separately, after the menu has moved.
     pub answer: String,
-    /// Answer it without asking the person. Off by default: the question exists to
-    /// stop a repo's own hooks from running unseen.
+    /// Answer it outside a sandbox too. Off by default: the question exists to stop a repo's
+    /// own hooks from running unseen. Inside a sandbox it's always answered, as those hooks are confined.
     pub auto: bool,
 }
 
@@ -36,7 +36,12 @@ pub struct Harness {
     pub read_only: Vec<String>,
     /// Sites it needs.
     pub domains: Vec<String>,
-    /// Added to its start command inside a sandbox, because a sandbox can't run inside another.
+    /// Sites its own background chatter uses, like update checks. Still blocked and logged,
+    /// but not worth stopping a person for.
+    pub quiet_domains: Vec<String>,
+    /// Added to its start command inside a sandbox: a sandbox can't run inside another, and with
+    /// the OS holding the boundary, a prompt for every edit would only stall unattended work.
+    /// `{project}` becomes the project's folder.
     pub sandboxed_args: String,
     /// How to run a single prompt and exit, with `{prompt}` where the prompt goes. For judges and suggestions.
     pub one_shot: String,
@@ -64,7 +69,9 @@ pub fn builtin() -> Vec<Harness> {
             write_prefix: strings(&[".claude.json"]),
             read_only: strings(&[".claude/settings.json", ".claude/settings.local.json", ".claude/hooks"]),
             domains: strings(&["anthropic.com", "claude.ai", "claude.com", "datadoghq.com", "statsig.com", "sentry.io"]),
-            sandboxed_args: String::new(),
+            quiet_domains: strings(&["formulae.brew.sh"]),
+            // Not bypass mode: that shows a confirmation we'd have to edit its settings to skip.
+            sandboxed_args: "--permission-mode acceptEdits --allowedTools Bash".into(),
             one_shot: "claude -p {prompt}".into(),
             trust: Some(Trust {
                 contains: "Yes, I trust this folder".into(),
@@ -80,9 +87,18 @@ pub fn builtin() -> Vec<Harness> {
             write_prefix: Vec::new(),
             read_only: strings(&[".codex/config.toml"]),
             domains: strings(&["openai.com", "chatgpt.com", "oaistatic.com"]),
-            sandboxed_args: "--sandbox danger-full-access".into(),
-            one_shot: "codex exec --skip-git-repo-check {prompt}".into(),
-            trust: None,
+            quiet_domains: Vec::new(),
+            // Its background server sits outside the sandbox, so reaching it would be a way out.
+            // Trust is set for this run only: its config is read-only in here, so a saved answer would fail.
+            // A whole table, because Codex splits a dotted key at every dot, including those in the path.
+            sandboxed_args: r#"--sandbox danger-full-access --ask-for-approval never --no-daemon -c 'projects={"{project}"={trust_level="trusted"}}'"#.into(),
+            one_shot: "codex exec --skip-git-repo-check --sandbox danger-full-access {prompt}".into(),
+            trust: Some(Trust {
+                contains: "Trust this folder?".into(),
+                // The menu starts on "Trust and continue".
+                answer: "\r".into(),
+                auto: false,
+            }),
         },
         Harness {
             id: "gemini".into(),
@@ -91,7 +107,8 @@ pub fn builtin() -> Vec<Harness> {
             write_prefix: Vec::new(),
             read_only: strings(&[".gemini/settings.json"]),
             domains: strings(&["googleapis.com", "google.com", "gstatic.com"]),
-            sandboxed_args: String::new(),
+            quiet_domains: Vec::new(),
+            sandboxed_args: "--yolo".into(),
             one_shot: "gemini -p {prompt}".into(),
             trust: None,
         },
@@ -102,7 +119,8 @@ pub fn builtin() -> Vec<Harness> {
             write_prefix: Vec::new(),
             read_only: strings(&[".config/opencode/opencode.json"]),
             domains: strings(&["opencode.ai", "models.dev"]),
-            sandboxed_args: String::new(),
+            quiet_domains: Vec::new(),
+            sandboxed_args: "--auto".into(),
             one_shot: "opencode run {prompt}".into(),
             trust: None,
         },
@@ -156,13 +174,26 @@ pub fn find<'a>(all: &'a [Harness], command: &str) -> Option<&'a Harness> {
     all.iter().find(|h| h.commands.iter().any(|c| c == program))
 }
 
+/// Whether a terminal really started inside a sandbox, going by the command the daemon ran.
+/// A harness's own command is one shell string, so mentioning a sandbox doesn't count.
+pub fn in_sandbox(terminal: &serde_json::Value) -> bool {
+    terminal["argv"].as_array().is_some_and(|argv| {
+        argv.iter().any(|a| matches!(a.as_str(), Some("/usr/bin/sandbox-exec" | "bwrap")))
+    })
+}
+
+/// Whether a blocked site is only this harness talking to itself.
+pub fn is_quiet(harness: Option<&Harness>, host: &str) -> bool {
+    harness.is_some_and(|h| h.quiet_domains.iter().any(|d| host == d || host.ends_with(&format!(".{d}"))))
+}
+
 /// The start command to use inside a sandbox.
-pub fn sandboxed_command(harness: Option<&Harness>, command: &str) -> String {
-    match harness {
-        Some(h) if !h.sandboxed_args.is_empty() && !command.contains(&h.sandboxed_args) => {
-            format!("{command} {}", h.sandboxed_args)
-        }
-        _ => command.to_string(),
+pub fn sandboxed_command(harness: Option<&Harness>, command: &str, project: &str) -> String {
+    let args = harness.map_or(String::new(), |h| h.sandboxed_args.replace("{project}", &project.replace('\'', r"'\''")));
+    if args.is_empty() || command.contains(&args) {
+        command.to_string()
+    } else {
+        format!("{command} {args}")
     }
 }
 
@@ -184,11 +215,11 @@ mod tests {
     fn a_harness_with_its_own_sandbox_has_it_turned_off_once() {
         let all = builtin();
         let codex = find(&all, "codex");
-        let once = sandboxed_command(codex, "codex --model x");
-        assert_eq!(once, "codex --model x --sandbox danger-full-access");
-        assert_eq!(sandboxed_command(codex, &once), once);
-        assert_eq!(sandboxed_command(find(&all, "claude"), "claude"), "claude");
-        assert_eq!(sandboxed_command(None, "aider"), "aider");
+        let once = sandboxed_command(codex, "codex --model x", "/p");
+        assert!(once.starts_with("codex --model x --sandbox danger-full-access --ask-for-approval never --no-daemon"), "{once}");
+        assert!(once.contains(r#"'projects={"/p"={trust_level="trusted"}}'"#), "{once}");
+        assert_eq!(sandboxed_command(codex, &once, "/p"), once);
+                assert_eq!(sandboxed_command(None, "aider", "/p"), "aider");
     }
 
     #[test]
@@ -207,5 +238,8 @@ mod tests {
     #[test]
     fn trusting_a_folder_is_never_automatic_out_of_the_box() {
         assert!(builtin().iter().filter_map(|h| h.trust.as_ref()).all(|t| !t.auto));
+        assert!(in_sandbox(&serde_json::json!({ "argv": ["/usr/bin/sandbox-exec", "-f", "p", "--", "zsh"] })));
+        assert!(!in_sandbox(&serde_json::json!({ "argv": ["/bin/zsh", "-l", "-i", "-c", "bwrap x; /usr/bin/sandbox-exec y"] })));
+        assert!(!in_sandbox(&serde_json::json!({})));
     }
 }

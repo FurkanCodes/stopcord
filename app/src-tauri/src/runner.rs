@@ -5,6 +5,7 @@
 //! person's VM command.
 
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
 use sawtooth_sandbox::{Network, Policy, wrap};
 use serde_json::{Value, json};
@@ -110,6 +111,47 @@ pub fn vm_argv(template: &str, dir: &Path, command: &str, shell_path: &str) -> V
     vec![shell_path.to_string(), "-l".into(), "-c".into(), line]
 }
 
+/// Long enough for a cold install on a slow connection.
+const SETUP_TIMEOUT: Duration = Duration::from_secs(20 * 60);
+const SETUP_DONE: &str = "sawtooth-setup-done";
+
+fn setup_markers(cwd: &Path) -> Option<(PathBuf, PathBuf)> {
+    let done = cwd.join(crate::worktree::git(cwd, &["rev-parse", "--git-path", SETUP_DONE]).ok()?);
+    let failed = PathBuf::from(format!("{}.failed", done.display()));
+    Some((done, failed))
+}
+
+/// Puts a runner's setup in front of the command, so it runs under the same confinement as the
+/// agent: `npm ci` runs the repo's own scripts. Once per worktree, and no agent on a failed setup.
+fn with_setup(setup: &[String], command: &str) -> String {
+    if setup.is_empty() {
+        return command.to_string();
+    }
+    let steps = setup.iter().map(|s| format!("({s})")).collect::<Vec<_>>().join(" && ");
+    format!(
+        r#"m="$(git rev-parse --git-path {SETUP_DONE})"; if [ -f "$m" ] || {{ {steps} && : > "$m"; }}; then {command}; else : > "$m.failed"; echo "Setup failed, so the agent did not start."; fi"#
+    )
+}
+
+/// Waits for a just-started terminal's setup to finish, so typing can't time out behind a slow install.
+pub fn wait_for_setup(runner: Option<&Runner>, cwd: &Path) -> Result<(), String> {
+    if runner.is_none_or(|r| r.setup_commands.is_empty()) {
+        return Ok(());
+    }
+    let (done, failed) = setup_markers(cwd).ok_or("couldn't find the worktree's git folder")?;
+    let start = Instant::now();
+    while start.elapsed() < SETUP_TIMEOUT {
+        if done.exists() {
+            return Ok(());
+        }
+        if failed.exists() {
+            return Err("the runner's setup failed. Its terminal shows why.".to_string());
+        }
+        std::thread::sleep(Duration::from_millis(500));
+    }
+    Err("the runner's setup didn't finish in 20 minutes".to_string())
+}
+
 pub const DEFAULT_VM_COMMAND: &str = "limactl shell --workdir {dir} default bash -lc {cmd}";
 
 /// Prepares a terminal's start. Wraps it in its runner and makes its report socket.
@@ -129,11 +171,17 @@ pub fn prepare(
     let harness = command.and_then(|c| harness::find(&harnesses, c));
     let level = runner.map_or(Level::Worktree, |r| r.level);
     let contained = level == Level::Contained;
-    let run_command = match command {
-        Some(c) if contained => Some(harness::sandboxed_command(harness, c)),
-        Some(c) => Some(c.to_string()),
-        None => None,
-    };
+    let setup = runner.map_or(&[][..], |r| r.setup_commands.as_slice());
+    if !setup.is_empty()
+        && let Some((_, failed)) = setup_markers(cwd)
+    {
+        // A failure left by an earlier try mustn't look like this one's.
+        let _ = std::fs::remove_file(failed);
+    }
+    let run_command = command.map(|c| {
+        let c = if contained { harness::sandboxed_command(harness, c, &factory.path) } else { c.to_string() };
+        with_setup(setup, &c)
+    });
     let argv = shell::argv(&shell_path, run_command.as_deref());
     let allow: Value = match runner {
         Some(r) if contained => json!(allowed_sites(r, harness)),
