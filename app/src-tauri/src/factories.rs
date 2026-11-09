@@ -12,6 +12,8 @@ use std::sync::Mutex;
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 
+use crate::work;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum Kind {
@@ -104,6 +106,37 @@ pub struct Ticket {
     pub url: String,
 }
 
+/// Where a ticket is in its journey. See `work.rs`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Stage {
+    #[default]
+    Queued,
+    Starting,
+    Running,
+    Ended,
+}
+
+/// One ticket and what has happened to it.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct WorkItem {
+    pub ticket: Ticket,
+    pub stage: Stage,
+    pub branch: String,
+    /// The daemon terminal working on it, once it has one.
+    pub terminal: Option<String>,
+    /// Its own folder, when it got a worktree.
+    pub worktree: String,
+    /// Failed tries at starting it.
+    pub attempts: u32,
+    /// Not before this time, in milliseconds, after a failed start.
+    pub retry_at: u64,
+    pub ended_at: u64,
+    /// How it ended, in words.
+    pub outcome: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct Factory {
@@ -114,9 +147,11 @@ pub struct Factory {
     pub parts: Vec<Part>,
     /// Where parts were dragged to on the canvas, by node id. Others sit where the layout puts them.
     pub layout: BTreeMap<String, Pos>,
-    /// Tickets fed and waiting for a terminal. The engine owns this.
+    /// Every ticket fed to this factory and where it stands. The engine owns this.
+    pub work: Vec<WorkItem>,
+    /// For the window: tickets waiting for a terminal. Always rebuilt from `work`.
     pub queue: Vec<Ticket>,
-    /// Tickets with a terminal, by ticket key: the terminal id. The engine owns this.
+    /// For the window: tickets with a terminal, by key. Always rebuilt from `work`.
     pub running: BTreeMap<String, String>,
 }
 
@@ -215,6 +250,8 @@ impl Store {
         let mut factory: Factory = serde_json::from_str(&text)
             .with_context(|| format!("{} isn't valid", file.display()))?;
         factory.id = id.to_string();
+        work::migrate(&mut factory);
+        work::refresh_view(&mut factory);
         Ok(factory)
     }
 
@@ -265,18 +302,23 @@ impl Store {
         let current = self.get(&factory.id)?;
         let mut next = factory.clone();
         next.path = current.path;
+        next.work = current.work;
         next.queue = current.queue;
         next.running = current.running;
         self.write(&next)?;
         Ok(next)
     }
 
-    /// Changes a factory in place. For the engine.
+    /// Changes a factory in place. For the engine. A change that changes nothing writes nothing.
     pub fn update<T>(&self, id: &str, change: impl FnOnce(&mut Factory) -> T) -> Result<T> {
         let _guard = self.lock.lock().unwrap();
-        let mut factory = self.get(id)?;
+        let before = self.get(id)?;
+        let mut factory = before.clone();
         let out = change(&mut factory);
-        self.write(&factory)?;
+        work::refresh_view(&mut factory);
+        if factory != before {
+            self.write(&factory)?;
+        }
         Ok(out)
     }
 
@@ -347,21 +389,39 @@ mod tests {
         // The engine queues a ticket; a save from the window keeps it.
         store
             .update(&z.id, |f| {
-                f.queue.push(Ticket {
-                    key: "LIN-1".into(),
-                    ..Ticket::default()
-                })
+                work::feed(
+                    f,
+                    vec![Ticket {
+                        key: "LIN-1".into(),
+                        ..Ticket::default()
+                    }],
+                )
             })
             .unwrap();
         let mut edited = z.clone();
         edited.parts.push(part(Kind::Check, "Tests"));
         let saved = store.save(&edited).unwrap();
         assert_eq!(saved.queue.len(), 1);
+        assert_eq!(saved.work.len(), 1);
         assert_eq!(store.get("zebra").unwrap().parts.len(), 2);
 
         let moved = store.remove("zebra").unwrap();
         assert!(moved.join("factory.json").is_file());
         assert_eq!(store.list().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn a_change_that_changes_nothing_doesnt_touch_the_file() {
+        let home = tempfile::tempdir().unwrap();
+        let store = Store::new(home.path().to_path_buf());
+        let work = tempfile::tempdir().unwrap();
+        let f = store.create(work.path(), "x", vec![]).unwrap();
+        let file = store.dir(&f.id).join("factory.json");
+        let mut marked = std::fs::read_to_string(&file).unwrap();
+        marked.push_str("\n\n");
+        std::fs::write(&file, &marked).unwrap();
+        store.update(&f.id, |_| ()).unwrap();
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), marked);
     }
 
     #[test]

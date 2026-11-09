@@ -22,6 +22,7 @@ mod shell;
 #[cfg(debug_assertions)]
 mod testbridge;
 mod tickets;
+mod work;
 mod worktree;
 
 use std::collections::HashMap;

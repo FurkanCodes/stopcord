@@ -22,8 +22,9 @@ use sawtooth_daemon::Client;
 use serde_json::{Value, json};
 
 use crate::bridge::{Bridge, Failure};
-use crate::factories::{Factory, Kind, Part, RunsIn, RunsOn, Store, Ticket, When};
+use crate::factories::{Factory, Kind, Part, RunsIn, RunsOn, Store, Ticket, When, WorkItem};
 use crate::runs::{self, Run};
+use crate::work::{self, Change, Live, Retry};
 use crate::{hooks, kb, shell, worktree};
 
 /// Sends an event to the window.
@@ -213,6 +214,10 @@ struct State {
     knowledge_mtime: HashMap<String, SystemTime>,
     /// Ticket sources with no harness, already logged.
     warned: HashSet<String>,
+    /// Tickets this run of the app is starting right now: (factory, key).
+    starting: HashSet<(String, String)>,
+    /// The terminal list was just read afresh, so a missing terminal went unwatched.
+    resync: bool,
 }
 
 pub struct Engine {
@@ -283,7 +288,9 @@ impl Engine {
                             .filter_map(|t| Some((t["id"].as_str()?.to_string(), t.clone())))
                             .collect();
                         st.synced = true;
+                        st.resync = true;
                     }
+                    self.pump_tickets();
                     for event in events {
                         let Ok(event) = event else { break };
                         self.on_event(&event);
@@ -619,20 +626,7 @@ impl Engine {
 
     /// Queues tickets for a factory. Returns how many were new.
     pub fn feed(self: &Arc<Self>, id: &str, tickets: Vec<Ticket>) -> anyhow::Result<usize> {
-        let added = self.store.update(id, |f| {
-            let mut added = 0;
-            for t in tickets {
-                if t.key.is_empty()
-                    || f.running.contains_key(&t.key)
-                    || f.queue.iter().any(|q| q.key == t.key)
-                {
-                    continue;
-                }
-                f.queue.push(t);
-                added += 1;
-            }
-            added
-        })?;
+        let added = self.store.update(id, |f| work::feed(f, tickets))?;
         if added > 0 {
             self.log(
                 id,
@@ -648,62 +642,87 @@ impl Engine {
         Ok(added)
     }
 
-    /// Starts queued tickets while there's room.
+    /// Squares each factory's tickets with the live terminals, then starts what there's room for.
+    /// The terminal list is read inside the save, so it can't be older than what it's compared with.
     fn pump_tickets(self: &Arc<Self>) {
-        let (synced, live): (bool, HashSet<String>) = {
+        let (synced, lost) = {
             let st = self.state.lock().unwrap();
-            (
-                st.synced,
-                st.terminals
-                    .iter()
-                    .filter(|(_, t)| t["state"] != "exited")
-                    .map(|(id, _)| id.clone())
-                    .collect(),
-            )
+            (st.synced, st.resync)
         };
         if !synced {
             return;
         }
         for factory in self.store.list().unwrap_or_default() {
-            let Some(source) = factory.tickets().cloned() else {
+            let source = factory.tickets().cloned();
+            let can_start = source
+                .as_ref()
+                .is_some_and(|s| !s.harness.trim().is_empty());
+            if let Some(s) = &source
+                && !can_start
+                && !factory.queue.is_empty()
+                && self.state.lock().unwrap().warned.insert(factory.id.clone())
+            {
+                self.log(
+                    &factory.id,
+                    Run::new("ticket", "Tickets are waiting, but the ticket source has no start command. Pick a harness for it.")
+                        .ok(false)
+                        .part(&s.id),
+                );
+            }
+            let room = source.as_ref().map_or(1, |s| s.at_once.max(1) as usize);
+            let now = runs::now_ms();
+            let id = factory.id.clone();
+            let result = self.store.update(&id, |f| {
+                let mut st = self.state.lock().unwrap();
+                if !st.synced {
+                    return (Vec::new(), None);
+                }
+                let live: Vec<Live> = st
+                    .terminals
+                    .iter()
+                    .filter(|(_, t)| t["state"] != "exited")
+                    .map(|(tid, t)| Live {
+                        id: tid.clone(),
+                        name: t["name"].as_str().unwrap_or_default().to_string(),
+                    })
+                    .collect();
+                let mine: HashSet<String> = st
+                    .starting
+                    .iter()
+                    .filter(|(fid, _)| fid == &id)
+                    .map(|(_, key)| key.clone())
+                    .collect();
+                let changes = work::settle(f, &live, &mine, lost, now);
+                let next = if can_start {
+                    work::claim(f, room, now)
+                } else {
+                    None
+                };
+                if let Some(item) = &next {
+                    st.starting.insert((id.clone(), item.ticket.key.clone()));
+                }
+                (changes, next)
+            });
+            let Ok((changes, next)) = result else {
                 continue;
             };
-            if factory.queue.is_empty() && factory.running.values().all(|t| live.contains(t)) {
-                continue;
+            for change in changes {
+                self.log(&id, change_run(change));
             }
-            if source.harness.trim().is_empty() {
-                if !factory.queue.is_empty()
-                    && self.state.lock().unwrap().warned.insert(factory.id.clone())
-                {
-                    self.log(
-                        &factory.id,
-                        Run::new("ticket", "Tickets are waiting, but the ticket source has no start command. Pick a harness for it.")
-                            .ok(false)
-                            .part(&source.id),
-                    );
-                }
-                continue;
+            if let (Some(item), Some(source)) = (next, source) {
+                let me = Arc::clone(self);
+                thread::spawn(move || me.start_ticket(&factory, &source, item));
             }
-            let room = source.at_once.max(1) as usize;
-            let next = self
-                .store
-                .update(&factory.id, |f| {
-                    f.running.retain(|_, t| live.contains(t));
-                    if f.running.len() < room && !f.queue.is_empty() {
-                        Some(f.queue.remove(0))
-                    } else {
-                        None
-                    }
-                })
-                .ok()
-                .flatten();
-            let Some(ticket) = next else { continue };
-            let me = Arc::clone(self);
-            thread::spawn(move || me.start_ticket(&factory, &source, ticket));
+        }
+        if lost {
+            self.state.lock().unwrap().resync = false;
         }
     }
 
-    fn start_ticket(self: &Arc<Self>, factory: &Factory, source: &Part, ticket: Ticket) {
+    fn start_ticket(self: &Arc<Self>, factory: &Factory, source: &Part, item: WorkItem) {
+        let ticket = item.ticket;
+        let branch = item.branch;
+        let starting = (factory.id.clone(), ticket.key.clone());
         let mut title: String = ticket.title.chars().take(40).collect();
         if ticket.title.chars().count() > 40 {
             title.push('…');
@@ -713,7 +732,6 @@ impl Engine {
         } else {
             format!("{} · {title}", ticket.key)
         };
-        let branch = ticket_branch(&ticket.key);
         let req = StartRequest {
             factory_id: Some(factory.id.clone()),
             command: Some(source.harness.clone()),
@@ -724,28 +742,35 @@ impl Engine {
         let id = match start_terminal(&self.store, &self.bridge, req) {
             Ok(t) => {
                 let id = t["id"].as_str().unwrap_or_default().to_string();
+                let cwd = t["cwd"].as_str().unwrap_or_default().to_string();
+                let worktree = if cwd == factory.path { String::new() } else { cwd };
                 self.state.lock().unwrap().terminals.insert(id.clone(), t);
+                let _ = self.store.update(&factory.id, |f| {
+                    work::started(f, &ticket.key, &id, &worktree);
+                });
+                self.state.lock().unwrap().starting.remove(&starting);
                 id
             }
             Err(f) => {
-                // Put it back at the front, and say why.
-                let _ = self
-                    .store
-                    .update(&factory.id, |fa| fa.queue.insert(0, ticket.clone()));
-                self.log(
-                    &factory.id,
-                    Run::new(
-                        "ticket",
-                        format!("{} couldn't start: {}", ticket.key, f.message),
-                    )
-                    .ok(false),
-                );
+                let retry = self.store.update(&factory.id, |fa| {
+                    work::start_failed(fa, &ticket.key, &f.message, runs::now_ms())
+                });
+                self.state.lock().unwrap().starting.remove(&starting);
+                let text = match retry {
+                    Ok(Retry::AfterSecs(s)) => {
+                        format!("{} couldn't start: {}. Trying again in {s}s.", ticket.key, f.message)
+                    }
+                    _ => format!(
+                        "{} couldn't start after {} tries, so it was dropped: {}. Feed it again once that's fixed.",
+                        ticket.key,
+                        work::MAX_START_ATTEMPTS,
+                        f.message
+                    ),
+                };
+                self.log(&factory.id, Run::new("ticket", text).ok(false).part(&source.id));
                 return;
             }
         };
-        let _ = self.store.update(&factory.id, |fa| {
-            fa.running.insert(ticket.key.clone(), id.clone());
-        });
         let prompt = [
             format!("{}: {}", ticket.key, ticket.title)
                 .trim()
@@ -767,7 +792,9 @@ impl Engine {
             ),
             Err(e) => self.log(
                 &factory.id,
-                Run::new("ticket", e).ok(false).terminal(Some(&id)),
+                Run::new("ticket", format!("{}: {e}. It has a terminal but never got the ticket.", ticket.key))
+                    .ok(false)
+                    .terminal(Some(&id)),
             ),
         }
     }
@@ -919,26 +946,34 @@ pub fn knowledge_differs(store: &Store, id: &str) -> bool {
     }
 }
 
-/// The branch a ticket's terminal works on: "LIN-92" gives `lin-92`, and a bare
-/// number such as "#41" gives `ticket-41`.
-pub fn ticket_branch(key: &str) -> String {
-    let slug = crate::factories::slug(key);
-    if slug.chars().all(|c| c.is_ascii_digit()) {
-        format!("ticket-{slug}")
-    } else {
-        slug
+/// A change to a ticket, as a line for the run log.
+fn change_run(change: Change) -> Run {
+    match change {
+        Change::Closed { key, branch } => Run::new(
+            "ticket",
+            format!("{key}'s terminal closed. Its work is on branch {branch}."),
+        ),
+        Change::Lost { key, branch } => Run::new(
+            "ticket",
+            format!("{key}'s terminal was gone when Sawtooth looked, so the ticket ended. What it committed is on branch {branch}, and anything unsaved is still in its worktree."),
+        )
+        .ok(false),
+        Change::Requeued { key } => Run::new(
+            "ticket",
+            format!("{key} was starting when Sawtooth stopped, so it's queued again."),
+        ),
+        Change::Adopted { key, terminal } => Run::new(
+            "ticket",
+            format!("{key} was starting when Sawtooth stopped and its terminal is still open. Check that it got the ticket."),
+        )
+        .ok(false)
+        .terminal(Some(&terminal)),
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn ticket_branches() {
-        assert_eq!(ticket_branch("LIN-92"), "lin-92");
-        assert_eq!(ticket_branch("#41"), "ticket-41");
-    }
 
     #[test]
     fn schedules() {
