@@ -209,10 +209,16 @@ export function loadChanges(t: Terminal, factories: Factory[] = state.factories,
   );
 }
 
+/** The unreadable factories last shown, so one isn't reported again on every refresh. */
+let brokenShown = '';
+
 export async function refreshFactories() {
   try {
     const factories = await api.factories();
     setState({ factories, loaded: true });
+    const broken = (await api.brokenFactories()).join(' ');
+    if (broken && broken !== brokenShown) showProblem(broken);
+    brokenShown = broken;
   } catch (e) {
     setState({ loaded: true });
     showProblem(e);

@@ -91,6 +91,21 @@ fn ours(path: &Path) -> bool {
     std::fs::read_to_string(path).is_ok_and(|t| t.lines().any(|l| l.trim() == MARKER))
 }
 
+/// The factory a hook of ours belongs to.
+fn owner(path: &Path) -> Option<String> {
+    let text = std::fs::read_to_string(path).ok()?;
+    let rest = text.split("exec \"$app\" hook '").nth(1)?;
+    Some(rest.split('\'').next()?.to_string())
+}
+
+/// The name a hook of ours says it runs checks for.
+fn owner_name(path: &Path) -> String {
+    std::fs::read_to_string(path)
+        .ok()
+        .and_then(|t| Some(t.split("Sawtooth factory \"").nth(1)?.split('"').next()?.to_string()))
+        .unwrap_or_else(|| "another factory".into())
+}
+
 /// Writes the hooks the factory's checks need and removes ours that it no longer needs.
 /// Returns problems in words. Outside git there's nothing to hook, so checks on commit can't run.
 pub fn install(factory: &Factory, program: &Path, home: &Path) -> Vec<String> {
@@ -125,7 +140,20 @@ pub fn install(factory: &Factory, program: &Path, home: &Path) -> Vec<String> {
     for (hook, on) in HOOKS {
         let path = dir.join(hook);
         let exists = path.exists();
+        // A hook of ours for a factory that's still around isn't ours to replace.
+        let taken = exists
+            && ours(&path)
+            && owner(&path).is_some_and(|id| {
+                id != factory.id && home.join("factories").join(&id).join("factory.json").is_file()
+            });
         if needs(on) {
+            if taken {
+                problems.push(format!(
+                    "The factory {} already runs its checks from this repo's {hook} hook, so this factory's checks on that step won't run. A repo can only run one factory's hooks.",
+                    owner_name(&path)
+                ));
+                continue;
+            }
             if exists && !ours(&path) {
                 problems.push(format!(
                     "This repo already has a {hook} hook, so Sawtooth didn't replace it. \
@@ -145,7 +173,7 @@ pub fn install(factory: &Factory, program: &Path, home: &Path) -> Vec<String> {
             if let Err(e) = write {
                 problems.push(format!("couldn't write {}: {e}", path.display()));
             }
-        } else if exists && ours(&path) {
+        } else if exists && ours(&path) && !taken {
             let _ = std::fs::remove_file(&path);
         }
     }
@@ -310,6 +338,8 @@ pub fn run_hook(store: &Store, id: &str, hook: &str, cwd: &Path) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::factories::Part;
+    use crate::worktree::tests::repo;
 
     #[test]
     fn a_timeout_stops_everything_the_command_started() {
@@ -329,9 +359,6 @@ mod tests {
             started.elapsed()
         );
     }
-    use crate::factories::Part;
-    use crate::worktree::tests::repo;
-
     fn check(name: &str, command: &str, on: RunsOn) -> Part {
         Part {
             id: crate::factories::slug(name),
@@ -345,6 +372,36 @@ mod tests {
 
     fn factory(store: &Store, path: &Path, parts: Vec<Part>) -> Factory {
         store.create(path, "demo", parts).unwrap()
+    }
+
+    #[test]
+    fn two_factories_in_one_repo_leave_each_others_hooks_alone() {
+        let repo = repo();
+        let sub = repo.path().join("sub");
+        std::fs::create_dir(&sub).unwrap();
+        let home = tempfile::tempdir().unwrap();
+        let store = Store::new(home.path().to_path_buf());
+        let program = Path::new("/no/such/app");
+        let first = factory(&store, repo.path(), vec![check("Tests", "true", RunsOn::Commit)]);
+        assert!(install(&first, program, home.path()).is_empty());
+        let hook = common_dir(repo.path()).unwrap().join("hooks/pre-commit");
+
+        let second = factory(&store, &sub, vec![check("Lint", "true", RunsOn::Commit)]);
+        let problems = install(&second, program, home.path());
+        assert_eq!(problems.len(), 1, "{problems:?}");
+        assert!(problems[0].contains(&first.name), "{problems:?}");
+        assert!(std::fs::read_to_string(&hook).unwrap().contains(&quote(&first.id)));
+
+        // One with no checks at all mustn't clear the first one's hook either.
+        let mut idle = second.clone();
+        idle.parts.clear();
+        assert!(install(&idle, program, home.path()).is_empty());
+        assert!(hook.exists());
+
+        // Once the first factory is gone, its hook is free to take.
+        store.remove(&first.id).unwrap();
+        assert!(install(&second, program, home.path()).is_empty());
+        assert!(std::fs::read_to_string(&hook).unwrap().contains(&quote(&second.id)));
     }
 
     #[test]

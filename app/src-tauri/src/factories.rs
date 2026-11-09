@@ -149,6 +149,8 @@ pub struct Factory {
     pub layout: BTreeMap<String, Pos>,
     /// Every ticket fed to this factory and where it stands. The engine owns this.
     pub work: Vec<WorkItem>,
+    /// When each schedule last fired, by part id, in milliseconds. The engine owns this.
+    pub fired: BTreeMap<String, u64>,
     /// For the window: tickets waiting for a terminal. Always rebuilt from `work`.
     pub queue: Vec<Ticket>,
     /// For the window: tickets with a terminal, by key. Always rebuilt from `work`.
@@ -224,7 +226,25 @@ impl Store {
         self.home.join("worktrees").join(id)
     }
 
-    /// Every factory, by name.
+    /// Factories whose settings can't be read: (id, what's wrong).
+    pub fn broken(&self) -> Vec<(String, String)> {
+        let Ok(entries) = std::fs::read_dir(self.home.join("factories")) else {
+            return Vec::new();
+        };
+        let mut all: Vec<(String, String)> = entries
+            .flatten()
+            .filter(|e| e.path().join("factory.json").is_file())
+            .filter_map(|e| {
+                let id = e.file_name().to_string_lossy().into_owned();
+                let problem = self.get(&id).err()?;
+                Some((id, format!("{problem:#}")))
+            })
+            .collect();
+        all.sort();
+        all
+    }
+
+    /// Every factory that can be read, by name. One broken file mustn't stop the others; see `broken`.
     pub fn list(&self) -> Result<Vec<Factory>> {
         let root = self.home.join("factories");
         let entries = match std::fs::read_dir(&root) {
@@ -235,8 +255,10 @@ impl Store {
         let mut all = Vec::new();
         for entry in entries.flatten() {
             let id = entry.file_name().to_string_lossy().into_owned();
-            if entry.path().join("factory.json").is_file() {
-                all.push(self.get(&id)?);
+            if entry.path().join("factory.json").is_file()
+                && let Ok(factory) = self.get(&id)
+            {
+                all.push(factory);
             }
         }
         all.sort_by_key(|f| f.name.to_lowercase());
@@ -303,6 +325,7 @@ impl Store {
         let mut next = factory.clone();
         next.path = current.path;
         next.work = current.work;
+        next.fired = current.fired;
         next.queue = current.queue;
         next.running = current.running;
         self.write(&next)?;
@@ -408,6 +431,23 @@ mod tests {
         let moved = store.remove("zebra").unwrap();
         assert!(moved.join("factory.json").is_file());
         assert_eq!(store.list().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn a_broken_file_doesnt_take_the_other_factories_down() {
+        let home = tempfile::tempdir().unwrap();
+        let store = Store::new(home.path().to_path_buf());
+        let (a, b) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        store.create(a.path(), "good", vec![]).unwrap();
+        let bad = store.create(b.path(), "bad", vec![]).unwrap();
+        std::fs::write(store.dir(&bad.id).join("factory.json"), "{ oops").unwrap();
+
+        let names: Vec<_> = store.list().unwrap().into_iter().map(|f| f.name).collect();
+        assert_eq!(names, ["good"]);
+        let broken = store.broken();
+        assert_eq!(broken.len(), 1);
+        assert_eq!(broken[0].0, "bad");
+        assert!(broken[0].1.contains("isn't valid"), "{broken:?}");
     }
 
     #[test]

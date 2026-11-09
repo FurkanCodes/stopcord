@@ -17,12 +17,12 @@ use std::time::{Duration, Instant, SystemTime};
 
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as B64;
-use chrono::{Datelike, Local, Timelike, Weekday};
+use chrono::{Datelike, Duration as Span, Local, NaiveDateTime, TimeZone, Weekday};
 use sawtooth_daemon::Client;
 use serde_json::{Value, json};
 
 use crate::bridge::{Bridge, Failure};
-use crate::factories::{Factory, Kind, Part, RunsIn, RunsOn, Store, Ticket, When, WorkItem};
+use crate::factories::{Factory, Kind, Part, RunsIn, RunsOn, Stage, Store, Ticket, When, WorkItem};
 use crate::runs::{self, Run};
 use crate::typing::{Port, Typist};
 use crate::work::{self, Change, Live, Retry};
@@ -37,6 +37,12 @@ const READY_TIMEOUT: Duration = Duration::from_secs(90);
 const TURN_START: Duration = Duration::from_secs(5);
 const TYPING_POLL: Duration = Duration::from_millis(500);
 const QUIET_CHECK_TIMEOUT: Duration = Duration::from_secs(600);
+/// A schedule this close to its time counts as on time.
+const ON_TIME_MINUTES: i64 = 2;
+/// A schedule missed by up to this long runs late. Past it, it's only reported.
+const CATCH_UP_HOURS: i64 = 12;
+/// Ticks between looks for finished worktrees to remove: two minutes.
+const SWEEP_EVERY_TICKS: u64 = 60;
 /// Fix turns the engine starts in a row before it stops asking.
 const MAX_FIX_TURNS: u32 = 3;
 
@@ -192,6 +198,62 @@ pub fn parse_schedule(text: &str) -> Option<Schedule> {
     }
 }
 
+/// Whether a schedule should run now.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Due {
+    No,
+    Now,
+    /// It was due at this time, and that's recent enough to run it late.
+    Late(NaiveDateTime),
+    /// It was due at this time, and that's too long ago to run it now.
+    Missed(NaiveDateTime),
+}
+
+/// Whether a schedule is due, given when it last fired. However many times it
+/// was missed, it runs at most once.
+pub fn due(schedule: Schedule, last: NaiveDateTime, now: NaiveDateTime) -> Due {
+    let (hour, minute, day) = match schedule {
+        Schedule::Every { minutes } => {
+            return if now - last >= Span::minutes(minutes as i64) {
+                Due::Now
+            } else {
+                Due::No
+            };
+        }
+        Schedule::Daily { hour, minute } => (hour, minute, None),
+        Schedule::Weekly { day, hour, minute } => (hour, minute, Some(day)),
+    };
+    let Some(mut latest) = now.date().and_hms_opt(hour, minute, 0) else {
+        return Due::No;
+    };
+    if let Some(day) = day {
+        let back = (now.weekday().num_days_from_monday() + 7 - day.num_days_from_monday()) % 7;
+        latest -= Span::days(back as i64);
+    }
+    if latest > now {
+        latest -= Span::days(if day.is_some() { 7 } else { 1 });
+    }
+    if latest <= last {
+        return Due::No;
+    }
+    let late = now - latest;
+    if late < Span::minutes(ON_TIME_MINUTES) {
+        Due::Now
+    } else if late <= Span::hours(CATCH_UP_HOURS) {
+        Due::Late(latest)
+    } else {
+        Due::Missed(latest)
+    }
+}
+
+fn local(ms: u64) -> NaiveDateTime {
+    Local
+        .timestamp_millis_opt(ms as i64)
+        .single()
+        .map(|t| t.naive_local())
+        .unwrap_or_else(|| Local::now().naive_local())
+}
+
 // ---- Limits -----------------------------------------------------------------
 
 /// Whether to ask an agent to fix a failed check again.
@@ -249,10 +311,6 @@ struct State {
     engine_turns: HashSet<String>,
     /// Engine-started fix turns in a row, by terminal.
     fix_streak: HashMap<String, u32>,
-    /// When each schedule last fired: (factory, part) -> a key for that minute or interval.
-    fired: HashMap<(String, String), String>,
-    /// Interval schedules: when they last fired.
-    every_last: HashMap<(String, String), Instant>,
     /// Bytes of each run log already read.
     runs_seen: HashMap<String, u64>,
     factory_mtime: HashMap<String, SystemTime>,
@@ -269,6 +327,9 @@ struct State {
     starting: HashSet<(String, String)>,
     /// The terminal list was just read afresh, so a missing terminal went unwatched.
     resync: bool,
+    /// Factories whose files can't be read, as last told to the window.
+    broken: Vec<(String, String)>,
+    ticks: u64,
 }
 
 pub struct Engine {
@@ -278,7 +339,6 @@ pub struct Engine {
     emit: Emit,
     state: Mutex<State>,
     typist: Typist,
-    started: Instant,
 }
 
 impl Port for Bridge {
@@ -303,7 +363,6 @@ impl Engine {
             emit,
             state: Mutex::new(State::default()),
             typist: Typist::new(READY_TIMEOUT, TURN_START, TYPING_POLL),
-            started: Instant::now(),
         })
     }
 
@@ -852,6 +911,20 @@ impl Engine {
             self.check_schedules(f);
         }
         self.pump_tickets();
+        self.watch_broken();
+        let sweep = {
+            let mut st = self.state.lock().unwrap();
+            st.ticks += 1;
+            st.ticks.is_multiple_of(SWEEP_EVERY_TICKS)
+        };
+        if sweep {
+            let me = Arc::clone(self);
+            thread::spawn(move || {
+                for f in &factories {
+                    me.sweep_worktrees(f);
+                }
+            });
+        }
     }
 
     fn watch_files(self: &Arc<Self>, f: &Factory) {
@@ -962,8 +1035,11 @@ impl Engine {
         }
     }
 
+    /// Runs what's due. When each schedule last fired is saved first, so a crash can't run it twice,
+    /// and a laptop that slept through the time finds out on waking.
     fn check_schedules(self: &Arc<Self>, f: &Factory) {
-        let now = Local::now();
+        let now_ms = runs::now_ms();
+        let now = local(now_ms);
         for part in f
             .parts
             .iter()
@@ -972,36 +1048,114 @@ impl Engine {
             let Some(schedule) = parse_schedule(&part.schedule) else {
                 continue;
             };
-            let key = (f.id.clone(), part.id.clone());
-            let due = match schedule {
-                Schedule::Daily { hour, minute } => (now.hour(), now.minute()) == (hour, minute),
-                Schedule::Weekly { day, hour, minute } => {
-                    now.weekday() == day && (now.hour(), now.minute()) == (hour, minute)
-                }
-                Schedule::Every { minutes } => {
-                    let mut st = self.state.lock().unwrap();
-                    let last = *st
-                        .every_last
-                        .entry(key.clone())
-                        .or_insert(self.started.max(Instant::now()));
-                    if last.elapsed() >= Duration::from_secs(minutes as u64 * 60) {
-                        st.every_last.insert(key.clone(), Instant::now());
-                        true
-                    } else {
-                        false
-                    }
-                }
+            let Some(last) = f.fired.get(&part.id).copied() else {
+                // A new schedule counts from now.
+                let _ = self.store.update(&f.id, |fa| {
+                    fa.fired.entry(part.id.clone()).or_insert(now_ms);
+                });
+                continue;
             };
-            if !due {
+            let when = due(schedule, local(last), now);
+            if when == Due::No {
                 continue;
             }
-            let stamp = now.format("%Y-%m-%d %H:%M").to_string();
-            if self.state.lock().unwrap().fired.insert(key, stamp.clone()) == Some(stamp) {
+            let saved = self.store.update(&f.id, |fa| {
+                fa.fired.insert(part.id.clone(), now_ms);
+            });
+            if saved.is_err() {
                 continue;
+            }
+            match when {
+                Due::Missed(at) => {
+                    self.log(
+                        &f.id,
+                        Run::new(
+                            "trigger",
+                            format!(
+                                "{} was due {} but Sawtooth wasn't awake, and that's too long ago to run it now",
+                                part.name,
+                                at.format("%a %H:%M")
+                            ),
+                        )
+                        .ok(false)
+                        .part(&part.id),
+                    );
+                    continue;
+                }
+                Due::Late(at) => self.log(
+                    &f.id,
+                    Run::new(
+                        "trigger",
+                        format!(
+                            "{} was due at {} but Sawtooth wasn't awake, so it's running late",
+                            part.name,
+                            at.format("%H:%M")
+                        ),
+                    )
+                    .part(&part.id),
+                ),
+                _ => {}
             }
             let me = Arc::clone(self);
             let (factory, part) = (f.clone(), part.clone());
             thread::spawn(move || me.run_trigger(&factory, &part, None));
+        }
+    }
+
+    /// Tells the window when the set of unreadable factories changes.
+    fn watch_broken(&self) {
+        let broken = self.store.broken();
+        let changed = {
+            let mut st = self.state.lock().unwrap();
+            let changed = st.broken != broken;
+            st.broken = broken;
+            changed
+        };
+        if changed {
+            (self.emit)("factory:changed", json!({ "id": "" }));
+        }
+    }
+
+    /// Removes the worktrees of ended tickets, once that can't lose anything.
+    fn sweep_worktrees(&self, f: &Factory) {
+        let cwds: Vec<String> = {
+            let st = self.state.lock().unwrap();
+            if !st.synced {
+                return;
+            }
+            st.terminals
+                .values()
+                .filter(|t| t["state"] != "exited")
+                .filter_map(|t| t["cwd"].as_str().map(String::from))
+                .collect()
+        };
+        for w in f
+            .work
+            .iter()
+            .filter(|w| w.stage == Stage::Ended && !w.worktree.is_empty())
+        {
+            let dir = Path::new(&w.worktree);
+            if cwds.iter().any(|c| Path::new(c).starts_with(dir)) {
+                continue;
+            }
+            let removed = worktree::remove_if_merged(Path::new(&f.path), dir, &w.branch).unwrap_or(false);
+            if removed {
+                self.log(
+                    &f.id,
+                    Run::new(
+                        "ticket",
+                        format!("{}'s worktree was removed: branch {} is merged and nothing was left unsaved.", w.ticket.key, w.branch),
+                    ),
+                );
+            }
+            if removed || !dir.exists() {
+                let key = w.ticket.key.clone();
+                let _ = self.store.update(&f.id, |fa| {
+                    if let Some(item) = fa.work.iter_mut().find(|i| i.ticket.key == key) {
+                        item.worktree.clear();
+                    }
+                });
+            }
         }
     }
 }
@@ -1116,6 +1270,72 @@ mod tests {
             l.failed("f", "fix", "tests", "t1");
         }
         assert_eq!(l.failed("f", "fix", "tests", "t2"), Ask::Yes);
+    }
+
+    fn at(text: &str) -> NaiveDateTime {
+        NaiveDateTime::parse_from_str(text, "%Y-%m-%d %H:%M").unwrap()
+    }
+
+    const NINE: Schedule = Schedule::Daily { hour: 9, minute: 0 };
+
+    #[test]
+    fn a_daily_schedule_fires_on_time_once() {
+        // 2026-11-09 is a Monday.
+        let last = at("2026-11-08 09:00");
+        assert_eq!(due(NINE, last, at("2026-11-09 08:59")), Due::No);
+        assert_eq!(due(NINE, last, at("2026-11-09 09:00")), Due::Now);
+        assert_eq!(due(NINE, at("2026-11-09 09:00"), at("2026-11-09 09:01")), Due::No);
+    }
+
+    #[test]
+    fn a_laptop_asleep_at_the_time_runs_it_late_on_waking() {
+        let last = at("2026-11-08 09:00");
+        assert_eq!(
+            due(NINE, last, at("2026-11-09 11:30")),
+            Due::Late(at("2026-11-09 09:00"))
+        );
+    }
+
+    #[test]
+    fn long_after_the_time_it_is_reported_missed_not_run() {
+        let last = at("2026-11-08 09:00");
+        assert_eq!(
+            due(NINE, last, at("2026-11-09 22:00")),
+            Due::Missed(at("2026-11-09 09:00"))
+        );
+    }
+
+    #[test]
+    fn many_missed_days_count_as_one() {
+        let last = at("2026-11-01 09:00");
+        assert_eq!(
+            due(NINE, last, at("2026-11-09 10:00")),
+            Due::Late(at("2026-11-09 09:00"))
+        );
+    }
+
+    #[test]
+    fn a_weekly_schedule_finds_its_day() {
+        let monday = Schedule::Weekly { day: Weekday::Mon, hour: 9, minute: 0 };
+        let last = at("2026-11-02 09:00");
+        // Sunday: last Monday already fired.
+        assert_eq!(due(monday, last, at("2026-11-08 12:00")), Due::No);
+        assert_eq!(due(monday, last, at("2026-11-09 09:00")), Due::Now);
+        // Thursday: it was due days ago.
+        assert_eq!(
+            due(monday, last, at("2026-11-12 12:00")),
+            Due::Missed(at("2026-11-09 09:00"))
+        );
+    }
+
+    #[test]
+    fn an_interval_counts_from_when_it_last_ran() {
+        let every = Schedule::Every { minutes: 30 };
+        let last = at("2026-11-09 09:00");
+        assert_eq!(due(every, last, at("2026-11-09 09:29")), Due::No);
+        assert_eq!(due(every, last, at("2026-11-09 09:30")), Due::Now);
+        // Asleep for hours: once on waking.
+        assert_eq!(due(every, last, at("2026-11-09 15:00")), Due::Now);
     }
 
     #[test]

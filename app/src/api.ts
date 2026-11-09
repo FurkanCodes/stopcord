@@ -159,6 +159,7 @@ export const daemon = <T = unknown>(method: string, params?: Record<string, unkn
 
 export const api = {
   factories: () => invoke<Factory[]>('factories'),
+  brokenFactories: () => invoke<string[]>('broken_factories'),
   createFactory: (args: { path: string; name: string; template: 'open' | 'reviewed'; readAs: string[] }) =>
     invoke<Factory>('create_factory', args),
   saveFactory: (factory: Factory) => invoke<Factory>('save_factory', { factory }),

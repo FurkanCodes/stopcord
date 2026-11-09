@@ -50,10 +50,23 @@ pub fn ensure(project: &Path, worktrees_dir: &Path, branch: &str) -> Result<Path
     if git(project, &["check-ref-format", "--branch", branch]).is_err() {
         bail!("{branch:?} can't be a branch name");
     }
-    let dir = worktrees_dir.join(slug(branch));
-    if dir.join(".git").exists() {
-        return Ok(dir);
-    }
+    // Different branches can make the same folder name, so a folder only counts if it's on this branch.
+    let base = slug(branch);
+    let mut n = 1;
+    let dir = loop {
+        let dir = if n == 1 {
+            worktrees_dir.join(&base)
+        } else {
+            worktrees_dir.join(format!("{base}-{n}"))
+        };
+        if !dir.join(".git").exists() {
+            break dir;
+        }
+        if git(&dir, &["branch", "--show-current"]).is_ok_and(|b| b == branch) {
+            return Ok(dir);
+        }
+        n += 1;
+    };
     std::fs::create_dir_all(worktrees_dir)?;
     // A worktree folder that was deleted by hand leaves a record behind; clear it first.
     let _ = git(project, &["worktree", "prune"]);
@@ -77,6 +90,24 @@ pub fn ensure(project: &Path, worktrees_dir: &Path, branch: &str) -> Result<Path
         bail!("couldn't make a worktree for {branch}: {e}");
     }
     Ok(dir)
+}
+
+/// Removes a finished worktree, but only when nothing can be lost: it's still on
+/// `branch`, it has no uncommitted or untracked files, and the branch is merged
+/// into what the project has checked out. The branch itself stays. Returns
+/// whether it was removed.
+pub fn remove_if_merged(project: &Path, dir: &Path, branch: &str) -> Result<bool> {
+    if !dir.join(".git").exists() || git(dir, &["branch", "--show-current"])? != branch {
+        return Ok(false);
+    }
+    if !git(dir, &["status", "--porcelain"])?.is_empty() {
+        return Ok(false);
+    }
+    if git(project, &["merge-base", "--is-ancestor", branch, "HEAD"]).is_err() {
+        return Ok(false);
+    }
+    git(project, &["worktree", "remove", &dir.display().to_string()])?;
+    Ok(true)
 }
 
 #[cfg(test)]
@@ -115,6 +146,67 @@ pub mod tests {
         assert_eq!(ensure(&project, trees.path(), "LIN-92/totals").unwrap(), a);
         assert_eq!(common_dir(&a), common_dir(&project));
         assert_eq!(ensure(&project, trees.path(), " ").unwrap(), project);
+    }
+
+    #[test]
+    fn branches_with_the_same_slug_get_their_own_folders() {
+        let repo = repo();
+        let trees = tempfile::tempdir().unwrap();
+        let a = ensure(repo.path(), trees.path(), "feature/foo").unwrap();
+        let b = ensure(repo.path(), trees.path(), "feature-foo").unwrap();
+        assert_ne!(a, b);
+        assert_eq!(git(&a, &["branch", "--show-current"]).unwrap(), "feature/foo");
+        assert_eq!(git(&b, &["branch", "--show-current"]).unwrap(), "feature-foo");
+        assert_eq!(ensure(repo.path(), trees.path(), "feature-foo").unwrap(), b);
+        assert_eq!(ensure(repo.path(), trees.path(), "feature/foo").unwrap(), a);
+    }
+
+    fn commit_in(dir: &Path, file: &str) {
+        std::fs::write(dir.join(file), "x").unwrap();
+        git(dir, &["add", "."]).unwrap();
+        git(dir, &["commit", "-q", "-m", file]).unwrap();
+    }
+
+    #[test]
+    fn a_merged_clean_worktree_is_removed_but_its_branch_stays() {
+        let repo = repo();
+        let trees = tempfile::tempdir().unwrap();
+        let dir = ensure(repo.path(), trees.path(), "done").unwrap();
+        commit_in(&dir, "a.txt");
+        git(repo.path(), &["merge", "-q", "done"]).unwrap();
+        assert!(remove_if_merged(repo.path(), &dir, "done").unwrap());
+        assert!(!dir.exists());
+        assert!(git(repo.path(), &["show-ref", "--verify", "refs/heads/done"]).is_ok());
+    }
+
+    #[test]
+    fn unmerged_work_keeps_its_worktree() {
+        let repo = repo();
+        let trees = tempfile::tempdir().unwrap();
+        let dir = ensure(repo.path(), trees.path(), "wip").unwrap();
+        commit_in(&dir, "a.txt");
+        assert!(!remove_if_merged(repo.path(), &dir, "wip").unwrap());
+        assert!(dir.join("a.txt").exists());
+    }
+
+    #[test]
+    fn uncommitted_work_keeps_its_worktree_even_when_merged() {
+        let repo = repo();
+        let trees = tempfile::tempdir().unwrap();
+        let dir = ensure(repo.path(), trees.path(), "dirty").unwrap();
+        std::fs::write(dir.join("notes.txt"), "unsaved").unwrap();
+        assert!(!remove_if_merged(repo.path(), &dir, "dirty").unwrap());
+        assert!(dir.join("notes.txt").exists());
+    }
+
+    #[test]
+    fn a_worktree_moved_to_another_branch_is_left_alone() {
+        let repo = repo();
+        let trees = tempfile::tempdir().unwrap();
+        let dir = ensure(repo.path(), trees.path(), "one").unwrap();
+        git(&dir, &["checkout", "-q", "-b", "two"]).unwrap();
+        assert!(!remove_if_merged(repo.path(), &dir, "one").unwrap());
+        assert!(dir.exists());
     }
 
     #[test]

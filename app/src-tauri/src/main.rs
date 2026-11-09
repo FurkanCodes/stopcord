@@ -267,6 +267,16 @@ fn factories(app: State<'_, App>) -> Result<Vec<FactoryInfo>, Failure> {
     Ok(list.into_iter().map(|f| app.info(f)).collect())
 }
 
+/// Factories whose settings can't be read, in words.
+#[tauri::command(async)]
+fn broken_factories(app: State<'_, App>) -> Vec<String> {
+    app.store
+        .broken()
+        .into_iter()
+        .map(|(id, problem)| format!("The factory {id} can't be read, so it's switched off: {problem}"))
+        .collect()
+}
+
 #[tauri::command(async)]
 fn create_factory(
     app: State<'_, App>,
@@ -681,6 +691,7 @@ fn main() {
             }
         })
         .invoke_handler(tauri::generate_handler![
+            broken_factories,
             leave_key::in_terminal,
             daemon,
             view,
