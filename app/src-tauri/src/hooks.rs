@@ -144,7 +144,9 @@ pub fn install(factory: &Factory, program: &Path, home: &Path) -> Vec<String> {
         let taken = exists
             && ours(&path)
             && owner(&path).is_some_and(|id| {
-                id != factory.id && home.join("factories").join(&id).join("factory.json").is_file()
+                id != factory.id
+                    && (home.join("factories").join(&id).join("definition/factory.yaml").is_file()
+                        || home.join("factories").join(&id).join("factory.json").is_file())
             });
         if needs(on) {
             if taken {

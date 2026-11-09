@@ -1,7 +1,7 @@
 //! Work items: one ticket's journey through a factory, saved at every step.
 //!
 //! A ticket goes queued → starting → running → ended, and each step is written
-//! to `factory.json` before anything happens because of it. So a crash, a quit
+//! to `state/work.json` before anything happens because of it. So a crash, a quit
 //! or a reboot can't lose one, and one can't be started twice. This module is
 //! only the bookkeeping; the engine does the starting.
 
@@ -86,10 +86,16 @@ pub fn ticket_alert(key: &str) -> String {
 
 /// Files from before work items keep their tickets.
 pub fn migrate(f: &mut Factory) {
+    let mut used = next_id(f);
+    for w in f.work.iter_mut().filter(|w| w.id.is_empty()) {
+        w.id = format!("w_{used:04}");
+        used += 1;
+    }
     if !f.work.is_empty() {
         return;
     }
-    for (key, terminal) in &f.running {
+    let running: Vec<(String, String)> = f.running.iter().map(|(k, t)| (k.clone(), t.clone())).collect();
+    for (key, terminal) in &running {
         f.work.push(WorkItem {
             ticket: Ticket {
                 key: key.clone(),
@@ -98,16 +104,32 @@ pub fn migrate(f: &mut Factory) {
             stage: Stage::Running,
             branch: branch_for(key),
             terminal: Some(terminal.clone()),
+            id: new_id(f),
             ..WorkItem::default()
         });
     }
-    for ticket in &f.queue {
-        f.work.push(queued(ticket.clone()));
+    for ticket in f.queue.clone() {
+        let item = queued(ticket, new_id(f));
+        f.work.push(item);
     }
 }
 
-fn queued(ticket: Ticket) -> WorkItem {
+/// The lowest number not used by a work item, counting up from the highest one in use.
+fn next_id(f: &Factory) -> u32 {
+    f.work
+        .iter()
+        .filter_map(|w| w.id.strip_prefix("w_")?.parse::<u32>().ok())
+        .max()
+        .map_or(1, |n| n + 1)
+}
+
+fn new_id(f: &Factory) -> String {
+    format!("w_{:04}", next_id(f))
+}
+
+fn queued(ticket: Ticket, id: String) -> WorkItem {
     WorkItem {
+        id,
         branch: branch_for(&ticket.key),
         ticket,
         ..WorkItem::default()
@@ -145,7 +167,8 @@ pub fn feed(f: &mut Factory, tickets: Vec<Ticket>) -> usize {
             None => {}
         }
         clear(f, &ticket_alert(&ticket.key));
-        f.work.push(queued(ticket));
+        let item = queued(ticket, new_id(f));
+        f.work.push(item);
         added += 1;
     }
     added

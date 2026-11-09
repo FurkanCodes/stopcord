@@ -376,7 +376,7 @@ impl Engine {
             for f in self.store.list().unwrap_or_default() {
                 st.runs_seen
                     .insert(f.id.clone(), file_len(&self.store.runs_file(&f.id)));
-                if let Some(t) = mtime(&self.store.dir(&f.id).join("factory.json")) {
+                if let Some(t) = self.store.stamp(&f.id) {
                     st.factory_mtime.insert(f.id.clone(), t);
                 }
                 st.knowledge_differs
@@ -974,8 +974,7 @@ impl Engine {
 
     fn watch_files(self: &Arc<Self>, f: &Factory) {
         // Factory settings changed on disk.
-        let file = self.store.dir(&f.id).join("factory.json");
-        if let Some(t) = mtime(&file) {
+        if let Some(t) = self.store.stamp(&f.id) {
             let changed = self
                 .state
                 .lock()
@@ -1211,10 +1210,6 @@ fn file_len(path: &Path) -> u64 {
     std::fs::metadata(path).map(|m| m.len()).unwrap_or(0)
 }
 
-fn mtime(path: &Path) -> Option<SystemTime> {
-    std::fs::metadata(path).and_then(|m| m.modified()).ok()
-}
-
 /// True when the knowledge base differs from its last approved copy.
 pub fn knowledge_differs(store: &Store, id: &str) -> bool {
     match (
@@ -1427,7 +1422,8 @@ mod tests {
     fn knowledge_changes_are_noticed() {
         let home = tempfile::tempdir().unwrap();
         let store = Store::new(home.path().to_path_buf());
-        std::fs::create_dir_all(store.dir("f")).unwrap();
+        std::fs::create_dir_all(store.definition_dir("f")).unwrap();
+        std::fs::create_dir_all(store.state_dir("f")).unwrap();
         assert!(!knowledge_differs(&store, "f"));
         std::fs::write(store.knowledge_file("f"), "a").unwrap();
         std::fs::write(store.approved_knowledge_file("f"), "a").unwrap();

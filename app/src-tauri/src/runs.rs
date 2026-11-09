@@ -1,4 +1,4 @@
-//! The run log: what a factory's parts did, one JSON object per line in `runs.jsonl`.
+//! The run log: what a factory's parts did, one JSON object per line in `state/events.jsonl`.
 
 use std::io::Write;
 
@@ -27,6 +27,12 @@ pub struct Run {
     /// The daemon terminal it ran for.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub terminal: Option<String>,
+    /// The work item it was for.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub work: Option<String>,
+    /// Who caused it: "engine", "person" or "agent".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub by: Option<String>,
     /// The end of the output.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub detail: Option<String>,
@@ -51,6 +57,16 @@ impl Run {
 
     pub fn ok(mut self, ok: bool) -> Run {
         self.ok = Some(ok);
+        self
+    }
+
+    pub fn work(mut self, id: &str) -> Run {
+        self.work = Some(id.into());
+        self
+    }
+
+    pub fn by(mut self, who: &str) -> Run {
+        self.by = Some(who.into());
         self
     }
 

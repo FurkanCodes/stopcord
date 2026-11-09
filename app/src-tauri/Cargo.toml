@@ -15,6 +15,7 @@ base64.workspace = true
 libc.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+serde_yaml_ng = "0.10"
 sawtooth-daemon = { path = "../../crates/daemon" }
 tauri = { version = "2", features = [] }
 tauri-plugin-dialog = "2"

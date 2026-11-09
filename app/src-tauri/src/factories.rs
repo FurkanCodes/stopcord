@@ -1,9 +1,11 @@
 //! Factories: a project folder and the parts that run it.
 //!
-//! Each factory has its own folder, `~/.sawtooth/factories/<id>/`, holding
-//! `factory.json`, the knowledge base (`knowledge.md`) and the run log
-//! (`runs.jsonl`). Nothing is written into the project itself except the links
-//! that let harnesses read the knowledge base, and the git hooks that run checks.
+//! Each factory has its own folder, `~/.sawtooth/factories/<id>/`. `definition/`
+//! is what people edit, under git (see `definition.rs`). `state/` belongs to the
+//! engine: `work.json` and the run log, `events.jsonl`. Keeping them apart means a
+//! save from the window can't overwrite what the engine just did. Nothing is
+//! written into the project itself except the links that let harnesses read the
+//! knowledge base, and the git hooks that run checks.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -12,7 +14,7 @@ use std::sync::Mutex;
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 
-use crate::work;
+use crate::{definition, work};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -90,6 +92,127 @@ pub struct Part {
     pub at_once: u32,
 }
 
+/// How much an agent is confined.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Level {
+    /// Its own folder and branch, and nothing else.
+    #[default]
+    Worktree,
+    /// An OS sandbox around the terminal, with web traffic through a filter.
+    Contained,
+    /// A Linux virtual machine.
+    Vm,
+}
+
+fn no_text(s: &str) -> bool {
+    s.is_empty()
+}
+
+fn none<T>(v: &[T]) -> bool {
+    v.is_empty()
+}
+
+fn zero(v: &u32) -> bool {
+    *v == 0
+}
+
+/// `runners/<name>.yaml`: how an agent is confined.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default, deny_unknown_fields)]
+pub struct Runner {
+    #[serde(skip_serializing_if = "no_text")]
+    pub id: String,
+    #[serde(skip_serializing_if = "no_text")]
+    pub description: String,
+    pub level: Level,
+    /// Domains it may reach, on top of what its harness needs.
+    #[serde(skip_serializing_if = "none")]
+    pub network_allow: Vec<String>,
+    /// Extra folders it may write.
+    #[serde(skip_serializing_if = "none")]
+    pub write: Vec<String>,
+    /// Extra paths it may not read.
+    #[serde(skip_serializing_if = "none")]
+    pub deny_read: Vec<String>,
+    /// VM level: the command that runs a command inside the VM. `{dir}` is the worktree and `{cmd}` the command.
+    #[serde(skip_serializing_if = "no_text")]
+    pub vm_command: String,
+    /// Commands run in the worktree before the agent starts.
+    #[serde(skip_serializing_if = "none")]
+    pub setup_commands: Vec<String>,
+}
+
+/// `agents/<name>/agent.md`: a role and its prompt.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct Agent {
+    pub id: String,
+    pub description: String,
+    /// The command that starts it. Empty means the factory's default.
+    pub harness: String,
+    /// The runner it uses. Empty means the factory's default.
+    pub runner: String,
+    pub prompt: String,
+}
+
+/// `SKILL.md`: instructions an agent reads when it needs them.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct Skill {
+    pub id: String,
+    /// The agent it belongs to. Empty means every agent.
+    pub agent: String,
+    pub description: String,
+    pub body: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum StageKind {
+    #[default]
+    Agent,
+    Gate,
+    Human,
+}
+
+/// One stage of a factory's line.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default, deny_unknown_fields)]
+pub struct LineStage {
+    pub id: String,
+    pub kind: StageKind,
+    /// Agent stages: which agent does it.
+    #[serde(skip_serializing_if = "no_text")]
+    pub agent: String,
+    /// Gate stages: the checks that have to pass.
+    #[serde(skip_serializing_if = "none")]
+    pub checks: Vec<String>,
+    /// Gate stages: test files put back from the base branch before the checks run.
+    #[serde(skip_serializing_if = "none")]
+    pub protect: Vec<String>,
+    /// The next stage. Empty means this is the end of the line.
+    #[serde(skip_serializing_if = "no_text")]
+    pub then: String,
+    /// Where work goes when this stage fails or is sent back.
+    #[serde(skip_serializing_if = "no_text")]
+    pub on_fail: String,
+    #[serde(skip_serializing_if = "zero")]
+    pub max_loops: u32,
+}
+
+/// `agentDefaults` in `factory.yaml`.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default, deny_unknown_fields)]
+pub struct Defaults {
+    #[serde(skip_serializing_if = "no_text")]
+    pub harness: String,
+    #[serde(skip_serializing_if = "no_text")]
+    pub runner: String,
+    #[serde(skip_serializing_if = "zero")]
+    pub at_once: u32,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct Pos {
     pub x: f64,
@@ -121,6 +244,8 @@ pub enum Stage {
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct WorkItem {
+    /// Stays with it from intake to the end, across every terminal and run.
+    pub id: String,
     pub ticket: Ticket,
     pub stage: Stage,
     pub branch: String,
@@ -157,6 +282,12 @@ pub struct Factory {
     /// The project folder, absolute and without symlinks.
     pub path: String,
     pub parts: Vec<Part>,
+    pub agents: Vec<Agent>,
+    pub skills: Vec<Skill>,
+    pub runners: Vec<Runner>,
+    /// The stages work moves through. Empty means no line: a factory works as a set of parts.
+    pub line: Vec<LineStage>,
+    pub defaults: Defaults,
     /// Where parts were dragged to on the canvas, by node id. Others sit where the layout puts them.
     pub layout: BTreeMap<String, Pos>,
     /// Every ticket fed to this factory and where it stands. The engine owns this.
@@ -203,6 +334,28 @@ pub struct Store {
     home: PathBuf,
     /// Held across every read-change-write, so the window and the engine never lose each other's changes.
     lock: Mutex<()>,
+    /// Held while an old `factory.json` becomes a definition folder.
+    upgrading: Mutex<()>,
+}
+
+/// What the engine owns, in `state/work.json`.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+struct State {
+    work: Vec<WorkItem>,
+    alerts: Vec<Alert>,
+    fired: BTreeMap<String, u64>,
+    layout: BTreeMap<String, Pos>,
+}
+
+fn write_atomic(file: &Path, text: &str) -> Result<()> {
+    if let Some(parent) = file.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let tmp = file.with_extension("tmp-write");
+    std::fs::write(&tmp, text)?;
+    std::fs::rename(&tmp, file)?;
+    Ok(())
 }
 
 impl Store {
@@ -211,6 +364,7 @@ impl Store {
         Store {
             home,
             lock: Mutex::new(()),
+            upgrading: Mutex::new(()),
         }
     }
 
@@ -222,17 +376,45 @@ impl Store {
         self.home.join("factories").join(id)
     }
 
+    /// What people edit.
+    pub fn definition_dir(&self, id: &str) -> PathBuf {
+        self.dir(id).join("definition")
+    }
+
+    /// What only the engine writes.
+    pub fn state_dir(&self, id: &str) -> PathBuf {
+        self.dir(id).join("state")
+    }
+
+    fn state_file(&self, id: &str) -> PathBuf {
+        self.state_dir(id).join("work.json")
+    }
+
+    fn legacy_file(&self, id: &str) -> PathBuf {
+        self.dir(id).join("factory.json")
+    }
+
+    fn is_factory(&self, id: &str) -> bool {
+        self.definition_dir(id).join("factory.yaml").is_file() || self.legacy_file(id).is_file()
+    }
+
+    /// Newest change to a factory's definition or state, so the window hears about hand edits too.
+    pub fn stamp(&self, id: &str) -> Option<std::time::SystemTime> {
+        let state = std::fs::metadata(self.state_file(id)).and_then(|m| m.modified()).ok();
+        definition::newest(&self.definition_dir(id)).max(state)
+    }
+
     pub fn knowledge_file(&self, id: &str) -> PathBuf {
-        self.dir(id).join("knowledge.md")
+        self.definition_dir(id).join("knowledge.md")
     }
 
     /// The knowledge base as last approved. It differs from the file when an agent changed it.
     pub fn approved_knowledge_file(&self, id: &str) -> PathBuf {
-        self.dir(id).join("knowledge.approved.md")
+        self.state_dir(id).join("knowledge.approved.md")
     }
 
     pub fn runs_file(&self, id: &str) -> PathBuf {
-        self.dir(id).join("runs.jsonl")
+        self.state_dir(id).join("events.jsonl")
     }
 
     /// Where the factory's terminals get their worktrees.
@@ -247,7 +429,7 @@ impl Store {
         };
         let mut all: Vec<(String, String)> = entries
             .flatten()
-            .filter(|e| e.path().join("factory.json").is_file())
+            .filter(|e| self.is_factory(&e.file_name().to_string_lossy()))
             .filter_map(|e| {
                 let id = e.file_name().to_string_lossy().into_owned();
                 let problem = self.get(&id).err()?;
@@ -269,7 +451,7 @@ impl Store {
         let mut all = Vec::new();
         for entry in entries.flatten() {
             let id = entry.file_name().to_string_lossy().into_owned();
-            if entry.path().join("factory.json").is_file()
+            if self.is_factory(&id)
                 && let Ok(factory) = self.get(&id)
             {
                 all.push(factory);
@@ -280,15 +462,65 @@ impl Store {
     }
 
     pub fn get(&self, id: &str) -> Result<Factory> {
-        let file = self.dir(id).join("factory.json");
-        let text = std::fs::read_to_string(&file)
-            .with_context(|| format!("there is no factory {id:?}"))?;
-        let mut factory: Factory = serde_json::from_str(&text)
-            .with_context(|| format!("{} isn't valid", file.display()))?;
+        if !self.is_factory(id) {
+            bail!("there is no factory {id:?}");
+        }
+        self.upgrade(id)?;
+        let mut factory = definition::load(&self.definition_dir(id))?;
         factory.id = id.to_string();
-        work::migrate(&mut factory);
+        let file = self.state_file(id);
+        match std::fs::read_to_string(&file) {
+            Ok(text) => {
+                let state: State = serde_json::from_str(&text)
+                    .with_context(|| format!("{} isn't valid", file.display()))?;
+                factory.work = state.work;
+                factory.alerts = state.alerts;
+                factory.fired = state.fired;
+                factory.layout = state.layout;
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(e).with_context(|| format!("couldn't read {}", file.display())),
+        }
         work::refresh_view(&mut factory);
         Ok(factory)
+    }
+
+    /// Turns an old `factory.json` into a definition folder and a state file, once.
+    /// The old file is renamed last, so an interrupted upgrade simply runs again.
+    fn upgrade(&self, id: &str) -> Result<()> {
+        let old = self.legacy_file(id);
+        if !old.is_file() {
+            return Ok(());
+        }
+        let _guard = self.upgrading.lock().unwrap();
+        if !old.is_file() {
+            return Ok(());
+        }
+        let text = std::fs::read_to_string(&old).with_context(|| format!("couldn't read {}", old.display()))?;
+        let mut factory: Factory =
+            serde_json::from_str(&text).with_context(|| format!("{} isn't valid", old.display()))?;
+        factory.id = id.to_string();
+        work::migrate(&mut factory);
+        let (dir, state) = (self.dir(id), self.state_dir(id));
+        std::fs::create_dir_all(&state)?;
+        std::fs::create_dir_all(self.definition_dir(id))?;
+        for (from, to) in [
+            (dir.join("knowledge.approved.md"), self.approved_knowledge_file(id)),
+            (dir.join("runs.jsonl"), self.runs_file(id)),
+        ] {
+            if from.is_file() && !to.exists() {
+                std::fs::rename(&from, &to)?;
+            }
+        }
+        // Worktrees link to the old path, so a link stays there.
+        let (kb_old, kb_new) = (dir.join("knowledge.md"), self.knowledge_file(id));
+        if kb_old.is_file() && !kb_old.is_symlink() && !kb_new.exists() {
+            std::fs::rename(&kb_old, &kb_new)?;
+            std::os::unix::fs::symlink(&kb_new, &kb_old)?;
+        }
+        self.write_files(&factory, "Upgrade from factory.json")?;
+        std::fs::rename(&old, dir.join("factory.json.upgraded"))?;
+        Ok(())
     }
 
     /// Makes a new factory for a project folder. A folder can be one factory only.
@@ -328,7 +560,7 @@ impl Store {
             ..Factory::default()
         };
         std::fs::create_dir_all(self.dir(&factory.id))?;
-        self.write(&factory)?;
+        self.write_files(&factory, "Create the factory")?;
         Ok(factory)
     }
 
@@ -343,7 +575,7 @@ impl Store {
         next.alerts = current.alerts;
         next.queue = current.queue;
         next.running = current.running;
-        self.write(&next)?;
+        self.write_files(&next, "Change the factory")?;
         Ok(next)
     }
 
@@ -355,7 +587,7 @@ impl Store {
         let out = change(&mut factory);
         work::refresh_view(&mut factory);
         if factory != before {
-            self.write(&factory)?;
+            self.write_files(&factory, "Change the factory")?;
         }
         Ok(out)
     }
@@ -378,13 +610,23 @@ impl Store {
         Ok(to)
     }
 
-    fn write(&self, factory: &Factory) -> Result<()> {
-        let dir = self.dir(&factory.id);
-        std::fs::create_dir_all(&dir)?;
-        let file = dir.join("factory.json");
-        let tmp = dir.join("factory.json.tmp");
-        std::fs::write(&tmp, serde_json::to_string_pretty(factory)?)?;
-        std::fs::rename(&tmp, &file)?;
+    /// Writes what changed. The state goes first, so a definition is never newer than the work it describes.
+    fn write_files(&self, factory: &Factory, message: &str) -> Result<()> {
+        let state = State {
+            work: factory.work.clone(),
+            alerts: factory.alerts.clone(),
+            fired: factory.fired.clone(),
+            layout: factory.layout.clone(),
+        };
+        let file = self.state_file(&factory.id);
+        let text = serde_json::to_string_pretty(&state)?;
+        if std::fs::read_to_string(&file).ok().as_deref() != Some(text.as_str()) {
+            write_atomic(&file, &text)?;
+        }
+        let dir = self.definition_dir(&factory.id);
+        if definition::save(&dir, factory)? {
+            definition::commit(&dir, message);
+        }
         Ok(())
     }
 }
@@ -444,7 +686,7 @@ mod tests {
         assert_eq!(store.get("zebra").unwrap().parts.len(), 2);
 
         let moved = store.remove("zebra").unwrap();
-        assert!(moved.join("factory.json").is_file());
+        assert!(moved.join("definition/factory.yaml").is_file());
         assert_eq!(store.list().unwrap().len(), 1);
     }
 
@@ -455,7 +697,7 @@ mod tests {
         let (a, b) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
         store.create(a.path(), "good", vec![]).unwrap();
         let bad = store.create(b.path(), "bad", vec![]).unwrap();
-        std::fs::write(store.dir(&bad.id).join("factory.json"), "{ oops").unwrap();
+        std::fs::write(store.definition_dir(&bad.id).join("factory.yaml"), "{ oops").unwrap();
 
         let names: Vec<_> = store.list().unwrap().into_iter().map(|f| f.name).collect();
         assert_eq!(names, ["good"]);
@@ -466,17 +708,157 @@ mod tests {
     }
 
     #[test]
-    fn a_change_that_changes_nothing_doesnt_touch_the_file() {
+    fn a_change_that_changes_nothing_doesnt_touch_the_files() {
         let home = tempfile::tempdir().unwrap();
         let store = Store::new(home.path().to_path_buf());
         let work = tempfile::tempdir().unwrap();
         let f = store.create(work.path(), "x", vec![]).unwrap();
-        let file = store.dir(&f.id).join("factory.json");
+        let file = store.state_dir(&f.id).join("work.json");
         let mut marked = std::fs::read_to_string(&file).unwrap();
         marked.push_str("\n\n");
         std::fs::write(&file, &marked).unwrap();
         store.update(&f.id, |_| ()).unwrap();
         assert_eq!(std::fs::read_to_string(&file).unwrap(), marked);
+    }
+
+    fn legacy(store: &Store, project: &Path) -> (String, Factory) {
+        let id = "old".to_string();
+        let f = Factory {
+            id: id.clone(),
+            name: "Old one".into(),
+            path: project.display().to_string(),
+            parts: vec![
+                part(Kind::Knowledge, "Knowledge base"),
+                Part {
+                    command: "npm test".into(),
+                    ..part(Kind::Check, "Tests")
+                },
+                Part {
+                    prompt: "Tidy up.".into(),
+                    when: When::Schedule,
+                    schedule: "every day 09:00".into(),
+                    ..part(Kind::Trigger, "Tidy")
+                },
+            ],
+            fired: BTreeMap::from([("tidy".to_string(), 77)]),
+            work: vec![WorkItem {
+                ticket: Ticket {
+                    key: "LIN-1".into(),
+                    ..Ticket::default()
+                },
+                stage: Stage::Running,
+                terminal: Some("t4".into()),
+                branch: "lin-1".into(),
+                ..WorkItem::default()
+            }],
+            alerts: vec![Alert {
+                key: "source".into(),
+                at: 5,
+                text: "look".into(),
+                terminal: None,
+            }],
+            layout: BTreeMap::from([("n".to_string(), Pos { x: 1.0, y: 2.0 })]),
+            ..Factory::default()
+        };
+        let dir = store.dir(&id);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("factory.json"), serde_json::to_string(&f).unwrap()).unwrap();
+        std::fs::write(dir.join("knowledge.md"), "what we know").unwrap();
+        std::fs::write(dir.join("knowledge.approved.md"), "what we approved").unwrap();
+        std::fs::write(dir.join("runs.jsonl"), "{}\n").unwrap();
+        (id, f)
+    }
+
+    #[test]
+    fn an_old_factory_upgrades_with_nothing_lost() {
+        let home = tempfile::tempdir().unwrap();
+        let project = tempfile::tempdir().unwrap();
+        let store = Store::new(home.path().to_path_buf());
+        let (id, old) = legacy(&store, project.path());
+
+        let new = store.get(&id).unwrap();
+        assert_eq!(new.name, old.name);
+        assert_eq!(new.path, old.path);
+        assert_eq!(new.parts.len(), 3);
+        assert_eq!(new.work.len(), 1);
+        assert!(new.work[0].id.starts_with("w_"), "{:?}", new.work[0].id);
+        assert_eq!(new.work[0].terminal.as_deref(), Some("t4"));
+        assert_eq!(new.fired, old.fired);
+        assert_eq!(new.alerts, old.alerts);
+        assert_eq!(new.layout, old.layout);
+        assert_eq!(new.running.get("LIN-1").map(String::as_str), Some("t4"));
+
+        let dir = store.dir(&id);
+        assert_eq!(std::fs::read_to_string(store.knowledge_file(&id)).unwrap(), "what we know");
+        assert_eq!(std::fs::read_to_string(store.approved_knowledge_file(&id)).unwrap(), "what we approved");
+        assert_eq!(std::fs::read_to_string(store.runs_file(&id)).unwrap(), "{}\n");
+        // Worktrees made before the upgrade link to the old path.
+        assert_eq!(std::fs::read_to_string(dir.join("knowledge.md")).unwrap(), "what we know");
+        assert!(dir.join("factory.json.upgraded").is_file());
+        assert!(!dir.join("factory.json").exists());
+        // And it reads the same the second time.
+        assert_eq!(store.get(&id).unwrap().work, new.work);
+    }
+
+    #[test]
+    fn an_old_factory_that_cant_be_read_is_reported_and_left_alone() {
+        let home = tempfile::tempdir().unwrap();
+        let store = Store::new(home.path().to_path_buf());
+        std::fs::create_dir_all(store.dir("bad")).unwrap();
+        std::fs::write(store.dir("bad").join("factory.json"), "{ oops").unwrap();
+        assert_eq!(store.broken().len(), 1);
+        assert!(store.dir("bad").join("factory.json").is_file());
+        assert!(store.list().unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_change_to_the_definition_is_committed_and_engine_changes_are_not() {
+        let home = tempfile::tempdir().unwrap();
+        let store = Store::new(home.path().to_path_buf());
+        let project = tempfile::tempdir().unwrap();
+        let f = store.create(project.path(), "x", vec![]).unwrap();
+        let log = |store: &Store| {
+            let out = std::process::Command::new("git")
+                .arg("-C")
+                .arg(store.definition_dir("x"))
+                .args(["log", "--oneline"])
+                .output()
+                .unwrap();
+            String::from_utf8_lossy(&out.stdout).lines().count()
+        };
+        assert_eq!(log(&store), 1);
+        store
+            .update(&f.id, |fa| {
+                work::feed(
+                    fa,
+                    vec![Ticket {
+                        key: "A".into(),
+                        ..Ticket::default()
+                    }],
+                )
+            })
+            .unwrap();
+        assert_eq!(log(&store), 1);
+        let mut edited = store.get(&f.id).unwrap();
+        edited.parts.push(part(Kind::Check, "Tests"));
+        store.save(&edited).unwrap();
+        assert_eq!(log(&store), 2);
+    }
+
+    #[test]
+    fn a_save_with_a_bad_line_is_refused_and_changes_nothing() {
+        let home = tempfile::tempdir().unwrap();
+        let store = Store::new(home.path().to_path_buf());
+        let project = tempfile::tempdir().unwrap();
+        let f = store.create(project.path(), "x", vec![]).unwrap();
+        let mut edited = f.clone();
+        edited.line.push(LineStage {
+            id: "build".into(),
+            agent: "ghost".into(),
+            ..LineStage::default()
+        });
+        assert!(store.save(&edited).is_err());
+        assert!(store.get(&f.id).unwrap().line.is_empty());
     }
 
     #[test]
