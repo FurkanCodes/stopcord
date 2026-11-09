@@ -55,6 +55,7 @@ export function TerminalPane({ id, label, focusKey = 0, onLeave }: TerminalPaneP
       cursorBlink: false,
       macOptionIsMeta: true,
       scrollback: 5000,
+      screenReaderMode: true,
       theme,
     });
     const fit = new FitAddon();

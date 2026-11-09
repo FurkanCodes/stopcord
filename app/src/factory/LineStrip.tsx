@@ -12,14 +12,14 @@ export function atStage(factory: Factory, stage: string): WorkItem[] {
 export function LineStrip({ factory, onPick, selected, onSelect }: { factory: Factory; onPick?: (key: string) => void; selected?: number; onSelect?: (index: number) => void }) {
   if (factory.line.length === 0) return <Empty>this factory has no line. add one in setup</Empty>;
   return (
-    <ol aria-label="The line" style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'stretch', gap: '6px 0', listStyle: 'none', margin: 0, padding: '0 12px' }}>
+    <ol aria-label="The line" style={{ display: 'flex', flexWrap: 'nowrap', overflowX: 'auto', alignItems: 'stretch', gap: '6px 0', listStyle: 'none', margin: 0, padding: '0 12px' }}>
       {factory.line.map((s, i) => {
         const here = atStage(factory, s.id);
         const waiting = here.some((w) => w.waiting !== 'no' && w.waiting !== 'landing');
         const solid = s.kind === 'gate';
         const Box = onSelect ? 'button' : 'div';
         return (
-          <li key={s.id} style={{ display: 'flex', alignItems: 'stretch' }}>
+          <li key={s.id} style={{ display: 'flex', alignItems: 'stretch', flexShrink: 0 }}>
             {i > 0 && (
               <span aria-hidden="true" className="t-dim" style={{ padding: '0 6px', alignSelf: 'center' }}>
                 ──▶

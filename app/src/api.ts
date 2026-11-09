@@ -400,6 +400,7 @@ export const api = {
   acceptProposal: (id: string, key: string, startAt: string) => invoke<Factory>('accept_proposal', { id, key, startAt }),
   rejectProposal: (id: string, key: string) => invoke<Factory>('reject_proposal', { id, key }),
   pullSource: (id: string, part: string) => invoke<number>('pull_source', { id, part }),
+  feedTickets: (id: string, tickets: Ticket[], source?: string) => invoke<Factory>('feed_tickets', { id, tickets, source }),
   answerDenied: (id: string, key: string, allow: boolean, always: boolean) => invoke<void>('answer_denied', { id, key, allow, always }),
   sourceTemplates: () => invoke<SourceTemplate[]>('source_templates'),
   machine: () => invoke<Machine>('machine'),

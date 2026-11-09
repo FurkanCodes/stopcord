@@ -24,7 +24,7 @@ import {
 } from '../store';
 import { tilde } from '../text';
 import { Brand, Empty, Glyph, Key, Pane, Screen, Titled } from '../tui/kit';
-import { plain, useKeys } from '../tui/keys';
+import { nothingFocused, plain, useKeys } from '../tui/keys';
 import { diffOf } from './FactoryMap';
 import { FactoryHeader } from './FactoryHeader';
 import { NewTerminal } from './NewTerminal';
@@ -186,16 +186,9 @@ export function Fleet({ route, onSearch, git }: { route: Extract<Route, { screen
         return true;
       }
       case 'Enter':
-        if (document.activeElement instanceof HTMLElement && document.activeElement.dataset.term === undefined && document.activeElement !== document.body) return;
+        if (document.activeElement instanceof HTMLElement && document.activeElement.dataset.term === undefined && !nothingFocused()) return;
         setFocusKey((n) => n + 1);
         return true;
-      case 'n': {
-        const needing = all.filter((t) => t.needs_you);
-        const at = needing.findIndex((t) => t.id === cur?.id);
-        const next = needing[(at + 1) % needing.length];
-        if (next) pick(next);
-        return true;
-      }
       case 'a':
         setFilter('all');
         return true;
@@ -231,6 +224,7 @@ export function Fleet({ route, onSearch, git }: { route: Extract<Route, { screen
   const branch = cur ? (branches[cur.cwd] ?? null) : null;
   const curChanges = cur ? changes[cur.cwd] : undefined;
   const queued = factories.reduce((n, f) => n + f.queue.length, 0);
+  const canAsk = !!cur && !!curFactory?.parts.find((p) => p.kind === 'knowledge')?.readAs[0] && cur.agent !== null && cur.state === 'idle' && !cur.needs_you;
 
   return (
     <Screen
@@ -249,7 +243,7 @@ export function Fleet({ route, onSearch, git }: { route: Extract<Route, { screen
           <>
             <Brand />
             <span style={{ flexGrow: 1 }} />
-            <Key k="/" aria-label="Search factories and terminals" onClick={onSearch}>
+            <Key k="/" aria-label="Search factories, terminals and tickets" onClick={onSearch}>
               search
             </Key>
           </>
@@ -269,10 +263,11 @@ export function Fleet({ route, onSearch, git }: { route: Extract<Route, { screen
         ['j/k', 'move'],
         ['⏎', 'type in the terminal'],
         ...(routeFactory ? ([['+', 'new terminal']] as [string, string][]) : []),
-        ['n', 'next needs you'],
+        ['n', 'next decision'],
         ['a ! w i', 'filter'],
         ['r', 'rename'],
         ['x', 'stop'],
+        ...(canAsk ? ([['f', 'save what it learned']] as [string, string][]) : []),
         ['/', 'search'],
         ['?', 'all keys'],
       ]}
@@ -294,7 +289,7 @@ export function Fleet({ route, onSearch, git }: { route: Extract<Route, { screen
             return (
               <Key key={id} k={k} size="xs" pressed={filter === id} onClick={() => setFilter(id)}>
                 {label}
-                <span className="t-dim" style={{ color: id === 'needs' && n ? 'var(--red-text)' : undefined }}>
+                <span className="t-dim" style={{ color: id === 'needs' && n && filter !== id ? 'var(--red-text)' : undefined }}>
                   {n}
                 </span>
               </Key>
@@ -377,7 +372,7 @@ export function Fleet({ route, onSearch, git }: { route: Extract<Route, { screen
       </Pane>
 
       {draft && routeFactory ? (
-        <Pane as="main" focus scroll title={<Titled strong>{draft.name}</Titled>} right={<span className="t-dim">not started</span>} style={{ flex: '999 1 520px', minHeight: 0, maxHeight: '100%', padding: '18px 16px' }}>
+        <Pane focus scroll title={<Titled strong>{draft.name}</Titled>} right={<span className="t-dim">not started</span>} style={{ flex: '999 1 520px', minHeight: 0, maxHeight: '100%', padding: '18px 16px' }}>
           <div style={{ maxWidth: 640 }}>
             <NewTerminal factory={routeFactory} draft={draft} git={git} onDiscard={() => openFactory(routeFactory.id, 'terminals')} />
           </div>
@@ -395,7 +390,7 @@ export function Fleet({ route, onSearch, git }: { route: Extract<Route, { screen
           typing={typing}
         />
       ) : (
-        <Pane as="main" focus title={<Titled>no terminal</Titled>} style={{ flex: '999 1 520px', padding: '18px 14px', display: 'flex', flexDirection: 'column', gap: 10 }}>
+        <Pane focus title={<Titled>no terminal</Titled>} style={{ flex: '999 1 520px', padding: '18px 14px', display: 'flex', flexDirection: 'column', gap: 10 }}>
           <p className="t-muted">start an agent or a shell. it keeps running when the window closes.</p>
           {routeFactory && (
             <span>
@@ -459,7 +454,6 @@ function Current({
 
   return (
     <Pane
-      as="main"
       focus
       aria-label={t.name}
       title={
@@ -474,7 +468,7 @@ function Current({
             <input
               autoFocus
               aria-label="Terminal name"
-              className="t-bare"
+              className="t-bare" spellCheck={false}
               style={{ width: `${Math.max(12, name.length + 2)}ch`, color: 'var(--ink)' }}
               value={name}
               onChange={(e) => setName(e.currentTarget.value)}
@@ -535,8 +529,8 @@ function Current({
               </label>
               <input
                 id="answer"
-                className="t-field"
-                style={{ flexGrow: 1, borderBottomColor: 'var(--line)' }}
+                className="t-field" spellCheck={false}
+                style={{ flexGrow: 1 }}
                 placeholder="type an answer"
                 value={answer}
                 onChange={(e) => setAnswer(e.currentTarget.value)}
@@ -555,7 +549,7 @@ function Current({
         </label>
         <input
           id="term-input"
-          className="t-bare"
+          className="t-bare" spellCheck={false}
           style={{ flexGrow: 1, height: 26 }}
           placeholder="type a line into this terminal · ⏎ sends it"
           value={line}

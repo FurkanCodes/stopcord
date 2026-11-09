@@ -113,7 +113,7 @@ function PartBody(props: SidePaneProps & { part: Part }) {
 
       <Section title="settings">
         <FieldRow id="part-name" label="name">
-          <input id="part-name" className="t-field" value={part.name} onChange={(e) => update({ name: e.currentTarget.value })} />
+          <input id="part-name" className="t-field" spellCheck={false} value={part.name} onChange={(e) => update({ name: e.currentTarget.value })} />
         </FieldRow>
         <Settings part={part} update={update} />
       </Section>
@@ -164,7 +164,7 @@ function Settings({ part, update }: { part: Part; update: (patch: Partial<Part>)
     case 'folder':
       return (
         <FieldRow id="part-folder" label="folder">
-          <input id="part-folder" className="t-field" value={part.folder} placeholder="specs/" onChange={(e) => update({ folder: e.currentTarget.value })} />
+          <input id="part-folder" className="t-field" spellCheck={false} value={part.folder} placeholder="specs/" onChange={(e) => update({ folder: e.currentTarget.value })} />
         </FieldRow>
       );
     case 'check':
@@ -173,7 +173,7 @@ function Settings({ part, update }: { part: Part; update: (patch: Partial<Part>)
           <FieldRow id="part-command" label="command" top>
             <textarea
               id="part-command"
-              className="t-field"
+              className="t-field" spellCheck={false}
               rows={part.command.length > 60 ? 6 : 2}
               value={part.command}
               placeholder="npm test"
@@ -200,7 +200,7 @@ function Settings({ part, update }: { part: Part; update: (patch: Partial<Part>)
           <FieldRow id="part-command" label="command" top>
             <input
               id="part-command"
-              className="t-field"
+              className="t-field" spellCheck={false}
               value={part.command}
               placeholder="gh issue list --json number,title,body,url"
               onChange={(e) => update({ command: e.currentTarget.value })}
@@ -255,7 +255,7 @@ function TriggerSettings({ part, update }: { part: Part; update: (patch: Partial
       </FieldRow>
       {part.when === 'schedule' && (
         <FieldRow id="part-schedule" label="schedule" top>
-          <input id="part-schedule" className="t-field" value={part.schedule} onChange={(e) => update({ schedule: e.currentTarget.value })} />
+          <input id="part-schedule" className="t-field" spellCheck={false} value={part.schedule} onChange={(e) => update({ schedule: e.currentTarget.value })} />
           <span className="t-dim" style={{ fontSize: 12 }}>
             every day 09:00 · every monday 09:00 · every 30 minutes
           </span>
@@ -272,7 +272,7 @@ function TriggerSettings({ part, update }: { part: Part; update: (patch: Partial
       </FieldRow>
       {runsIn !== 'same' && <HarnessPick id="trigger-harness" label="it runs" value={part.harness} onChange={(harness) => update({ harness })} />}
       <FieldRow id="part-prompt" label="prompt" top>
-        <textarea id="part-prompt" className="t-field" rows={6} value={part.prompt} onChange={(e) => update({ prompt: e.currentTarget.value })} />
+        <textarea id="part-prompt" className="t-field" spellCheck={false} rows={6} value={part.prompt} onChange={(e) => update({ prompt: e.currentTarget.value })} />
       </FieldRow>
     </>
   );
@@ -331,7 +331,7 @@ export function HarnessPick({
       {other && (
         <input
           aria-label="Command"
-          className="t-field"
+          className="t-field" spellCheck={false}
           style={{ marginLeft: '5ch' }}
           value={value}
           placeholder="my-agent --flag"
@@ -363,7 +363,7 @@ function KnowledgeBody({ factory, part }: SidePaneProps & { part: Part }) {
       )}
       <span>
         <button type="button" className="t-solid is-sm" onClick={() => go({ screen: 'factory', id: factory.id, tab: 'knowledge' })}>
-          ⏎ open in knowledge
+          open in knowledge
         </button>
       </span>
     </Section>
@@ -439,7 +439,7 @@ function FolderBody({ factory, part }: SidePaneProps & { part: Part }) {
       )}
       {naming === null ? (
         <span>
-          <Key k="+" size="sm" style={{ marginLeft: -8 }} onClick={() => setNaming('')}>
+          <Key size="sm" style={{ marginLeft: -8 }} onClick={() => setNaming('')}>
             new file
           </Key>
         </span>
@@ -454,7 +454,7 @@ function FolderBody({ factory, part }: SidePaneProps & { part: Part }) {
           <input
             autoFocus
             aria-label="Title of the new file"
-            className="t-field"
+            className="t-field" spellCheck={false}
             style={{ flexGrow: 1 }}
             placeholder="title"
             value={naming}

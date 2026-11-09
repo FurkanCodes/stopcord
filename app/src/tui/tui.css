@@ -13,7 +13,7 @@
   --ink: oklch(0.94 0.004 260);
   --ink-2: oklch(0.75 0.008 260);
   --ink-3: oklch(0.6 0.008 260);
-  --ink-4: oklch(0.45 0.008 260);
+  --ink-4: oklch(0.58 0.008 260);
   --on-ink: oklch(0.15 0.006 260);
   --red: oklch(0.68 0.2 22);
   --red-text: oklch(0.76 0.15 22);
@@ -118,7 +118,7 @@ label {
 
 input::placeholder,
 textarea::placeholder {
-  color: oklch(0.55 0.008 260);
+  color: oklch(0.6 0.008 260);
 }
 
 ::-webkit-scrollbar {
@@ -126,7 +126,7 @@ textarea::placeholder {
   height: 10px;
 }
 ::-webkit-scrollbar-thumb {
-  background: oklch(1 0 0 / 0.12);
+  background: oklch(1 0 0 / 0.3);
   border: 3px solid transparent;
   background-clip: padding-box;
   border-radius: 6px;
@@ -197,6 +197,13 @@ textarea::placeholder {
   min-height: 0;
   display: flex;
   flex-direction: column;
+}
+.t-body:focus {
+  outline: none;
+}
+/* Jumping to a pane leaves room for its title and the sticky index above it. */
+.t-body .t-pane {
+  scroll-margin-top: 48px;
 }
 
 .t-message {
@@ -411,6 +418,10 @@ textarea::placeholder {
   height: 26px;
   padding: 0 8px;
 }
+.t-solid.is-xs {
+  height: 22px;
+  padding: 0 6px;
+}
 .t-solid:hover:not(:disabled) {
   background-color: oklch(0.82 0.004 260);
 }
@@ -444,6 +455,13 @@ textarea::placeholder {
 }
 .t-row:focus-visible {
   outline-offset: -2px;
+}
+.t-row[aria-pressed='true'] .t-dim,
+.t-row[aria-expanded='true'] .t-dim,
+.t-row[aria-selected='true'] .t-dim,
+.t-row[aria-current='true'] .t-dim,
+.t-opt:has(input:checked) .t-dim {
+  color: var(--ink-2);
 }
 
 .t-line:hover {
@@ -483,7 +501,7 @@ textarea::placeholder {
   height: 28px;
   padding: 0 2px;
   border: 0;
-  border-bottom: 1px solid oklch(1 0 0 / 0.2);
+  border-bottom: 1px solid oklch(1 0 0 / 0.4);
   border-radius: 0;
   background: transparent;
   color: var(--ink);
@@ -491,6 +509,14 @@ textarea::placeholder {
 .t-field:focus {
   border-bottom-color: var(--ink);
   outline: none;
+}
+select.t-field {
+  appearance: none;
+  -webkit-appearance: none;
+  padding: 0 18px 0 2px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%23a9adb5' stroke-width='1.2'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 4px center;
 }
 textarea.t-field {
   height: auto;
@@ -506,6 +532,7 @@ textarea.t-field {
 }
 .t-bare:focus {
   outline: none;
+  box-shadow: 0 1px 0 var(--ink);
 }
 
 /* ---- Motion -------------------------------------------------------------- */
@@ -632,7 +659,7 @@ textarea.t-field {
 .t-diff-line > .num {
   padding-right: 12px;
   text-align: right;
-  color: var(--ink-4);
+  color: var(--ink-3);
   user-select: none;
 }
 .t-diff-line > .sign {
@@ -643,6 +670,10 @@ textarea.t-field {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   padding-right: 14px;
+}
+.t-diff-line.is-add > .num,
+.t-diff-line.is-del > .num {
+  color: var(--ink-2);
 }
 .t-diff-line.is-add {
   background: var(--add-bg);
@@ -661,7 +692,7 @@ textarea.t-field {
 /* A line that won't stay, once the change has an answer. */
 .t-diff-line.is-gone {
   background: transparent;
-  opacity: 0.4;
+  opacity: 0.65;
 }
 .t-diff-line.is-gone > .text {
   text-decoration: line-through;

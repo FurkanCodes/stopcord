@@ -24,6 +24,12 @@ export function typing(e: KeyboardEvent): boolean {
   return false;
 }
 
+/** True when nothing in particular has the keyboard: the page, or a screen's body. */
+export function nothingFocused(): boolean {
+  const el = document.activeElement;
+  return !el || el === document.body || el.classList.contains('t-body');
+}
+
 export interface KeyOptions {
   /** Keep listening while an overlay is open: overlays use this for themselves. */
   overlay?: boolean;
@@ -58,6 +64,11 @@ function dispatch(e: KeyboardEvent) {
       e.preventDefault();
       return;
     }
+  }
+  // Nobody wanted esc in a field: it hands the keys back to the screen.
+  if (e.key === 'Escape' && typing(e) && e.target instanceof HTMLElement && !e.target.closest('.xterm')) {
+    e.target.blur();
+    e.preventDefault();
   }
 }
 

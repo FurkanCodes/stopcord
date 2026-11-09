@@ -43,6 +43,7 @@ export interface MapLabel {
   transform: string;
   text: string;
   lit: boolean;
+  quiet?: boolean;
 }
 
 export interface MapTitle {
@@ -307,7 +308,7 @@ export function layoutMap(parts: Part[], rows: number, pos: Record<string, Pos>,
 
   const edges: MapEdge[] = [];
   const labels: MapLabel[] = [];
-  const add = (key: string, c: Conn, on: boolean, o: { label?: string; dash?: boolean; left?: boolean; below?: boolean } = {}) => {
+  const add = (key: string, c: Conn, on: boolean, o: { label?: string; dash?: boolean; left?: boolean; below?: boolean; quiet?: boolean } = {}) => {
     edges.push({ key, d: c.d, arrow: arrow(c), lit: on, dash: !!o.dash });
     if (o.label) {
       labels.push({
@@ -317,6 +318,7 @@ export function layoutMap(parts: Part[], rows: number, pos: Record<string, Pos>,
         transform: c.lab.center ? 'translateX(-50%)' : o.left ? 'translateX(-100%)' : 'none',
         text: o.label,
         lit: on,
+        quiet: !!o.quiet,
       });
     }
   };
@@ -347,7 +349,7 @@ export function layoutMap(parts: Part[], rows: number, pos: Record<string, Pos>,
     add(`fail:${back.part.id}`, route(back.r, sandbox, { sy: y, ey: y }), lit.failed === back.part.id, { label: 'fails go back', dash: true, below: true });
   }
   const logLine = connDownRight(sandbox, log);
-  add('log', crosses(logLine.d, boxes.filter((b) => b !== sandbox && b !== log)) ? route(sandbox, log) : logLine, !!lit.log, { label: '4 logged' });
+  add('log', crosses(logLine.d, boxes.filter((b) => b !== sandbox && b !== log)) ? route(sandbox, log) : logLine, !!lit.log, { label: '4 logged', quiet: true });
   if (knowledge) add('kb:facts', route(sandbox, knowledge.r, { sx: kbcx + 24, ex: kbcx + 24 }), !!lit.kbFacts, { label: '5 new facts' });
   folders.forEach((p, j) =>
     add(

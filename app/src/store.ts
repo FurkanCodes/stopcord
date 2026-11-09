@@ -429,13 +429,15 @@ export function allNeeds(s: Pick<State, 'terminals' | 'factories'>): FleetNeed[]
   return list;
 }
 
-/** Goes to the oldest thing that needs you, other than the work already on screen. */
+/** Goes to the oldest thing that needs you. Pressed again, it moves on past what's on screen. */
 export function openNextNeed(): boolean {
   const needs = allNeeds(state);
   if (needs.length === 0) return false;
   const r = state.route;
-  const here = r.screen === 'factory' && r.tab === 'work' ? r.work : undefined;
-  openNeed(needs.find((n) => !(n.kind === 'work' && r.screen === 'factory' && n.factoryId === r.id && n.work === here)) ?? needs[0]!);
+  const at = needs.findIndex(
+    (n) => r.screen === 'factory' && n.factoryId === r.id && ((n.kind === 'work' && r.tab === 'work' && n.work === r.work) || (n.kind === 'terminal' && r.tab === 'terminals' && n.target === r.terminal)),
+  );
+  openNeed(needs[(at + 1) % needs.length]!);
   return true;
 }
 

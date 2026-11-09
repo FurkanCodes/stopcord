@@ -53,8 +53,9 @@ function groupsOf(f: Factory): Groups {
   };
 }
 
-function hintsFor(w: WorkItem | undefined, sending: boolean): Hint[] {
+function hintsFor(w: WorkItem | undefined, sending: boolean, composing: boolean, canWrite: boolean): Hint[] {
   const around: Hint[] = [['n', 'next decision'], ['1-6', 'sections'], ['esc', 'every factory'], ['?', 'all keys']];
+  if (composing) return [['tab', 'next field'], ['⌘⏎', 'start', false], ['esc', 'cancel', false]];
   if (sending) return [['⏎', 'send back', false], ['esc', 'cancel', false]];
   const open: Record<string, Hint[]> = {
     approve: [['a', 'approve'], ['s', 'send back'], ['D', 'drop']],
@@ -65,7 +66,7 @@ function hintsFor(w: WorkItem | undefined, sending: boolean): Hint[] {
     no: [['D', 'drop']],
   };
   const verbs: Hint[] = !w || w.stage === 'ended' ? [] : w.stage === 'proposed' ? [['a', 'start'], ['space', 'mark'], ['x', 'not this']] : open[w.waiting] ?? [];
-  return [['j/k', 'move'], ...verbs, ...(w && w.stage !== 'proposed' ? ([['t', 'timeline']] as Hint[]) : []), ['p', 'pull sources'], ...around];
+  return [['j/k', 'move'], ...verbs, ...(w && w.stage !== 'proposed' ? ([['t', 'timeline']] as Hint[]) : []), ...(canWrite ? ([['w', 'write a ticket']] as Hint[]) : []), ['p', 'pull sources'], ...around];
 }
 
 /** What's waiting for a person, what's running, and everything needed to decide about one piece of work. */
@@ -80,7 +81,14 @@ export function Work({ factory, runs, terminals, selected }: { factory: Factory;
   const [choice, setChoice] = useState<Record<string, string>>({});
   const [message, setMessage] = useState('');
   const [sending, setSending] = useState(false);
-  const pick = (key: string) => go({ screen: 'factory', id: factory.id, tab: 'work', work: key });
+  const [composing, setComposing] = useState(false);
+  const canWrite = factory.line.length > 0;
+  const pick = (key: string) => {
+    setComposing(false);
+    go({ screen: 'factory', id: factory.id, tab: 'work', work: key });
+  };
+
+  useEffect(() => setComposing(false), [selected]);
 
   useEffect(() => {
     document.querySelector('[data-work-row][aria-current="true"]')?.scrollIntoView({ block: 'nearest' });
@@ -125,7 +133,8 @@ export function Work({ factory, runs, terminals, selected }: { factory: Factory;
   }
 
   useKeys((e) => {
-    if (!plain(e)) return;
+    if (!plain(e) || composing) return;
+    if (e.key === 'w' && canWrite) return setComposing(true), true;
     const at = flat.findIndex((w) => w.id === picked?.id);
     if (e.key === 'j' || e.key === 'k') {
       const next = flat[Math.max(0, Math.min(flat.length - 1, at + (e.key === 'j' ? 1 : -1)))];
@@ -169,9 +178,9 @@ export function Work({ factory, runs, terminals, selected }: { factory: Factory;
     <Screen
       header={<FactoryHeader factory={factory} tab="work" />}
       bodyStyle={{ overflow: 'hidden', padding: '10px 8px 8px', display: 'flex', flexDirection: 'column', gap: 10 }}
-      hints={hintsFor(picked, sending)}
+      hints={hintsFor(picked, sending, composing, canWrite)}
       message={message ? <div role="status" className="t-message">{message}</div> : undefined}
-      status={{ mode: 'WORK', path: factory.name, info: `${groups.line.length} on the line · ${groups.incoming.length} waiting to start` }}
+      status={{ mode: 'WORK', path: factory.name, info: `${groups.needs.length + groups.line.length} on the line · ${groups.incoming.length} to start` }}
     >
       <h1 className="sr-only">Work</h1>
       <LineBar factory={factory} />
@@ -181,8 +190,12 @@ export function Work({ factory, runs, terminals, selected }: { factory: Factory;
       ))}
 
       <div style={{ flex: '1 1 0', minHeight: 0, display: 'grid', gridTemplateColumns: 'minmax(260px, 1fr) minmax(0, 2.4fr)', gap: 10 }}>
-        <Pane title="work" scroll style={{ padding: '10px 0 8px', height: '100%', minHeight: 0 }}>
-          {flat.length === 0 && <Empty>nothing yet. work from your sources lands here. press p to pull now</Empty>}
+        <Pane title="work" right={canWrite ? <Key k="w" size="xs" pressed={composing} onClick={() => setComposing(true)}>write a ticket</Key> : undefined} scroll style={{ padding: '10px 0 8px', height: '100%', minHeight: 0 }}>
+          {flat.length === 0 && (
+            <Empty>
+              {!canWrite ? 'nothing yet. add a line in [6] setup first' : sources.length > 0 ? 'nothing yet. press p to pull your sources, or w to write a ticket' : 'nothing yet. press w to write a ticket, or add a source in [6] setup'}
+            </Empty>
+          )}
           {group('needs you', groups.needs)}
           {group('on the line', groups.line)}
           {group('waiting to start', groups.incoming)}
@@ -193,7 +206,9 @@ export function Work({ factory, runs, terminals, selected }: { factory: Factory;
             </div>
           )}
         </Pane>
-        {picked?.stage === 'proposed' ? (
+        {composing ? (
+          <Compose factory={factory} onCancel={() => setComposing(false)} onStarted={pick} />
+        ) : picked?.stage === 'proposed' ? (
           <Incoming
             key={picked.id}
             factory={factory}
@@ -245,6 +260,101 @@ function SiteRequest({ text, onAnswer }: { text: string; onAnswer: (allow: boole
       <Key size="sm" className="is-action" onClick={() => onAnswer(true, true)}>allow for this factory</Key>
       <Key size="sm" className="is-action" onClick={() => onAnswer(false, false)}>keep blocked</Key>
     </div>
+  );
+}
+
+/** What's half written, by factory. Cancelling doesn't lose it. */
+const written = new Map<string, { title: string; body: string }>();
+
+/** The next free T-n in this factory. */
+function nextKey(f: Factory): string {
+  const taken = f.work.map((w) => /^T-(\d+)$/.exec(w.ticket.key)?.[1]).map(Number).filter(Boolean);
+  return `T-${Math.max(0, ...taken) + 1}`;
+}
+
+/** A ticket written by hand. It's a person asking, so it starts as soon as there's room. */
+function Compose({ factory, onCancel, onStarted }: { factory: Factory; onCancel: () => void; onStarted: (key: string) => void }) {
+  const [draft, setDraft] = useState(written.get(factory.id) ?? { title: '', body: '' });
+  const [problem, setProblem] = useState('');
+  const [busy, setBusy] = useState(false);
+  const titleField = useRef<HTMLInputElement>(null);
+  const key = nextKey(factory);
+  useEffect(() => titleField.current?.focus(), []);
+
+  const change = (patch: Partial<typeof draft>) => {
+    const next = { ...draft, ...patch };
+    written.set(factory.id, next);
+    setDraft(next);
+    setProblem('');
+  };
+
+  async function start() {
+    if (busy) return;
+    if (!draft.title.trim()) {
+      setProblem('a ticket needs a title');
+      titleField.current?.focus();
+      return;
+    }
+    setBusy(true);
+    try {
+      await api.feedTickets(factory.id, [{ key, title: draft.title.trim(), body: draft.body.trim(), url: '' }]);
+      written.delete(factory.id);
+      await refreshFactories();
+      onStarted(key);
+    } catch (e) {
+      setProblem(failureText(e));
+      setBusy(false);
+    }
+  }
+
+  useKeys(
+    (e) => {
+      if (e.key === 'Escape') return onCancel(), true;
+      if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) return void start(), true;
+    },
+    { whileTyping: true, priority: 1 },
+  );
+
+  return (
+    <Pane title={`new ticket · ${key}`} right={<span className="t-muted">written by you</span>} style={{ display: 'flex', flexDirection: 'column', minWidth: 0, minHeight: 0, height: '100%', paddingTop: 10 }}>
+      <div style={{ flex: '1 1 0', minHeight: 0, overflow: 'auto', padding: '4px 12px 12px', display: 'flex', flexDirection: 'column', gap: 10 }}>
+        <input
+          ref={titleField}
+          className="t-field"
+          aria-label="Title"
+          spellCheck={false}
+          placeholder="what needs doing?"
+          value={draft.title}
+          onChange={(e) => change({ title: e.currentTarget.value })}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && !e.metaKey && !e.ctrlKey) {
+              e.preventDefault();
+              e.currentTarget.parentElement?.querySelector('textarea')?.focus();
+            }
+          }}
+        />
+        <textarea
+          className="t-field"
+          aria-label="Details"
+          spellCheck={false}
+          style={{ flex: '1 1 0', minHeight: 120, resize: 'none' }}
+          placeholder="details the agents should know. optional"
+          value={draft.body}
+          onChange={(e) => change({ body: e.currentTarget.value })}
+        />
+      </div>
+      <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8, padding: '8px 12px', minHeight: 42, borderTop: '1px solid var(--line)', background: 'var(--bar)' }}>
+        <button type="button" className="t-solid is-sm" disabled={busy} onClick={() => void start()}>
+          <span style={{ opacity: 0.65 }}>[⌘⏎]</span> {busy ? 'starting…' : 'start'}
+        </button>
+        <Key k="esc" size="sm" className="is-action" onClick={onCancel}>cancel</Key>
+        {problem ? (
+          <span role="alert" className="t-red" style={{ marginLeft: 'auto' }}>{problem}</span>
+        ) : (
+          <span className="t-dim" style={{ marginLeft: 'auto', fontSize: 12 }}>starts at {factory.line[0]?.id} when there's room</span>
+        )}
+      </div>
+    </Pane>
   );
 }
 
@@ -650,7 +760,7 @@ function Detail({ factory, item, runs, terminals, onSending, onSite }: { factory
         ) : !open ? (
           <>
             <span role="status" style={{ color: 'var(--ink)' }}>
-              {item.outcome || 'ended'} {item.endedAt > 0 && <span className="t-dim">· {clock(item.endedAt)}</span>}
+              {item.outcome === 'merged' && evidence?.target ? `merged to ${evidence.target}` : item.outcome || 'ended'} {item.endedAt > 0 && <span className="t-dim">· {clock(item.endedAt)}</span>}
             </span>
             {nextNeed && (
               <button type="button" className="t-solid is-sm" onClick={() => void openNextNeed()}>

@@ -3,7 +3,7 @@ import type { Changes, Factory, Part, Pos, Run, Terminal } from '../api';
 import { askOf } from '../Home';
 import { changeFactory, go, harnessOf, lampOf, loadChanges, stateWords, useStore, type Draft } from '../store';
 import { ago, clock } from '../time';
-import { Glyph, Key, Screen, Titled } from '../tui/kit';
+import { Glyph, Key, Screen, Titled, useArm } from '../tui/kit';
 import { plain, useKeys } from '../tui/keys';
 import { FactoryHeader } from './FactoryHeader';
 import { LineStrip } from './LineStrip';
@@ -181,10 +181,12 @@ export function FactoryMap(props: FactoryMapProps) {
     fn();
   };
 
-  const tidy = () => {
-    changeFactory({ ...factory, layout: {} });
-    onSelect(null);
-  };
+  const arm = useArm();
+  const tidy = () =>
+    arm.press('tidy', () => {
+      changeFactory({ ...factory, layout: {} });
+      onSelect(null);
+    });
 
   useKeys((e) => {
     if (!plain(e)) return;
@@ -293,7 +295,9 @@ export function FactoryMap(props: FactoryMapProps) {
           ? `${working.length} terminals are working`
           : terminals.length
             ? 'no terminal is working right now'
-            : 'no terminals yet · [p] add parts, then a terminal';
+            : factory.line.length
+              ? 'no terminals yet · they start when work does, on [1] work'
+              : 'no terminals yet · [p] add parts, then a terminal';
 
   const lastRun = (part: Part) => runs?.find((r) => r.part === part.id);
   const nodeMeta = (part: Part) => {
@@ -333,7 +337,7 @@ export function FactoryMap(props: FactoryMapProps) {
       ? `terminal › ${selDraft.name} · not started`
       : selected === SANDBOX_ID
         ? `sandbox › ${terminals.length} terminal${terminals.length === 1 ? '' : 's'} · each on its own worktree and branch`
-        : 'click a part to open it · drag to move it';
+        : undefined;
 
   const node = (part: Part, r: Rect) => {
     const picked = selected === part.id;
@@ -408,7 +412,7 @@ export function FactoryMap(props: FactoryMapProps) {
                 parts
               </Key>
               <Key k="r" onClick={tidy}>
-                tidy
+                {arm.armed === 'tidy' ? 'press again: resets the layout' : 'tidy'}
               </Key>
             </>
           }
@@ -430,12 +434,14 @@ export function FactoryMap(props: FactoryMapProps) {
         </div>
         </>
       }
-      hints={[
+      more={[
         ['drag', 'move a part'],
         ['←↑↓→', 'nudge one cell'],
         ['⇧ ←↑↓→', 'four cells'],
-        ['r', 'tidy up'],
+      ]}
+      hints={[
         ['p', 'add parts'],
+        ['r', 'tidy up'],
         ['+', 'new terminal'],
         ['1-6', 'sections'],
         ['space', 'pause the lines'],
@@ -511,7 +517,7 @@ export function FactoryMap(props: FactoryMapProps) {
                   fontSize: 11,
                   lineHeight: '18px',
                   whiteSpace: 'nowrap',
-                  color: l.lit ? 'var(--on-ink)' : 'var(--ink-3)',
+                  color: l.lit ? 'var(--on-ink)' : l.quiet ? 'var(--ink-4)' : 'var(--ink-3)',
                 }}
               >
                 {l.text}
@@ -655,7 +661,7 @@ export function FactoryMap(props: FactoryMapProps) {
               ))}
               {rows === 0 && (
                 <p className="t-dim" style={{ height: ROW_H, display: 'flex', alignItems: 'center', padding: '0 12px' }}>
-                  -- no terminals · [p] add parts → terminal --
+                  {factory.line.length ? '-- no terminals · work starts them, on [1] work --' : '-- no terminals · [p] add parts → terminal --'}
                 </p>
               )}
             </div>

@@ -1,12 +1,34 @@
 // The two overlays any screen can open: / search and ? all keys.
 
 import { useEffect, useRef, useState } from 'react';
-import { factoryOf, harnessOf, lampOf, openFactory, useStore } from '../store';
+import { factoryOf, go, harnessOf, lampOf, openFactory, useStore } from '../store';
 import { currentHints, Glyph, Key, Pane, Titled, type Hint } from './kit';
 import { holdKeys, useKeys } from './keys';
 
-function useHold() {
-  useEffect(() => holdKeys(), []);
+const dialog = () => document.querySelector<HTMLElement>('.t-overlay [role="dialog"]');
+
+/** While an overlay is open the screen's keys stand back, and when it closes focus goes home. */
+function useModal() {
+  useEffect(() => {
+    const back = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const release = holdKeys();
+    return () => {
+      release();
+      if (back?.isConnected) back.focus({ preventScroll: true });
+    };
+  }, []);
+}
+
+/** Keeps tab inside the overlay. */
+function trapTab(e: KeyboardEvent): boolean | void {
+  const box = dialog();
+  if (e.key !== 'Tab' || !box) return;
+  const items = [...box.querySelectorAll<HTMLElement>('input, button:not(:disabled), a[href]')];
+  if (!items.length) return true;
+  const at = items.indexOf(document.activeElement as HTMLElement);
+  if (at >= 0 && at !== (e.shiftKey ? 0 : items.length - 1)) return;
+  items[e.shiftKey ? items.length - 1 : 0]!.focus();
+  return true;
 }
 
 interface Hit {
@@ -18,9 +40,9 @@ interface Hit {
   open: () => void;
 }
 
-/** Find a factory or a terminal by name, and go there. */
+/** Find a factory, a terminal or a ticket by name, and go there. */
 export function Search({ onClose }: { onClose: () => void }) {
-  useHold();
+  useModal();
   const factories = useStore((s) => s.factories);
   const terminals = useStore((s) => s.terminals);
   const [q, setQ] = useState('');
@@ -48,11 +70,26 @@ export function Search({ onClose }: { onClose: () => void }) {
         open: () => openFactory(f?.id ?? '', 'terminals', t.id),
       };
     }),
+    ...factories.flatMap((f) =>
+      f.work.map((w): Hit => ({
+        key: `w:${f.id}:${w.id}`,
+        glyph: w.stage === 'running' && w.waiting !== 'no' && w.waiting !== 'landing' ? 'needs' : undefined,
+        kind: 'ticket',
+        text: `${w.ticket.key} ${w.ticket.title}`,
+        where: f.name,
+        open: () => go({ screen: 'factory', id: f.id, tab: 'work', work: w.ticket.key }),
+      })),
+    ),
   ].filter((h) => !query || `${h.text} ${h.kind} ${h.where}`.toLowerCase().includes(query));
   const pick = Math.min(at, Math.max(0, hits.length - 1));
 
+  useEffect(() => {
+    document.querySelector('.t-overlay li[aria-selected="true"]')?.scrollIntoView({ block: 'nearest' });
+  }, [pick]);
+
   useKeys(
     (e) => {
+      if (trapTab(e)) return true;
       if (e.key === 'Escape') {
         onClose();
         return true;
@@ -65,7 +102,7 @@ export function Search({ onClose }: { onClose: () => void }) {
         setAt(Math.max(pick - 1, 0));
         return true;
       }
-      if (e.key === 'Enter' && hits[pick]) {
+      if (e.key === 'Enter' && e.target === input.current && hits[pick]) {
         hits[pick]!.open();
         onClose();
         return true;
@@ -80,22 +117,23 @@ export function Search({ onClose }: { onClose: () => void }) {
         title={<Titled k="/">search</Titled>}
         right={
           <span style={{ display: 'inline-flex', gap: 8, alignItems: 'center' }}>
-            {hits.length} found
+            <span role="status">{hits.length} found</span>
             <Key k="esc" size="xs" onClick={onClose}>
               close
             </Key>
           </span>
-        } style={{ paddingTop: 14 }} role="dialog" aria-label="Search">
+        } style={{ paddingTop: 14 }} role="dialog" aria-modal="true" aria-label="Search">
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, margin: '0 14px 8px', paddingBottom: 4, borderBottom: '1px solid var(--line)' }}>
           <label htmlFor="search" className="t-dim">
-            /<span className="sr-only">Search factories and terminals</span>
+            /<span className="sr-only">Search factories, terminals and tickets</span>
           </label>
           <input
             ref={input}
             id="search"
             className="t-bare"
+            spellCheck={false}
             style={{ flexGrow: 1, height: 26 }}
-            placeholder="factories and terminals"
+            placeholder="factories, terminals and tickets"
             value={q}
             onChange={(e) => {
               setQ(e.currentTarget.value);
@@ -150,20 +188,25 @@ export function Search({ onClose }: { onClose: () => void }) {
 }
 
 const everywhere: [string, string][] = [
-  ['/', 'search factories and terminals'],
+  ['/', 'search factories, terminals and tickets'],
+  ['n', 'next decision'],
+  ['1-6', 'sections, inside a factory'],
+  ['+', 'new terminal, inside a factory'],
   ['?', 'these keys'],
   ['esc', 'back, or close what is open'],
 ];
 
 /** Every key on this screen, and the ones that work everywhere. */
 export function Help({ onClose }: { onClose: () => void }) {
-  useHold();
+  useModal();
+  useEffect(() => dialog()?.focus(), []);
   useKeys((e) => {
+      if (trapTab(e)) return true;
       if (e.key !== 'Escape' && e.key !== '?') return;
       onClose();
       return true;
     }, { overlay: true, whileTyping: true });
-  const here = currentHints().filter(([k]) => k !== '?');
+  const here = currentHints().filter(([k]) => !['?', '/', 'n', '1-6'].includes(k));
   const row = ([k, words]: Hint) => (
     <li key={k + words} style={{ display: 'flex', gap: 16, padding: '1px 14px' }}>
       <span style={{ width: '12ch', flexShrink: 0, color: 'var(--ink)' }}>{k}</span>
@@ -179,7 +222,7 @@ export function Help({ onClose }: { onClose: () => void }) {
             close
           </Key>
         }
-        scroll style={{ padding: '12px 0 10px' }} role="dialog" aria-label="All keys">
+        scroll style={{ padding: '12px 0 10px' }} role="dialog" aria-modal="true" aria-label="All keys" tabIndex={-1}>
         <h2 className="t-dim" style={{ fontSize: 12, fontWeight: 400, padding: '0 14px 2px' }}>
           ── this screen
         </h2>

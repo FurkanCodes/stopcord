@@ -72,7 +72,7 @@ export function Runs({ factory, runs, terminals }: { factory: Factory; runs: Run
   const nameOf = (r: Run) =>
     terminals.find((t) => t.id === r.terminal)?.name ?? factory.parts.find((p) => p.id === r.part)?.name ?? (r.kind === 'factory' ? 'factory' : r.kind);
   const shown = list.filter(groups[filter]);
-  const keyOf = (r: Run, i: number) => `${r.at}-${i}`;
+  const keyOf = (r: Run) => `${r.at}-${r.kind}-${r.text}`;
   const today = (runs ?? []).filter((r) => new Date(r.at).toDateString() === new Date().toDateString()).length;
 
   return (
@@ -131,8 +131,8 @@ export function Runs({ factory, runs, terminals }: { factory: Factory; runs: Run
                 <span style={{ textAlign: 'right' }}>flag</span>
               </div>
               <ol aria-label="Events">
-                {shown.map((r, i) => {
-                  const key = keyOf(r, i);
+                {shown.map((r) => {
+                  const key = keyOf(r);
                   const isOpen = open === key;
                   const failed = r.ok === false;
                   const flag = r.ok === false ? 'fail' : r.kind === 'check' && r.ok === true ? 'pass' : '';

@@ -17,9 +17,12 @@ export const glyphs: Record<Status, { glyph: string; color: string }> = {
 export function Glyph({ status, style }: { status: Status; style?: CSSProperties }) {
   const g = glyphs[status];
   return (
-    <span aria-hidden="true" data-lamp={status} style={{ width: 10, flexShrink: 0, color: g.color, ...style }}>
-      {g.glyph}
-    </span>
+    <>
+      <span aria-hidden="true" data-lamp={status} style={{ width: 10, flexShrink: 0, color: g.color, ...style }}>
+        {g.glyph}
+      </span>
+      <span className="sr-only">{status === 'needs' ? 'needs you' : status}</span>
+    </>
   );
 }
 
@@ -186,9 +189,10 @@ export function currentHints(): Hint[] {
   return shown;
 }
 
-export function Hints({ keys }: { keys: Hint[] }) {
+/** The key row. `more` are keys that only the ? overlay lists. */
+export function Hints({ keys, more = [] }: { keys: Hint[]; more?: Hint[] }) {
   useEffect(() => {
-    shown = keys;
+    shown = [...keys, ...more];
   });
   return (
     <div className="t-hints">
@@ -228,7 +232,21 @@ export interface StatusLineProps {
   info?: ReactNode;
 }
 
-/** The bottom line: mode, what needs you, where you are, the daemon. */
+/**
+ * Says out loud what changes where a screen reader can't see it: where you went, and what
+ * needs you. It's mounted once, because a live region only speaks when its text changes.
+ */
+export function Announcer({ where }: { where: string }) {
+  const needs = useStore(allNeeds);
+  return (
+    <>
+      <div className="sr-only" role="status">{where}</div>
+      <div className="sr-only" role="status">{needs.length ? `${needs.length} need${needs.length === 1 ? 's' : ''} you. ${needs[0]!.text}` : ''}</div>
+    </>
+  );
+}
+
+/** The bottom line: mode, what needs you, where you are, and the daemon if it's down. */
 export function StatusLine({ mode, path, info }: StatusLineProps) {
   const needs = useStore(allNeeds);
   const connected = useStore((s) => s.connected);
@@ -239,7 +257,7 @@ export function StatusLine({ mode, path, info }: StatusLineProps) {
         <button
           type="button"
           className="t-needs"
-          aria-label={`${needs.length} need you. Open the next one`}
+          aria-label={`NEEDS ${needs.length}. Open the next one: ${needs[0]!.text}`}
           title="Open the next thing that needs you"
           onClick={() => openNeed(needs[0]!)}
         >
@@ -253,8 +271,8 @@ export function StatusLine({ mode, path, info }: StatusLineProps) {
         </span>
       )}
       <span className="t-grow" />
-      <span>{connected ? 'daemon ● up' : 'daemon ○ down'}</span>
-      {info !== undefined && <span className="t-info">{info}</span>}
+      {!connected && <span>daemon ○ down</span>}
+      {info ? <span className="t-info">{info}</span> : null}
     </footer>
   );
 }
@@ -263,6 +281,8 @@ export interface ScreenProps {
   header: ReactNode;
   children: ReactNode;
   hints: Hint[];
+  /** Keys that only the ? overlay lists, to keep the row short. */
+  more?: Hint[];
   status: StatusLineProps;
   /** A line above the key hints, for what's happening right now. */
   message?: ReactNode;
@@ -270,7 +290,7 @@ export interface ScreenProps {
 }
 
 /** One whole screen: header, body, a message line, key hints and the status line. */
-export function Screen({ header, children, hints, status, message, bodyStyle }: ScreenProps) {
+export function Screen({ header, children, hints, more, status, message, bodyStyle }: ScreenProps) {
   const problem = useStore((s) => s.problem);
   return (
     <div className="t-app">
@@ -278,12 +298,12 @@ export function Screen({ header, children, hints, status, message, bodyStyle }: 
       <header className="t-header" data-tauri-drag-region="deep">
         {header}
       </header>
-      <div className="t-body" style={bodyStyle}>
+      <main className="t-body" tabIndex={-1} style={bodyStyle}>
         {children}
-      </div>
+      </main>
       {problem && <Problem text={problem} />}
       {message}
-      <Hints keys={hints} />
+      <Hints keys={hints} more={more} />
       <StatusLine {...status} />
     </div>
   );
@@ -297,7 +317,7 @@ function Problem({ text }: { text: string }) {
     }
   }, { priority: 5 });
   return (
-    <div role="status" className="t-message" style={{ color: 'var(--ink)' }}>
+    <div role="alert" className="t-message" style={{ color: 'var(--ink)' }}>
       <span className="t-dim">✗</span>
       <span style={{ flex: '1 1 0', minWidth: 0 }}>{text}</span>
       <Key k="x" size="xs" onClick={() => setState({ problem: null })}>
@@ -394,5 +414,32 @@ export function FieldRow({
       </label>
       <div style={{ flexGrow: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 4 }}>{children}</div>
     </div>
+  );
+}
+
+const unlist = (v: string, separator: string) => v.split(separator).map((s) => s.trim()).filter(Boolean);
+
+/** A list in one field. Keeps what you typed, so a separator can be typed before the next item. */
+export function ListInput({ id, value, placeholder, separator = ',', onChange }: { id: string; value?: string[]; placeholder?: string; separator?: string; onChange: (v: string[]) => void }) {
+  const joined = (v?: string[]) => (v ?? []).join(separator === ',' ? ', ' : ` ${separator} `);
+  const [text, setText] = useState(joined(value));
+  const field = useRef<HTMLInputElement>(null);
+  // Only a change from elsewhere replaces the text, and never under someone typing.
+  useEffect(() => {
+    if (document.activeElement !== field.current && joined(unlist(text, separator)) !== joined(value)) setText(joined(value));
+  }, [value]);
+  return (
+    <input
+      ref={field}
+      id={id}
+      className="t-field"
+      spellCheck={false}
+      value={text}
+      placeholder={placeholder}
+      onChange={(e) => {
+        setText(e.currentTarget.value);
+        onChange(unlist(e.currentTarget.value, separator));
+      }}
+    />
   );
 }

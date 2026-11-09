@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { api, failureText, type HarnessProfile, type Machine, type Settings } from './api';
 import { go, showProblem, useStore } from './store';
-import { Brand, Check, FieldRow, Key, Pane, Screen, Sep } from './tui/kit';
+import { Brand, Check, FieldRow, Key, ListInput, Pane, Screen, Sep } from './tui/kit';
 import { useKeys } from './tui/keys';
 
 const paneStyle = { padding: '14px 12px 12px', maxWidth: 820, width: '100%', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 8 } as const;
@@ -18,7 +18,11 @@ export function MachineSettings() {
   useEffect(() => {
     api.machine().then(setM, showProblem);
     api.harnesses().then(setHarnesses, showProblem);
-    const timer = setInterval(() => api.machine().then(setM, () => undefined), 2000);
+    // Refreshing under someone typing would put back what they just changed.
+    const timer = setInterval(() => {
+      if (document.activeElement?.matches('input:not([type="checkbox"]), textarea, select')) return;
+      api.machine().then(setM, () => undefined);
+    }, 2000);
     return () => clearInterval(timer);
   }, []);
 
@@ -87,22 +91,23 @@ export function MachineSettings() {
             <Check id="sl-on" checked={s.slack.enabled} onChange={(enabled) => void change({ ...s, slack: { ...s.slack, enabled } })}>
               connect to slack
             </Check>
-            <FieldRow id="sl-f" label="feeds" width="12ch">
+            <FieldRow id="sl-f" label="sends work to" width="14ch">
               <select id="sl-f" className="t-field" value={s.slack.factory} onChange={(e) => void change({ ...s, slack: { ...s.slack, factory: e.currentTarget.value } })}>
                 <option value="">pick a factory</option>
                 {factories.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}
               </select>
             </FieldRow>
-            <FieldRow id="sl-u" label="allowed" width="12ch">
-              <input id="sl-u" className="t-field" placeholder="U012ABC, U034DEF" value={s.slack.allowUsers.join(', ')} onChange={(e) => void change({ ...s, slack: { ...s.slack, allowUsers: e.currentTarget.value.split(',').map((x) => x.trim()).filter(Boolean) } })} />
+            <FieldRow id="sl-u" label="allowed" width="14ch">
+              <ListInput id="sl-u" placeholder="U012ABC, U034DEF" value={s.slack.allowUsers} onChange={(allowUsers) => void change({ ...s, slack: { ...s.slack, allowUsers } })} />
+              <span className="t-dim" style={{ fontSize: 12 }}>slack member ids, not names. a person's profile has "copy member id"</span>
             </FieldRow>
-            <FieldRow id="sl-a" label="app token" width="12ch">
+            <FieldRow id="sl-a" label="app token" width="14ch">
               <div style={{ display: 'flex', gap: 6 }}>
                 <input id="sl-a" type="password" autoComplete="off" className="t-field" style={{ flexGrow: 1 }} placeholder="xapp-…" value={appToken} onChange={(e) => setAppToken(e.currentTarget.value)} />
                 <Key size="sm" disabled={!appToken} onClick={() => { void secret('SLACK_APP_TOKEN', appToken, () => setAppToken('')); void change({ ...s, slack: { ...s.slack, appTokenSecret: 'SLACK_APP_TOKEN' } }); }}>save</Key>
               </div>
             </FieldRow>
-            <FieldRow id="sl-b" label="bot token" width="12ch">
+            <FieldRow id="sl-b" label="bot token" width="14ch">
               <div style={{ display: 'flex', gap: 6 }}>
                 <input id="sl-b" type="password" autoComplete="off" className="t-field" style={{ flexGrow: 1 }} placeholder="xoxb-…" value={botToken} onChange={(e) => setBotToken(e.currentTarget.value)} />
                 <Key size="sm" disabled={!botToken} onClick={() => { void secret('SLACK_BOT_TOKEN', botToken, () => setBotToken('')); void change({ ...s, slack: { ...s.slack, botTokenSecret: 'SLACK_BOT_TOKEN' } }); }}>save</Key>
@@ -123,7 +128,7 @@ export function MachineSettings() {
                 <span className="t-muted" style={{ flex: '1 1 240px', fontSize: 12, minWidth: 0 }}>{h.domains.join(' · ') || 'no sites listed'}</span>
                 {h.trust && (
                   <Check id={`tr-${h.id}`} checked={h.trust.auto} onChange={(on) => void trust(h, on)}>
-                    also answer its folder-trust question outside the sandbox
+                    trust project folders automatically outside the sandbox
                   </Check>
                 )}
               </div>

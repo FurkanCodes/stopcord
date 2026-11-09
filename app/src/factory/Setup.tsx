@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { api, type Agent, type BenchResult, type BenchTask, type Factory, type LineStage, type Part, type Report, type Runner, type Skill, type SourceTemplate, type Suite } from '../api';
 import { changeFactory, refreshFactories, showProblem } from '../store';
-import { ArmedKey, Check, Empty, FieldRow, Key, Pane, Screen } from '../tui/kit';
+import { ArmedKey, Check, Empty, FieldRow, Key, ListInput, Pane, Screen } from '../tui/kit';
 import { FactoryHeader } from './FactoryHeader';
 import { LineStrip } from './LineStrip';
 
@@ -11,33 +11,19 @@ const uniq = (base: string, taken: string[]) => {
   return id;
 };
 const list = (v?: string[]) => (v ?? []).join(', ');
-const unlist = (v: string, separator = ',') => v.split(separator).map((s) => s.trim()).filter(Boolean);
 
-/** A list in one field. Keeps what you typed, so a separator can be typed before the next item. */
-function ListText({ id, label, value, placeholder, separator = ',', onChange }: { id: string; label: string; value?: string[]; placeholder?: string; separator?: string; onChange: (v: string[]) => void }) {
-  const joined = (v?: string[]) => (v ?? []).join(separator === ',' ? ', ' : ` ${separator} `);
-  const [text, setText] = useState(joined(value));
-  useEffect(() => {
-    if (joined(unlist(text, separator)) !== joined(value)) setText(joined(value));
-  }, [value]);
+function ListText({ id, label, ...rest }: { id: string; label: string; value?: string[]; placeholder?: string; separator?: string; onChange: (v: string[]) => void }) {
   return (
-    <Text
-      id={id}
-      label={label}
-      value={text}
-      placeholder={placeholder}
-      onChange={(v) => {
-        setText(v);
-        onChange(unlist(v, separator));
-      }}
-    />
+    <FieldRow id={id} label={label} width="14ch">
+      <ListInput id={id} {...rest} />
+    </FieldRow>
   );
 }
 
 function Text({ id, label, value, onChange, placeholder }: { id: string; label: string; value: string; onChange: (v: string) => void; placeholder?: string }) {
   return (
     <FieldRow id={id} label={label} width="14ch">
-      <input id={id} className="t-field" value={value} placeholder={placeholder} onChange={(e) => onChange(e.currentTarget.value)} />
+      <input id={id} className="t-field" spellCheck={false} value={value} placeholder={placeholder} onChange={(e) => onChange(e.currentTarget.value)} />
     </FieldRow>
   );
 }
@@ -55,6 +41,23 @@ function Pick({ id, label, value, options, onChange }: { id: string; label: stri
 }
 
 const paneStyle = { padding: '14px 12px 12px', maxWidth: 960, width: '100%', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 10 } as const;
+const sections = ['defaults', 'line', 'agents', 'scorers', 'benchmarks', 'runners', 'sources', 'skills', 'reporting back'];
+
+/** Stays at the top of a long page and jumps to a section. */
+function SectionIndex() {
+  const jump = (name: string) => {
+    const title = [...document.querySelectorAll('.t-body .t-pane-title')].find((el) => el.textContent?.trim() === name);
+    title?.closest('.t-pane')?.scrollIntoView({ block: 'start' });
+  };
+  return (
+    <nav aria-label="Setup sections" style={{ position: 'sticky', top: -16, zIndex: 5, flexShrink: 0, display: 'flex', flexWrap: 'wrap', gap: 2, maxWidth: 960, width: '100%', margin: '-16px auto -8px', padding: '6px 0', background: 'var(--bg)' }}>
+      {sections.map((name) => (
+        <Key key={name} size="xs" onClick={() => jump(name)}>{name}</Key>
+      ))}
+    </nav>
+  );
+}
+
 const card = { display: 'flex', flexDirection: 'column', gap: 4, paddingBottom: 10, borderBottom: '1px solid var(--line-soft, var(--line))' } as const;
 
 /** Everything a factory is made of, editable where it's shown. Each change is a commit in the definition folder. */
@@ -96,6 +99,8 @@ export function Setup({ factory, onRemove }: { factory: Factory; onRemove: () =>
       hints={[['1-6', 'sections'], ['esc', 'every factory']]}
       status={{ mode: 'SETUP', path: factory.name, info: 'saved as you type · every change is a commit' }}
     >
+      <SectionIndex />
+
       {factory.proposals.map((p) => (
         <Pane key={p.id} title={`proposed change · ${p.agent}`} style={paneStyle}>
           <p style={{ whiteSpace: 'pre-wrap' }}>{p.why}</p>
@@ -115,7 +120,10 @@ export function Setup({ factory, onRemove }: { factory: Factory; onRemove: () =>
         <Text id="def-harness" label="harness" value={factory.defaults.harness ?? ''} placeholder="claude, codex, gemini, opencode, or any command" onChange={(harness) => set({ defaults: { ...factory.defaults, harness } })} />
         <Pick id="def-runner" label="runner" value={factory.defaults.runner ?? ''} options={[['', 'plain worktree'], ...factory.runners.map((r): [string, string] => [r.id, `${r.id} (${r.level})`])]} onChange={(r) => set({ defaults: { ...factory.defaults, runner: r } })} />
         <FieldRow id="def-once" label="at once" width="14ch">
-          <input id="def-once" type="number" min={1} className="t-field" style={{ width: '8ch' }} value={factory.defaults.atOnce ?? 1} onChange={(e) => set({ defaults: { ...factory.defaults, atOnce: Number(e.currentTarget.value) || 1 } })} />
+          <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <input id="def-once" type="number" min={1} className="t-field" style={{ width: '8ch' }} value={factory.defaults.atOnce ?? 1} onChange={(e) => set({ defaults: { ...factory.defaults, atOnce: Number(e.currentTarget.value) || 1 } })} />
+            <span className="t-muted">tickets</span>
+          </span>
         </FieldRow>
       </Pane>
 
@@ -190,7 +198,7 @@ export function Setup({ factory, onRemove }: { factory: Factory; onRemove: () =>
             <Pick id={`sk-a-${i}`} label="for" value={s.agent} options={[['', 'every agent'], ...agents]} onChange={(a) => skill(i, { agent: a })} />
             <Text id={`sk-d-${i}`} label="when to use" value={s.description} onChange={(description) => skill(i, { description })} />
             <FieldRow id={`sk-b-${i}`} label="instructions" width="14ch" top>
-              <textarea id={`sk-b-${i}`} className="t-field" rows={4} value={s.body} onChange={(e) => skill(i, { body: e.currentTarget.value })} />
+              <textarea id={`sk-b-${i}`} className="t-field" spellCheck={false} rows={4} value={s.body} onChange={(e) => skill(i, { body: e.currentTarget.value })} />
             </FieldRow>
             <span><ArmedKey size="xs" onClick={() => set({ skills: factory.skills.filter((_, j) => j !== i) })}>remove skill</ArmedKey></span>
           </Fold>
@@ -240,7 +248,7 @@ function Sources({ factory, sources, part, set }: { factory: Factory; sources: P
       }
       style={paneStyle}
     >
-      {sources.length === 0 && <Empty style={{ padding: 0 }}>no sources. work can still be fed by hand</Empty>}
+      {sources.length === 0 && <Empty style={{ padding: 0 }}>no sources. press w on [1] work to write a ticket by hand</Empty>}
       {sources.map((p) => (
         <SourceCard key={p.id} p={p} part={part} needs={templates.find((t) => p.id.startsWith(t.id))?.needs} remove={() => set({ parts: factory.parts.filter((x) => x.id !== p.id) })} />
       ))}
@@ -276,7 +284,7 @@ function RolePane({ title, noun, note, items, runners, onChange }: { title: stri
           <Text id={`${noun}-h-${i}`} label="harness" value={a.harness} placeholder="empty uses the default" onChange={(harness) => edit(i, { harness })} />
           <Pick id={`${noun}-r-${i}`} label="runner" value={a.runner} options={runners} onChange={(r) => edit(i, { runner: r })} />
           <FieldRow id={`${noun}-p-${i}`} label="role prompt" width="14ch" top>
-            <textarea id={`${noun}-p-${i}`} className="t-field" rows={5} value={a.prompt} onChange={(e) => edit(i, { prompt: e.currentTarget.value })} />
+            <textarea id={`${noun}-p-${i}`} className="t-field" spellCheck={false} rows={5} value={a.prompt} onChange={(e) => edit(i, { prompt: e.currentTarget.value })} />
           </FieldRow>
           <span><ArmedKey size="xs" onClick={() => onChange(items.filter((_, j) => j !== i))}>remove {noun}</ArmedKey></span>
         </Fold>
@@ -310,18 +318,18 @@ function BenchPane({ factory, set }: { factory: Factory; set: (patch: Partial<Fa
             <Pick id={`su-a-${i}`} label="agent under test" value={s.agent ?? ''} options={[['', 'none: run as configured'], ...factory.agents.map((x): [string, string] => [x.id, x.id])]} onChange={(agent) => edit(i, { agent })} />
             {s.agent && (
               <FieldRow id={`su-c-${i}`} label="candidates" width="14ch" top>
-                <textarea id={`su-c-${i}`} className="t-field" rows={3} placeholder={'one harness command per line\nclaude --model haiku\ncodex'} value={(s.candidates ?? []).join('\n')} onChange={(e) => edit(i, { candidates: e.currentTarget.value.split('\n') })} />
+                <textarea id={`su-c-${i}`} className="t-field" spellCheck={false} rows={3} placeholder={'one harness command per line\nclaude --model haiku\ncodex'} value={(s.candidates ?? []).join('\n')} onChange={(e) => edit(i, { candidates: e.currentTarget.value.split('\n') })} />
               </FieldRow>
             )}
             <FieldRow id={`su-r-${i}`} label="repeats" width="14ch">
               <input id={`su-r-${i}`} type="number" min={1} className="t-field" style={{ width: '8ch' }} value={s.repeats || 1} onChange={(e) => edit(i, { repeats: Number(e.currentTarget.value) || 1 })} />
             </FieldRow>
             {s.tasks.map((t, j) => (
-              <div key={j} style={{ paddingLeft: 12, display: 'flex', flexDirection: 'column', gap: 4 }}>
+              <div key={j} style={{ paddingLeft: 12, display: 'flex', flexDirection: 'column', gap: 4, ...(j > 0 ? { borderTop: '1px solid var(--line-soft)', paddingTop: 8, marginTop: 4 } : {}) }}>
                 <Text id={`su-k-${i}-${j}`} label="task" value={t.key} onChange={(key) => task(i, j, { key })} />
                 <Text id={`su-t-${i}-${j}`} label="title" value={t.title} onChange={(title) => task(i, j, { title })} />
                 <FieldRow id={`su-w-${i}-${j}`} label="what to do" width="14ch" top>
-                  <textarea id={`su-w-${i}-${j}`} className="t-field" rows={2} value={t.body} onChange={(e) => task(i, j, { body: e.currentTarget.value })} />
+                  <textarea id={`su-w-${i}-${j}`} className="t-field" spellCheck={false} rows={2} value={t.body} onChange={(e) => task(i, j, { body: e.currentTarget.value })} />
                 </FieldRow>
                 <Text id={`su-c-${i}-${j}`} label="solved when" value={t.check} placeholder="a command that passes. agents never see it" onChange={(check) => task(i, j, { check })} />
                 <span><ArmedKey size="xs" onClick={() => edit(i, { tasks: s.tasks.filter((_, x) => x !== j) })}>remove task</ArmedKey></span>
@@ -336,10 +344,10 @@ function BenchPane({ factory, set }: { factory: Factory; set: (patch: Partial<Fa
             {last.filter((r) => !r.passed).map((r) => (
               <p key={r.task} className="t-muted" style={{ fontSize: 12, overflowWrap: 'anywhere' }}>✗ {r.task}: {r.why}</p>
             ))}
-            <span style={{ display: 'inline-flex', gap: 4 }}>
+            <span style={{ display: 'flex', gap: 4 }}>
               <Key size="xs" onClick={() => edit(i, { tasks: [...s.tasks, { key: uniq('task', s.tasks.map((t) => t.key)), title: '', body: '', check: '' }] })}>add task</Key>
               <Key size="xs" disabled={s.tasks.length === 0 || running > 0} onClick={() => void api.runBenchmark(factory.id, s.id).then(refreshFactories, showProblem)}>{running > 0 ? `${running} running` : 'run'}</Key>
-              <ArmedKey size="xs" onClick={() => set({ benchmarks: factory.benchmarks.filter((_, j) => j !== i) })}>remove suite</ArmedKey>
+              <ArmedKey size="xs" style={{ marginLeft: 'auto' }} onClick={() => set({ benchmarks: factory.benchmarks.filter((_, j) => j !== i) })}>remove suite</ArmedKey>
             </span>
           </Fold>
         );
@@ -353,7 +361,7 @@ function SourceCard({ p, part, needs, remove }: { p: Part; part: (id: string, pa
     <Fold title={p.name} hint={p.every || 'by hand'}>
       <Text id={`src-n-${p.id}`} label="name" value={p.name} onChange={(name) => part(p.id, { name })} />
       <FieldRow id={`src-c-${p.id}`} label="pull command" width="14ch" top>
-        <textarea id={`src-c-${p.id}`} className="t-field" rows={2} value={p.command} onChange={(e) => part(p.id, { command: e.currentTarget.value })} />
+        <textarea id={`src-c-${p.id}`} className="t-field" spellCheck={false} rows={2} value={p.command} onChange={(e) => part(p.id, { command: e.currentTarget.value })} />
       </FieldRow>
       {needs && <span className="t-muted" style={{ fontSize: 12 }}>{needs}</span>}
       <Text id={`src-e-${p.id}`} label="pull every" value={p.every ?? ''} placeholder="every 5 minutes. empty pulls by hand" onChange={(every) => part(p.id, { every })} />

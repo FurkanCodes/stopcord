@@ -5,7 +5,7 @@ import { useState } from 'react';
 import { api, type Factory } from '../api';
 import { lastSize } from '../TerminalPane';
 import { enterWhenShown, openFactory, putTerminal, queueTask, setState, showProblem, terminalsIn, useStore, type Draft } from '../store';
-import { FieldRow, Key } from '../tui/kit';
+import { ArmedKey, FieldRow } from '../tui/kit';
 import { branchFrom } from './parts';
 import { HarnessPick, Section } from './SidePane';
 
@@ -84,7 +84,7 @@ export function NewTerminal({ factory, draft, git, onDiscard }: { factory: Facto
           <textarea
             id="draft-task"
             autoFocus
-            className="t-field"
+            className="t-field" spellCheck={false}
             rows={3}
             style={{ resize: 'vertical', lineHeight: 1.5 }}
             placeholder="what should it do? optional"
@@ -104,7 +104,7 @@ export function NewTerminal({ factory, draft, git, onDiscard }: { factory: Facto
         <FieldRow id="draft-name" label="name">
           <input
             id="draft-name"
-            className="t-field"
+            className="t-field" spellCheck={false}
             value={numbered.test(draft.name.trim()) && task ? '' : draft.name}
             placeholder={name}
             onChange={(e) => {
@@ -116,7 +116,7 @@ export function NewTerminal({ factory, draft, git, onDiscard }: { factory: Facto
         <HarnessPick id="draft-command" label="runs" value={draft.command} allowShell onChange={(command) => change({ command })} />
         {git ? (
           <FieldRow id="draft-branch" label="branch" top>
-            <input id="draft-branch" className="t-field" value={branch} onChange={(e) => change({ branch: e.currentTarget.value })} />
+            <input id="draft-branch" className="t-field" spellCheck={false} value={branch} onChange={(e) => change({ branch: e.currentTarget.value })} />
             <span className="t-dim" style={{ fontSize: 12 }}>
               gets its own worktree on this branch · empty works in the project folder
             </span>
@@ -134,7 +134,7 @@ export function NewTerminal({ factory, draft, git, onDiscard }: { factory: Facto
         <button type="submit" className="t-solid" disabled={busy || !name}>
           {busy ? 'starting…' : '⏎ start'}
         </button>
-        <Key onClick={discard}>discard</Key>
+        <ArmedKey onClick={discard}>discard</ArmedKey>
       </div>
     </form>
   );

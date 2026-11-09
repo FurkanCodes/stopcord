@@ -26,12 +26,16 @@ export function NewFactory() {
   const [name, setName] = useState('');
   const [nameTouched, setNameTouched] = useState(false);
   const [template, setTemplate] = useState<Template>('line');
-  const [harness, setHarness] = useState('claude');
-  const [reviewer, setReviewer] = useState('codex');
+  const installed = useStore((s) => s.installed);
+  // Until someone types here, these follow what's installed on this machine.
+  const [harnessTyped, setHarness] = useState<string | null>(null);
+  const [reviewerTyped, setReviewer] = useState<string | null>(null);
+  const harness = harnessTyped ?? installed?.[0] ?? '';
+  const reviewer = reviewerTyped ?? installed?.[1] ?? installed?.[0] ?? '';
   const [level, setLevel] = useState<Level>('contained');
   const [links, setLinks] = useState<string[]>(['AGENTS.md', 'CLAUDE.md']);
   const [nearby, setNearby] = useState<FolderSuggestion[] | null>(null);
-  const [pickerOpen, setPickerOpen] = useState(false);
+  const [pickerOpen, setPickerOpen] = useState(true);
   const [info, setInfo] = useState<ProjectInfo | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -71,7 +75,16 @@ export function NewFactory() {
     if (typeof picked === 'string') choose(picked);
   }
 
-  const canCreate = !busy && !!folder.trim() && links.length > 0;
+  const whyNot = !folder.trim()
+    ? 'choose a folder first'
+    : links.length === 0
+      ? 'pick a name to link as'
+      : template === 'line' && !harness.trim()
+        ? 'name a harness first'
+        : template === 'line' && !reviewer.trim()
+          ? 'name a reviewer first'
+          : '';
+  const canCreate = !busy && !whyNot;
 
   async function create() {
     if (!canCreate) return;
@@ -80,7 +93,7 @@ export function NewFactory() {
     try {
       const factory = await api.createFactory({ path: folder.trim(), name: name.trim(), template, readAs: links, harness, reviewer, level });
       await refreshFactories();
-      openFactory(factory.id);
+      openFactory(factory.id, template === 'line' ? 'work' : 'overview');
     } catch (e) {
       setError(failureText(e));
     } finally {
@@ -90,7 +103,8 @@ export function NewFactory() {
 
   useKeys((e) => {
     if (e.key === 'Escape') {
-      if (pickerOpen) setPickerOpen(false);
+      // The list opens by itself on an empty form, so there esc still cancels.
+      if (pickerOpen && folder) setPickerOpen(false);
       else go({ screen: 'home' });
       return true;
     }
@@ -135,7 +149,7 @@ export function NewFactory() {
     '├── definition/         what you edit, under git',
     '│   ├── factory.yaml',
     '│   └── knowledge.md    the knowledge base',
-    '└── state/              the engine\'s, including the run log',
+    '└── state/              the engine\'s',
     '',
     `${where}/   and every worktree`,
     ...(links.length
@@ -199,7 +213,7 @@ export function NewFactory() {
               <input
                 ref={folderInput}
                 id="f-folder"
-                className="t-field"
+                className="t-field" spellCheck={false}
                 style={{ flexGrow: 1 }}
                 value={folder}
                 placeholder="~/projects/my-project"
@@ -209,7 +223,6 @@ export function NewFactory() {
                   setPickerOpen(false);
                   if (!nameTouched) setName(v.split('/').filter(Boolean).pop() ?? '');
                 }}
-                onFocus={() => !folder && setPickerOpen(true)}
               />
               <Key k="o" expanded={pickerOpen} aria-controls="folder-picker" onClick={() => setPickerOpen(!pickerOpen)}>
                 choose
@@ -220,7 +233,7 @@ export function NewFactory() {
                 <span className="t-pane-title" style={{ left: 8 }}>
                   folders nearby
                 </span>
-                <ul aria-label="Folders nearby">
+                <ul aria-label="Folders nearby" style={{ maxHeight: 190, overflowY: 'auto' }}>
                   {(nearby ?? []).map((f) => (
                     <li key={f.path}>
                       <button
@@ -265,7 +278,7 @@ export function NewFactory() {
             </label>
             <input
               id="f-name"
-              className="t-field"
+              className="t-field" spellCheck={false}
               style={{ flexGrow: 1 }}
               value={name}
               placeholder="my-project"
@@ -292,10 +305,10 @@ export function NewFactory() {
           {template === 'line' && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
               <FieldRow id="nf-h" label="harness">
-                <input id="nf-h" className="t-field" value={harness} onChange={(e) => setHarness(e.currentTarget.value)} />
+                <input id="nf-h" className="t-field" spellCheck={false} required value={harness} placeholder={installed?.length ? '' : 'none found. type a harness command'} onChange={(e) => setHarness(e.currentTarget.value)} />
               </FieldRow>
               <FieldRow id="nf-r" label="reviewer">
-                <input id="nf-r" className="t-field" value={reviewer} onChange={(e) => setReviewer(e.currentTarget.value)} />
+                <input id="nf-r" className="t-field" spellCheck={false} required value={reviewer} placeholder={installed?.length ? '' : 'none found. type a harness command'} onChange={(e) => setReviewer(e.currentTarget.value)} />
               </FieldRow>
               <FieldRow id="nf-l" label="runner">
                 <select id="nf-l" className="t-field" value={level} onChange={(e) => setLevel(e.currentTarget.value as Level)}>
@@ -304,6 +317,9 @@ export function NewFactory() {
                   <option value="vm">vm: a Linux virtual machine</option>
                 </select>
               </FieldRow>
+              {info && !info.testCommand && (
+                <p className="t-dim" style={{ fontSize: 12, marginLeft: 'calc(9ch + 12px)' }}>no test command found, so this line has no verify stage. add one later in setup</p>
+              )}
             </div>
           )}
 
@@ -332,7 +348,7 @@ export function NewFactory() {
             </div>
           </div>
 
-          {error && <p style={{ color: 'var(--ink)' }}>✗ {error}</p>}
+          {error && <p role="alert" style={{ color: 'var(--ink)' }}>✗ {error}</p>}
 
           <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8, paddingTop: 12, borderTop: '1px dashed var(--line-dash)' }}>
             <button type="submit" className="t-solid" disabled={!canCreate}>
@@ -341,6 +357,7 @@ export function NewFactory() {
             <Key k="esc" onClick={() => go({ screen: 'home' })} style={{ height: 28 }}>
               cancel
             </Key>
+            {whyNot && <span className="t-dim" style={{ marginLeft: 'auto', fontSize: 12 }}>{whyNot}</span>}
           </div>
         </form>
       </Pane>

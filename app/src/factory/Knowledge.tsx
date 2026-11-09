@@ -3,7 +3,7 @@ import { confirm } from '@tauri-apps/plugin-dialog';
 import { listen } from '@tauri-apps/api/event';
 import { api, type Factory, type Knowledge as KnowledgeData } from '../api';
 import { refreshFactories, showProblem, setLeaveGuard } from '../store';
-import { Empty, Key, Pane, Screen, Titled } from '../tui/kit';
+import { ArmedKey, Empty, Key, Pane, Screen, Titled } from '../tui/kit';
 import { moveFocus, plain, useKeys } from '../tui/keys';
 import { FactoryHeader } from './FactoryHeader';
 
@@ -223,7 +223,6 @@ export function Knowledge({ factory, file }: { factory: Factory; file?: string }
         ['⏎', 'open'],
         ...(reviewing ? ([['y', 'ok to the next change'], ['n', 'no to the next change']] as [string, string][]) : []),
         ['⌘S', 'save'],
-        ['tab', 'next pane'],
         ['1-6', 'sections'],
         ['esc', 'back'],
         ['?', 'all keys'],
@@ -268,7 +267,6 @@ export function Knowledge({ factory, file }: { factory: Factory; file?: string }
       </Pane>
 
       <Pane
-        as="main"
         aria-label={label}
         title={<Titled strong>{label}</Titled>}
         hot={reviewing}
@@ -291,9 +289,9 @@ export function Knowledge({ factory, file }: { factory: Factory; file?: string }
                 <span className="t-muted" style={{ flexGrow: 1 }}>
                   green lines are new, red lines were taken out. say ok or no to each change.
                 </span>
-                <Key size="xs" onClick={() => answerAll('n')}>
+                <ArmedKey size="xs" onClick={() => answerAll('n')}>
                   undo all
-                </Key>
+                </ArmedKey>
                 <button type="button" className="t-solid is-sm" onClick={() => answerAll('y')}>
                   ok to all
                 </button>
@@ -340,10 +338,10 @@ export function Knowledge({ factory, file }: { factory: Factory; file?: string }
                         {!h.blank && (
                           <span className="t-hunk-actions">
                             {given && <span className="t-dim">{given === 'y' ? '✓ ok' : '✗ no'} ·</span>}
-                            <button type="button" className={given === 'y' || (next && !given) ? 't-solid is-xs' : 't-key is-xs'} aria-pressed={given === 'y'} onClick={() => void decide(h.key, 'y')}>
+                            <button type="button" className={given === 'y' || (next && !given) ? 't-solid is-xs' : 't-key is-xs'} aria-pressed={given === 'y'} aria-label="ok: keep this change" onClick={() => void decide(h.key, 'y')}>
                               {next ? '[y] ' : ''}ok
                             </button>
-                            <button type="button" className={given === 'n' ? 't-solid is-xs' : 't-key is-xs'} aria-pressed={given === 'n'} onClick={() => void decide(h.key, 'n')}>
+                            <button type="button" className={given === 'n' ? 't-solid is-xs' : 't-key is-xs'} aria-pressed={given === 'n'} aria-label="no: undo this change" onClick={() => void decide(h.key, 'n')}>
                               {next ? '[n] ' : ''}no
                             </button>
                           </span>
@@ -382,6 +380,7 @@ export function Knowledge({ factory, file }: { factory: Factory; file?: string }
                 id="k-editor"
                 rows={lines.length + 1}
                 value={text}
+                readOnly={!data}
                 spellCheck={false}
                 onChange={(e) => {
                   setText(e.currentTarget.value);
@@ -434,9 +433,9 @@ export function Knowledge({ factory, file }: { factory: Factory; file?: string }
           )}
           {dirty ? (
             <span style={{ display: 'inline-flex', gap: 4 }}>
-              <Key size="xs" onClick={() => void drop()}>
+              <ArmedKey size="xs" onClick={() => void drop()}>
                 drop my edit
-              </Key>
+              </ArmedKey>
               <Key k="⌘s" size="xs" onClick={() => void save()}>
                 save
               </Key>

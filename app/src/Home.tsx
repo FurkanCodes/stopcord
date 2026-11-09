@@ -4,7 +4,7 @@ import { allNeeds, go, harnessOf, lampOf, needsOf, openFactory, openNeed, sawtoo
 import { tilde } from './text';
 import { ago } from './time';
 import { Brand, Empty, Glyph, Key, Pane, Screen, Sep, Titled, type Status } from './tui/kit';
-import { plain, useKeys } from './tui/keys';
+import { nothingFocused, plain, useKeys } from './tui/keys';
 import { useEffect, useState } from 'react';
 
 /** The factory last opened from Home, to come back to. */
@@ -77,7 +77,7 @@ export function Home({ onSearch }: { onSearch: () => void }) {
 
   // A card has focus from the start, the one you came back from if any, so keys work at once.
   useEffect(() => {
-    if (document.activeElement && document.activeElement !== document.body) return;
+    if (!nothingFocused()) return;
     const cards = [...document.querySelectorAll<HTMLElement>('[data-card]')];
     (cards.find((el) => el.dataset.id === lastOpened) ?? cards[0])?.focus({ preventScroll: true });
   }, [shown.length, view]);
@@ -132,7 +132,7 @@ export function Home({ onSearch }: { onSearch: () => void }) {
             {chips.map((c) => (
               <Key key={c.id} k={c.k} pressed={filter === c.id} onClick={() => setFilter(c.id)}>
                 {c.label}
-                <span className="t-dim" style={{ color: c.red ? 'var(--red-text)' : undefined }}>
+                <span className="t-dim" style={{ color: c.red && filter !== c.id ? 'var(--red-text)' : undefined }}>
                   {c.count}
                 </span>
               </Key>
@@ -141,14 +141,14 @@ export function Home({ onSearch }: { onSearch: () => void }) {
           <Sep />
           <div role="group" aria-label="View" style={{ display: 'flex', gap: 4 }}>
             <Key k="c" pressed={view === 'canvas'} onClick={() => setState({ homeView: 'canvas' })}>
-              canvas
+              cards
             </Key>
             <Key k="v" pressed={view === 'list'} onClick={() => setState({ homeView: 'list' })}>
               list
             </Key>
           </div>
           <span style={{ flexGrow: 1 }} />
-          <Key k="/" aria-label="Search factories and terminals" onClick={onSearch}>
+          <Key k="/" aria-label="Search factories, terminals and tickets" onClick={onSearch}>
             search
           </Key>
           <Key k="," onClick={() => go({ screen: 'settings' })}>
@@ -164,7 +164,7 @@ export function Home({ onSearch }: { onSearch: () => void }) {
         ['⏎', 'open factory'],
         ['n', 'next decision'],
         ['a/!', 'all or needs you'],
-        ['c/v', 'canvas or list'],
+        ['c/v', 'cards or list'],
         ['+', 'new factory'],
         [',', 'settings'],
         ['/', 'search'],
@@ -176,7 +176,7 @@ export function Home({ onSearch }: { onSearch: () => void }) {
         info: `${factories.length} factor${factories.length === 1 ? 'y' : 'ies'} · ${workingTotal}/${termTotal} working · ${queuedTotal} queued`,
       }}
     >
-      <main aria-label="Factories" style={{ flexGrow: 1, minHeight: 0, overflow: 'auto', padding: '18px 10px 12px' }}>
+      <section aria-label="Factories" style={{ flexGrow: 1, minHeight: 0, overflow: 'auto', padding: '18px 10px 12px' }}>
         {loaded && cards.length === 0 && (
           <Pane title={<Titled k="+">no factories yet</Titled>} style={{ maxWidth: 560, padding: '16px 14px 12px', display: 'flex', flexDirection: 'column', gap: 10 }}>
             <p className="t-muted">
@@ -217,7 +217,7 @@ export function Home({ onSearch }: { onSearch: () => void }) {
         ) : (
           shown.length > 0 && <FactoryList cards={shown} onOpen={open} />
         )}
-      </main>
+      </section>
     </Screen>
   );
 }
@@ -225,7 +225,15 @@ export function Home({ onSearch }: { onSearch: () => void }) {
 function tagOf(c: Card): { text: string; status: Status } {
   if (c.needs) return { text: `${c.needs} need${c.needs === 1 ? 's' : ''} you`, status: 'needs' };
   if (c.working) return { text: `${c.working} working`, status: 'working' };
-  return { text: c.terms.length ? 'idle' : 'empty', status: 'idle' };
+  return { text: c.terms.length ? 'idle' : 'no terminals', status: 'idle' };
+}
+
+/** On a line, what's moving matters more than how many parts the factory has. */
+function lineWords(f?: Factory): string | null {
+  if (!f?.line.length) return null;
+  const toStart = f.work.filter((w) => w.stage === 'proposed').length;
+  const onLine = f.work.filter((w) => w.stage !== 'proposed' && w.stage !== 'ended').length;
+  return `${onLine} on the line · ${toStart} to start`;
 }
 
 function counts(f?: Factory) {
@@ -356,15 +364,21 @@ function FactoryPane({ card: c, runs, onOpen }: { card: Card; runs: Run[] | unde
           alignSelf: 'stretch',
         }}
       >
-        <span>
-          lib <span className="t-muted">{n.lib}</span>
-        </span>
-        <span>
-          rules <span className="t-muted">{n.rules}</span>
-        </span>
-        <span>
-          queue <span className="t-muted">{n.queue}</span>
-        </span>
+        {lineWords(c.factory) ? (
+          <span className="t-muted">{lineWords(c.factory)}</span>
+        ) : (
+          <>
+            <span>
+              lib <span className="t-muted">{n.lib}</span>
+            </span>
+            <span>
+              rules <span className="t-muted">{n.rules}</span>
+            </span>
+            <span>
+              queue <span className="t-muted">{n.queue}</span>
+            </span>
+          </>
+        )}
         <span style={{ flexGrow: 1 }} />
         <span aria-hidden="true" title="runs per hour, last 8 hours" style={{ letterSpacing: 1 }}>
           {spark(runs)}
@@ -386,9 +400,15 @@ function FactoryList({ cards, onOpen }: { cards: Card[]; onOpen: (c: Card) => vo
         <span />
         <span>factory</span>
         <span>terminals</span>
-        <span>lib</span>
-        <span>rules</span>
-        <span>queue</span>
+        {cards.every((c) => lineWords(c.factory)) ? (
+          <span style={{ gridColumn: 'span 3' }}>work</span>
+        ) : (
+          <>
+            <span>lib</span>
+            <span>rules</span>
+            <span>queue</span>
+          </>
+        )}
         <span>needs</span>
       </div>
       <ul>
@@ -419,9 +439,15 @@ function FactoryList({ cards, onOpen }: { cards: Card[]; onOpen: (c: Card) => vo
                   ))}
                   {c.terms.length === 0 && <span className="t-dim">--</span>}
                 </span>
-                <span className="t-muted">{n.lib}</span>
-                <span className="t-muted">{n.rules}</span>
-                <span className="t-muted">{n.queue}</span>
+                {lineWords(c.factory) ? (
+                  <span className="t-muted" style={{ gridColumn: 'span 3', whiteSpace: 'nowrap' }}>{lineWords(c.factory)}</span>
+                ) : (
+                  <>
+                    <span className="t-muted">{n.lib}</span>
+                    <span className="t-muted">{n.rules}</span>
+                    <span className="t-muted">{n.queue}</span>
+                  </>
+                )}
                 <span style={{ color: hot ? 'var(--red-text)' : 'var(--ink-3)', fontWeight: hot ? 600 : 400 }}>
                   {hot ? `! ${c.needs}` : '--'}
                 </span>
