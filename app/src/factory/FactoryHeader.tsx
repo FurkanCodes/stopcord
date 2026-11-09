@@ -1,20 +1,20 @@
 import type { ReactNode } from 'react';
 import type { Factory } from '../api';
-import { go, openFactory, type Tab } from '../store';
+import { openFactory, type Tab } from '../store';
 import { Brand, Key, Sep } from '../tui/kit';
 
 const tabs: [Tab, string, string][] = [
-  ['overview', '1', 'overview'],
-  ['terminals', '2', 'terminals'],
-  ['knowledge', '3', 'knowledge'],
-  ['runs', '4', 'runs'],
-  ['work', '5', 'work'],
-  ['inbox', '6', 'inbox'],
-  ['setup', '7', 'setup'],
+  ['work', '1', 'work'],
+  ['overview', '2', 'map'],
+  ['terminals', '3', 'terminals'],
+  ['knowledge', '4', 'knowledge'],
+  ['runs', '5', 'runs'],
+  ['setup', '6', 'setup'],
 ];
 
-/** sawtooth › factory │ [1] overview [2] terminals [3] knowledge [4] runs … [t] feed tickets */
+/** sawtooth › factory │ [1] work [2] map [3] terminals [4] knowledge [5] runs [6] setup */
 export function FactoryHeader({ factory, tab, extra }: { factory: Factory; tab: Tab; extra?: ReactNode }) {
+  const waiting = factory.work.filter((w) => w.stage === 'proposed' || (w.stage === 'running' && w.waiting !== 'no' && w.waiting !== 'landing')).length;
   return (
     <>
       <Brand />
@@ -27,16 +27,12 @@ export function FactoryHeader({ factory, tab, extra }: { factory: Factory; tab: 
         {tabs.map(([id, k, label]) => (
           <Key key={id} k={k} current={tab === id} onClick={() => tab !== id && openFactory(factory.id, id)}>
             {label}
+            {id === 'work' && waiting > 0 && <span className="t-dim">{waiting}</span>}
           </Key>
         ))}
       </nav>
       <span style={{ flexGrow: 1 }} />
       {extra}
-      {!extra && factory.parts.some((p) => p.kind === 'tickets') && (
-        <Key k="t" onClick={() => go({ screen: 'tickets', id: factory.id })}>
-          feed tickets
-        </Key>
-      )}
     </>
   );
 }

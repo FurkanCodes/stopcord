@@ -519,8 +519,8 @@ function TicketsBody({ factory, part, terminals, onOpenTerminal }: SidePaneProps
         ))}
       </ul>
       <span>
-        <button type="button" className="t-solid is-sm" onClick={() => go({ screen: 'tickets', id: factory.id })}>
-          t feed tickets
+        <button type="button" className="t-solid is-sm" onClick={() => go({ screen: 'factory', id: factory.id, tab: 'work' })}>
+          open work
         </button>
       </span>
     </Section>

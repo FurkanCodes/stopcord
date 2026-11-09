@@ -45,6 +45,107 @@ pub struct Changes {
     pub files: Vec<FileChange>,
 }
 
+/// One line of a diff, as a person reads it.
+#[derive(Debug, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct DiffLine {
+    /// "add", "del", "same", or "gap" between two hunks.
+    pub kind: &'static str,
+    /// Its number in the new file, for lines that are still there.
+    pub line: Option<u64>,
+    pub text: String,
+}
+
+#[derive(Debug, Serialize, PartialEq)]
+pub struct FileDiff {
+    pub path: String,
+    pub lines: Vec<DiffLine>,
+}
+
+/// What a person needs on screen to decide about a piece of work.
+#[derive(Debug, Default, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct Evidence {
+    /// The planner's plan, when it wrote one.
+    pub plan: Option<String>,
+    pub files: Vec<FileDiff>,
+    /// `git status` lines that a merge would refuse.
+    pub uncommitted: Vec<String>,
+    /// The branch a local merge goes into.
+    pub target: String,
+    /// The diff was too long to show whole.
+    pub truncated: bool,
+}
+
+/// More than this and a diff isn't something to read in a pane.
+const MAX_DIFF_LINES: usize = 4000;
+const MAX_PLAN_BYTES: usize = 64 * 1024;
+
+/// Turns `git diff` output into files and lines, stopping at `max` lines.
+fn parse_diff(text: &str, max: usize) -> (Vec<FileDiff>, bool) {
+    let mut files: Vec<FileDiff> = Vec::new();
+    let (mut new_line, mut shown, mut in_hunk) = (0u64, 0usize, false);
+    let strip = |p: &str| p.split('\t').next().unwrap_or(p).trim_matches('"').to_string();
+    for raw in text.lines() {
+        if raw.starts_with("diff --git ") {
+            files.push(FileDiff { path: String::new(), lines: Vec::new() });
+            in_hunk = false;
+            continue;
+        }
+        let Some(file) = files.last_mut() else { continue };
+        if let Some(rest) = raw.strip_prefix("@@ ") {
+            new_line = rest.split(" +").nth(1).and_then(|s| s.split([',', ' ']).next()).and_then(|n| n.parse().ok()).unwrap_or(1);
+            if in_hunk {
+                file.lines.push(DiffLine { kind: "gap", line: None, text: String::new() });
+            }
+            in_hunk = true;
+        } else if !in_hunk {
+            if let Some(p) = raw.strip_prefix("+++ b/") {
+                file.path = strip(p);
+            } else if let Some(p) = raw.strip_prefix("--- a/") {
+                file.path = strip(p);
+            } else if raw.starts_with("Binary files") {
+                let name = raw.rsplit(" b/").next().unwrap_or("").trim_end_matches(" differ");
+                if file.path.is_empty() {
+                    file.path = name.to_string();
+                }
+                file.lines.push(DiffLine { kind: "same", line: None, text: "binary file".to_string() });
+            }
+        } else if shown >= max {
+            return (files, true);
+        } else if let Some(t) = raw.strip_prefix('+') {
+            file.lines.push(DiffLine { kind: "add", line: Some(new_line), text: t.to_string() });
+            new_line += 1;
+            shown += 1;
+        } else if let Some(t) = raw.strip_prefix('-') {
+            file.lines.push(DiffLine { kind: "del", line: None, text: t.to_string() });
+            shown += 1;
+        } else if let Some(t) = raw.strip_prefix(' ') {
+            file.lines.push(DiffLine { kind: "same", line: Some(new_line), text: t.to_string() });
+            new_line += 1;
+            shown += 1;
+        }
+    }
+    (files, false)
+}
+
+/// The plan and the diff of a worktree since `base`, and where a merge would go.
+pub fn evidence(worktree: &Path, base: &str, project: &Path) -> Evidence {
+    let plan = std::fs::read(worktree.join("PLAN.md")).ok().map(|b| {
+        let end = b.len().min(MAX_PLAN_BYTES);
+        String::from_utf8_lossy(&b[..end]).into_owned()
+    });
+    let text = run(worktree, &["diff", "--no-renames", "--no-color", "--no-ext-diff", base]).unwrap_or_default();
+    let (files, truncated) = parse_diff(&text, MAX_DIFF_LINES);
+    let uncommitted = run(worktree, &["status", "--porcelain", "--untracked-files=normal"])
+        .unwrap_or_default()
+        .lines()
+        .map(|l| l.trim().to_string())
+        .collect();
+    let target = run(project, &["rev-parse", "--abbrev-ref", "HEAD"]).unwrap_or_default().trim().to_string();
+    Evidence { plan, files, uncommitted, target, truncated }
+}
+
 fn run(dir: &Path, args: &[&str]) -> Option<String> {
     let out = Command::new("git").arg("-C").arg(dir).args(args).output().ok()?;
     out.status
@@ -162,6 +263,28 @@ pub fn touched(root: &Path, since: u64) -> Vec<Touched> {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn a_diff_becomes_files_with_new_line_numbers() {
+        let text = "diff --git a/a.txt b/a.txt\nindex 1..2 100644\n--- a/a.txt\n+++ b/a.txt\n@@ -1,2 +1,2 @@\n keep\n-old\n+new\n@@ -9 +9,2 @@ fn x\n nine\n+ten\ndiff --git a/gone.txt b/gone.txt\n--- a/gone.txt\n+++ /dev/null\n@@ -1 +0,0 @@\n-bye\n";
+        let (files, cut) = parse_diff(text, 100);
+        assert!(!cut);
+        assert_eq!(files.iter().map(|f| f.path.as_str()).collect::<Vec<_>>(), ["a.txt", "gone.txt"]);
+        let a = &files[0].lines;
+        assert_eq!((a[2].kind, a[2].line, a[2].text.as_str()), ("add", Some(2), "new"));
+        assert_eq!(a[3].kind, "gap");
+        assert_eq!((a[5].kind, a[5].line), ("add", Some(10)));
+        assert_eq!(files[1].lines[0].kind, "del");
+    }
+
+    #[test]
+    fn a_long_diff_stops_and_says_so() {
+        let body: String = (0..50).map(|i| format!("+line {i}\n")).collect();
+        let text = format!("diff --git a/a b/a\n--- /dev/null\n+++ b/a\n@@ -0,0 +1,50 @@\n{body}");
+        let (files, cut) = parse_diff(&text, 10);
+        assert!(cut);
+        assert_eq!(files[0].lines.len(), 10);
+    }
 
     #[test]
     fn touched_lists_new_files_and_skips_hidden_and_tool_folders() {

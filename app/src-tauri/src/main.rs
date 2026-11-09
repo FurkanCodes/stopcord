@@ -668,6 +668,12 @@ fn work_action(
     Ok(app.info(app.store.get(&id).map_err(fail)?))
 }
 
+/// The plan and diff of a piece of work, for deciding about it.
+#[tauri::command(async)]
+fn work_evidence(engine: State<'_, Arc<Engine>>, id: String, key: String) -> Result<git::Evidence, Failure> {
+    engine.evidence(&id, &key).map_err(|e| Failure::new("work", e))
+}
+
 #[tauri::command(async)]
 fn accept_proposal(
     app: State<'_, App>,
@@ -894,6 +900,7 @@ fn main() {
             nearby_folders,
             detect_project,
             work_action,
+            work_evidence,
             accept_proposal,
             reject_proposal,
             pull_source,

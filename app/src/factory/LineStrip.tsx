@@ -15,13 +15,13 @@ export function LineStrip({ factory, onPick, selected, onSelect }: { factory: Fa
     <ol aria-label="The line" style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'stretch', gap: '6px 0', listStyle: 'none', margin: 0, padding: '0 12px' }}>
       {factory.line.map((s, i) => {
         const here = atStage(factory, s.id);
-        const waiting = here.some((w) => w.waiting !== 'no');
+        const waiting = here.some((w) => w.waiting !== 'no' && w.waiting !== 'landing');
         const solid = s.kind === 'gate';
         const Box = onSelect ? 'button' : 'div';
         return (
-          <li key={s.id} style={{ display: 'flex', alignItems: 'center' }}>
+          <li key={s.id} style={{ display: 'flex', alignItems: 'stretch' }}>
             {i > 0 && (
-              <span aria-hidden="true" className="t-dim" style={{ padding: '0 6px' }}>
+              <span aria-hidden="true" className="t-dim" style={{ padding: '0 6px', alignSelf: 'center' }}>
                 ──▶
               </span>
             )}
@@ -40,17 +40,17 @@ export function LineStrip({ factory, onPick, selected, onSelect }: { factory: Fa
                 {who[s.kind]}
                 {s.maxLoops ? ` · up to ${s.maxLoops} loops` : ''}
               </div>
-              <div style={{ fontSize: 12, display: 'flex', flexWrap: 'wrap', gap: '0 6px', minHeight: 18 }}>
+              <div style={{ fontSize: 12, display: 'flex', flexWrap: 'wrap', gap: '0 6px' }}>
                 {here.map((w) =>
                   onPick ? (
                     <button key={w.id} type="button" className="t-key" style={{ padding: '0 4px', fontSize: 12 }} onClick={() => onPick(w.ticket.key)}>
                       {w.ticket.key}
-                      {w.waiting !== 'no' && <span className="t-red"> needs you</span>}
+                      {w.waiting !== 'no' && w.waiting !== 'landing' && <span className="t-red"> needs you</span>}
                     </button>
                   ) : (
                     <span key={w.id}>
                       {w.ticket.key}
-                      {w.waiting !== 'no' && <span className="t-red"> needs you</span>}
+                      {w.waiting !== 'no' && w.waiting !== 'landing' && <span className="t-red"> needs you</span>}
                     </span>
                   ),
                 )}

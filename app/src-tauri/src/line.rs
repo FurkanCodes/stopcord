@@ -94,7 +94,7 @@ pub fn enter(f: &mut Factory, key: &str, id: &str, note: &str) -> Step {
             let text = if why == Waiting::Handoff {
                 format!("{key} is ready for you to merge")
             } else {
-                format!("{key} is waiting for your approval at {}", s.id)
+                format!("{key} is waiting for your approval")
             };
             Step::Person { stage: s.id, why, text }
         }

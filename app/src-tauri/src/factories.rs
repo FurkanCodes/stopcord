@@ -351,6 +351,10 @@ pub struct WorkItem {
     pub scores: Vec<Score>,
     /// Set when this item is a benchmark task.
     pub bench: Option<BenchRef>,
+    /// What a merge in progress is doing right now, in words.
+    pub merging: String,
+    /// Why the last merge didn't happen.
+    pub merge_error: String,
 }
 
 /// A scorer's opinion of a piece of work.

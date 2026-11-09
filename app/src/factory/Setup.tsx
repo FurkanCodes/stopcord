@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { api, type Agent, type BenchResult, type BenchTask, type Factory, type LineStage, type Part, type Report, type Runner, type Skill, type SourceTemplate, type Suite } from '../api';
 import { changeFactory, refreshFactories, showProblem } from '../store';
-import { Check, Empty, FieldRow, Key, Pane, Screen } from '../tui/kit';
+import { ArmedKey, Check, Empty, FieldRow, Key, Pane, Screen } from '../tui/kit';
 import { FactoryHeader } from './FactoryHeader';
 import { LineStrip } from './LineStrip';
 
@@ -11,7 +11,28 @@ const uniq = (base: string, taken: string[]) => {
   return id;
 };
 const list = (v?: string[]) => (v ?? []).join(', ');
-const unlist = (v: string) => v.split(',').map((s) => s.trim()).filter(Boolean);
+const unlist = (v: string, separator = ',') => v.split(separator).map((s) => s.trim()).filter(Boolean);
+
+/** A list in one field. Keeps what you typed, so a separator can be typed before the next item. */
+function ListText({ id, label, value, placeholder, separator = ',', onChange }: { id: string; label: string; value?: string[]; placeholder?: string; separator?: string; onChange: (v: string[]) => void }) {
+  const joined = (v?: string[]) => (v ?? []).join(separator === ',' ? ', ' : ` ${separator} `);
+  const [text, setText] = useState(joined(value));
+  useEffect(() => {
+    if (joined(unlist(text, separator)) !== joined(value)) setText(joined(value));
+  }, [value]);
+  return (
+    <Text
+      id={id}
+      label={label}
+      value={text}
+      placeholder={placeholder}
+      onChange={(v) => {
+        setText(v);
+        onChange(unlist(v, separator));
+      }}
+    />
+  );
+}
 
 function Text({ id, label, value, onChange, placeholder }: { id: string; label: string; value: string; onChange: (v: string) => void; placeholder?: string }) {
   return (
@@ -72,7 +93,7 @@ export function Setup({ factory, onRemove }: { factory: Factory; onRemove: () =>
     <Screen
       header={<FactoryHeader factory={factory} tab="setup" />}
       bodyStyle={{ overflow: 'auto', padding: '16px 8px 10px', display: 'flex', flexDirection: 'column', gap: 18 }}
-      hints={[['1-7', 'sections'], ['esc', 'every factory']]}
+      hints={[['1-6', 'sections'], ['esc', 'every factory']]}
       status={{ mode: 'SETUP', path: factory.name, info: 'saved as you type · every change is a commit' }}
     >
       {factory.proposals.map((p) => (
@@ -117,7 +138,7 @@ export function Setup({ factory, onRemove }: { factory: Factory; onRemove: () =>
                     ))}
                   </div>
                 </FieldRow>
-                <Text id={`st-pr-${i}`} label="protected tests" value={list(s.protect)} placeholder="tests/**, **/*.test.ts" onChange={(v) => stage(i, { protect: unlist(v) })} />
+                <ListText id={`st-pr-${i}`} label="protected tests" value={s.protect} placeholder="tests/**, **/*.test.ts" onChange={(v) => stage(i, { protect: v })} />
               </>
             )}
             <Pick id={`st-then-${i}`} label="then" value={s.then ?? ''} options={[['', 'end of the line'], ...stageIds]} onChange={(then) => stage(i, { then })} />
@@ -129,7 +150,7 @@ export function Setup({ factory, onRemove }: { factory: Factory; onRemove: () =>
                 <input id={`st-loop-${i}`} type="number" min={1} className="t-field" style={{ width: '8ch' }} value={s.maxLoops ?? 1} onChange={(e) => stage(i, { maxLoops: Number(e.currentTarget.value) || 1 })} />
               </FieldRow>
             )}
-            <span><Key size="xs" onClick={() => removeStage(i)}>remove stage</Key></span>
+            <span><ArmedKey size="xs" onClick={() => removeStage(i)}>remove stage</ArmedKey></span>
           </div>
         ))}
       </Pane>
@@ -147,14 +168,14 @@ export function Setup({ factory, onRemove }: { factory: Factory; onRemove: () =>
             <Pick id={`rn-l-${i}`} label="level" value={r.level} options={[['worktree', 'worktree: its own folder and branch'], ['contained', 'contained: OS sandbox and web filter'], ['vm', 'vm: a Linux virtual machine']]} onChange={(level) => runner(i, { level: level as Runner['level'] })} />
             {r.level === 'contained' && (
               <>
-                <Text id={`rn-n-${i}`} label="sites allowed" value={list(r.networkAllow)} placeholder="registry.npmjs.org, crates.io" onChange={(v) => runner(i, { networkAllow: unlist(v) })} />
-                <Text id={`rn-w-${i}`} label="also writes" value={list(r.write)} placeholder="~/.gradle" onChange={(v) => runner(i, { write: unlist(v) })} />
-                <Text id={`rn-d-${i}`} label="can't read" value={list(r.denyRead)} placeholder="~/.config/mine" onChange={(v) => runner(i, { denyRead: unlist(v) })} />
+                <ListText id={`rn-n-${i}`} label="sites allowed" value={r.networkAllow} placeholder="registry.npmjs.org, crates.io" onChange={(v) => runner(i, { networkAllow: v })} />
+                <ListText id={`rn-w-${i}`} label="also writes" value={r.write} placeholder="~/.gradle" onChange={(v) => runner(i, { write: v })} />
+                <ListText id={`rn-d-${i}`} label="can't read" value={r.denyRead} placeholder="~/.config/mine" onChange={(v) => runner(i, { denyRead: v })} />
               </>
             )}
-            <Text id={`rn-s-${i}`} label="setup commands" value={(r.setupCommands ?? []).join(' && ')} placeholder="npm ci && npm run build" onChange={(v) => runner(i, { setupCommands: v.split('&&').map((c) => c.trim()).filter(Boolean) })} />
+            <ListText id={`rn-s-${i}`} label="setup commands" value={r.setupCommands} separator="&&" placeholder="npm ci && npm run build" onChange={(v) => runner(i, { setupCommands: v })} />
             {r.level === 'vm' && <Text id={`rn-v-${i}`} label="vm command" value={r.vmCommand ?? ''} placeholder="limactl shell --workdir {dir} default bash -lc {cmd}" onChange={(vmCommand) => runner(i, { vmCommand })} />}
-            <span><Key size="xs" onClick={() => set({ runners: factory.runners.filter((_, j) => j !== i) })}>remove runner</Key></span>
+            <span><ArmedKey size="xs" onClick={() => set({ runners: factory.runners.filter((_, j) => j !== i) })}>remove runner</ArmedKey></span>
           </Fold>
         ))}
       </Pane>
@@ -171,7 +192,7 @@ export function Setup({ factory, onRemove }: { factory: Factory; onRemove: () =>
             <FieldRow id={`sk-b-${i}`} label="instructions" width="14ch" top>
               <textarea id={`sk-b-${i}`} className="t-field" rows={4} value={s.body} onChange={(e) => skill(i, { body: e.currentTarget.value })} />
             </FieldRow>
-            <span><Key size="xs" onClick={() => set({ skills: factory.skills.filter((_, j) => j !== i) })}>remove skill</Key></span>
+            <span><ArmedKey size="xs" onClick={() => set({ skills: factory.skills.filter((_, j) => j !== i) })}>remove skill</ArmedKey></span>
           </Fold>
         ))}
       </Pane>
@@ -181,10 +202,10 @@ export function Setup({ factory, onRemove }: { factory: Factory; onRemove: () =>
         {factory.reports.map((r, i) => (
           <Fold key={i} title={r.id} hint={list(r.on)}>
             <Text id={`rp-id-${i}`} label="name" value={r.id} onChange={(id) => report(i, { id })} />
-            <Text id={`rp-on-${i}`} label="when" value={list(r.on)} placeholder="approve, question, handoff, failed, landing, merged, dropped" onChange={(v) => report(i, { on: unlist(v) })} />
+            <ListText id={`rp-on-${i}`} label="when" value={r.on} placeholder="approve, question, handoff, failed, landing, merged, dropped" onChange={(v) => report(i, { on: v })} />
             <Text id={`rp-c-${i}`} label="command" value={r.command} placeholder={'curl -d "{\\"text\\":\\"$ST_TEXT\\"}" "$SLACK_WEBHOOK"'} onChange={(command) => report(i, { command })} />
             <span className="t-muted" style={{ fontSize: 12 }}>it gets $ST_EVENT $ST_KEY $ST_TITLE $ST_URL $ST_STAGE $ST_BRANCH $ST_SOURCE $ST_TEXT</span>
-            <span><Key size="xs" onClick={() => set({ reports: factory.reports.filter((_, j) => j !== i) })}>remove report</Key></span>
+            <span><ArmedKey size="xs" onClick={() => set({ reports: factory.reports.filter((_, j) => j !== i) })}>remove report</ArmedKey></span>
           </Fold>
         ))}
       </Pane>
@@ -257,7 +278,7 @@ function RolePane({ title, noun, note, items, runners, onChange }: { title: stri
           <FieldRow id={`${noun}-p-${i}`} label="role prompt" width="14ch" top>
             <textarea id={`${noun}-p-${i}`} className="t-field" rows={5} value={a.prompt} onChange={(e) => edit(i, { prompt: e.currentTarget.value })} />
           </FieldRow>
-          <span><Key size="xs" onClick={() => onChange(items.filter((_, j) => j !== i))}>remove {noun}</Key></span>
+          <span><ArmedKey size="xs" onClick={() => onChange(items.filter((_, j) => j !== i))}>remove {noun}</ArmedKey></span>
         </Fold>
       ))}
     </Pane>
@@ -303,7 +324,7 @@ function BenchPane({ factory, set }: { factory: Factory; set: (patch: Partial<Fa
                   <textarea id={`su-w-${i}-${j}`} className="t-field" rows={2} value={t.body} onChange={(e) => task(i, j, { body: e.currentTarget.value })} />
                 </FieldRow>
                 <Text id={`su-c-${i}-${j}`} label="solved when" value={t.check} placeholder="a command that passes. agents never see it" onChange={(check) => task(i, j, { check })} />
-                <span><Key size="xs" onClick={() => edit(i, { tasks: s.tasks.filter((_, x) => x !== j) })}>remove task</Key></span>
+                <span><ArmedKey size="xs" onClick={() => edit(i, { tasks: s.tasks.filter((_, x) => x !== j) })}>remove task</ArmedKey></span>
               </div>
             ))}
             {[...new Set(last.map((r) => r.candidate))].map((c) => {
@@ -318,7 +339,7 @@ function BenchPane({ factory, set }: { factory: Factory; set: (patch: Partial<Fa
             <span style={{ display: 'inline-flex', gap: 4 }}>
               <Key size="xs" onClick={() => edit(i, { tasks: [...s.tasks, { key: uniq('task', s.tasks.map((t) => t.key)), title: '', body: '', check: '' }] })}>add task</Key>
               <Key size="xs" disabled={s.tasks.length === 0 || running > 0} onClick={() => void api.runBenchmark(factory.id, s.id).then(refreshFactories, showProblem)}>{running > 0 ? `${running} running` : 'run'}</Key>
-              <Key size="xs" onClick={() => set({ benchmarks: factory.benchmarks.filter((_, j) => j !== i) })}>remove suite</Key>
+              <ArmedKey size="xs" onClick={() => set({ benchmarks: factory.benchmarks.filter((_, j) => j !== i) })}>remove suite</ArmedKey>
             </span>
           </Fold>
         );
@@ -339,7 +360,7 @@ function SourceCard({ p, part, needs, remove }: { p: Part; part: (id: string, pa
       <Check id={`src-as-${p.id}`} checked={!!p.autoStart} onChange={(autoStart) => part(p.id, { autoStart })}>
         start items by itself. outside text will reach an agent with no one looking
       </Check>
-      <span><Key size="xs" onClick={remove}>remove source</Key></span>
+      <span><ArmedKey size="xs" onClick={remove}>remove source</ArmedKey></span>
     </Fold>
   );
 }

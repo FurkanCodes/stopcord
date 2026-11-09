@@ -365,6 +365,9 @@ textarea::placeholder {
   height: 22px;
   padding: 0 6px;
 }
+.t-key.is-action {
+  border: 1px solid var(--line);
+}
 .t-key:hover:not(:disabled) {
   background-color: oklch(1 0 0 / 0.08);
 }
@@ -401,6 +404,9 @@ textarea::placeholder {
   white-space: nowrap;
   text-decoration: none;
 }
+.t-solid {
+  gap: 6px;
+}
 .t-solid.is-sm {
   height: 26px;
   padding: 0 8px;
@@ -428,7 +434,8 @@ textarea::placeholder {
 }
 .t-row[aria-pressed='true'],
 .t-row[aria-expanded='true'],
-.t-row[aria-selected='true'] {
+.t-row[aria-selected='true'],
+.t-row[aria-current='true'] {
   background: var(--sel);
 }
 .t-row[aria-pressed='true']:hover,

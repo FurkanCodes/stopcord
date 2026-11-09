@@ -1,6 +1,6 @@
 import type { Factory, Run, Terminal } from './api';
 import { laneOf } from './factory/parts';
-import { go, harnessOf, lampOf, needsOf, openFactory, sawtoothHome, setState, terminalsIn, useStore } from './store';
+import { allNeeds, go, harnessOf, lampOf, needsOf, openFactory, openNeed, sawtoothHome, setState, terminalsIn, useStore } from './store';
 import { tilde } from './text';
 import { ago } from './time';
 import { Brand, Empty, Glyph, Key, Pane, Screen, Sep, Titled, type Status } from './tui/kit';
@@ -45,6 +45,7 @@ export function Home({ onSearch }: { onSearch: () => void }) {
   const runs = useStore((s) => s.runs);
   const view = useStore((s) => s.homeView);
   const loaded = useStore((s) => s.loaded);
+  const needs = useStore(allNeeds);
   const [filter, setFilter] = useState<'all' | 'needs'>('all');
   const s = { factories, terminals };
 
@@ -66,10 +67,12 @@ export function Home({ onSearch }: { onSearch: () => void }) {
   const workingTotal = cards.reduce((n, c) => n + c.working, 0);
   const queuedTotal = factories.reduce((n, f) => n + f.queue.length, 0);
   const shown = cards.filter((c) => filter === 'all' || c.needs > 0);
+  const decisions = needs.filter((n) => n.kind === 'work');
 
   const open = (c: Card) => {
     lastOpened = c.id;
-    openFactory(c.id, c.factory ? 'overview' : 'terminals');
+    const waiting = c.factory?.work.some((w) => w.stage === 'proposed' || (w.stage === 'running' && w.waiting !== 'no' && w.waiting !== 'landing'));
+    openFactory(c.id, c.factory ? (waiting ? 'work' : 'overview') : 'terminals');
   };
 
   // A card has focus from the start, the one you came back from if any, so keys work at once.
@@ -99,12 +102,6 @@ export function Home({ onSearch }: { onSearch: () => void }) {
         return focus(at < 0 ? 0 : at + cols), true;
       case 'k':
         return focus(at < 0 ? 0 : at - cols), true;
-      case 'n': {
-        const hot = list.map((el, i) => (el.dataset.hot === 'true' ? i : -1)).filter((i) => i >= 0);
-        const next = hot.find((i) => i > at) ?? hot[0];
-        if (next !== undefined) focus(next);
-        return true;
-      }
       case 'a':
         return setFilter('all'), true;
       case '!':
@@ -165,7 +162,7 @@ export function Home({ onSearch }: { onSearch: () => void }) {
       hints={[
         ['h/j/k/l', 'move'],
         ['⏎', 'open factory'],
-        ['n', 'next needs you'],
+        ['n', 'next decision'],
         ['a/!', 'all or needs you'],
         ['c/v', 'canvas or list'],
         ['+', 'new factory'],
@@ -191,6 +188,22 @@ export function Home({ onSearch }: { onSearch: () => void }) {
                 + new factory
               </button>
             </span>
+          </Pane>
+        )}
+        {decisions.length > 0 && (
+          <Pane title={<Titled k="n">next up</Titled>} right={<span className="t-muted">oldest first</span>} style={{ padding: '12px 0 8px', marginBottom: 20 }}>
+            <ul aria-label="Decisions waiting for you">
+              {decisions.slice(0, 8).map((d) => (
+                <li key={`${d.factoryId}-${d.target}`}>
+                  <button type="button" className="t-row" style={{ display: 'flex', gap: 12, width: '100%', textAlign: 'left', padding: '3px 12px' }} onClick={() => openNeed(d)}>
+                    <Glyph status="needs" />
+                    <span className="t-muted" style={{ flex: '0 0 18ch', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{factories.find((f) => f.id === d.factoryId)?.name}</span>
+                    <span style={{ flex: '1 1 0', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d.text}</span>
+                    {d.at !== undefined && <span className="t-dim">{ago(d.at)}</span>}
+                  </button>
+                </li>
+              ))}
+            </ul>
           </Pane>
         )}
         {loaded && cards.length > 0 && shown.length === 0 && <Empty>nothing needs you</Empty>}
@@ -220,7 +233,7 @@ function counts(f?: Factory) {
   return {
     lib: String(f.parts.filter((p) => laneOf(p) === 'library').length),
     rules: String(f.parts.filter((p) => laneOf(p) === 'guard').length),
-    queue: String(f.queue.length),
+    queue: String(f.queue.length + f.work.filter((w) => w.stage === 'proposed').length),
   };
 }
 

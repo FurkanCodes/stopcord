@@ -48,6 +48,8 @@ let order = 0;
 
 function dispatch(e: KeyboardEvent) {
   if (e.defaultPrevented) return;
+  // Holding a key to move is fine. Holding one to answer or stop something is an accident.
+  if (e.repeat && !/^([hjkl]|Arrow.*)$/.test(e.key)) return;
   const list = [...listeners].sort((a, b) => b.options.priority - a.options.priority || b.order - a.order);
   for (const l of list) {
     if (!l.options.overlay && overlays > 0) continue;

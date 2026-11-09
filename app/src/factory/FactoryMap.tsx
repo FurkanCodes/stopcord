@@ -196,7 +196,8 @@ export function FactoryMap(props: FactoryMapProps) {
       tidy();
       return true;
     }
-    if (e.key === ' ') {
+    // Inside the side pane, space belongs to whatever has focus.
+    if (e.key === ' ' && !(e.target instanceof HTMLElement && e.target.closest('input, select, .t-drawer'))) {
       setPaused((p) => !p);
       return true;
     }
@@ -436,8 +437,7 @@ export function FactoryMap(props: FactoryMapProps) {
         ['r', 'tidy up'],
         ['p', 'add parts'],
         ['+', 'new terminal'],
-        ['1-7', 'sections'],
-        ...(factory.parts.some((p) => p.kind === 'tickets') ? ([['t', 'feed tickets']] as [string, string][]) : []),
+        ['1-6', 'sections'],
         ['space', 'pause the lines'],
         ['esc', 'close · back'],
         ['?', 'all keys'],

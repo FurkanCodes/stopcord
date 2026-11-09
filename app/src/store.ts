@@ -6,7 +6,7 @@ import { listen } from '@tauri-apps/api/event';
 import { api, daemon, failureText, sendLine, type Changes, type Factory, type Run, type Terminal } from './api';
 
 export type LampState = 'working' | 'needs' | 'idle';
-export type Tab = 'overview' | 'terminals' | 'knowledge' | 'runs' | 'work' | 'inbox' | 'setup';
+export type Tab = 'work' | 'overview' | 'terminals' | 'knowledge' | 'runs' | 'setup';
 export type View = 'canvas' | 'list';
 
 export type Route =
@@ -15,7 +15,6 @@ export type Route =
   /** Settings that belong to this machine: the sandbox, Slack, harnesses. */
   | { screen: 'settings' }
   /** The factory's ticket source: list tickets and feed some in. */
-  | { screen: 'tickets'; id: string }
   /**
    * `id` is a factory's id, or '' for terminals outside every factory.
    * `file` opens a library file in the knowledge tab, as "<part id>:<path>".
@@ -97,11 +96,28 @@ export function useStore<T>(select: (s: State) => T): T {
   );
 }
 
-export function go(route: Route) {
+let leaveGuard: (() => Promise<boolean>) | null = null;
+
+/** Set while leaving the screen would lose something. It answers whether leaving is all right. */
+export function setLeaveGuard(guard: (() => Promise<boolean>) | null) {
+  leaveGuard = guard;
+}
+
+function move(route: Route) {
   setState((s) => ({
     route,
     selected: route.screen === 'factory' && s.route.screen === 'factory' && s.route.id === route.id ? s.selected : null,
   }));
+}
+
+export function go(route: Route) {
+  const guard = leaveGuard;
+  if (!guard) return move(route);
+  void guard().then((ok) => {
+    if (!ok) return;
+    leaveGuard = null;
+    move(route);
+  });
 }
 
 export function openFactory(id: string, tab: Tab = 'overview', terminal?: string) {
@@ -390,6 +406,8 @@ export interface Need {
   terminal?: string | null;
   /** The work item's ticket key, for something on the line. */
   work?: string;
+  /** When it started waiting, for decisions. */
+  at?: number;
 }
 
 export interface FleetNeed extends Need {
@@ -405,8 +423,20 @@ export function allNeeds(s: Pick<State, 'terminals' | 'factories'>): FleetNeed[]
     ...s.factories.flatMap((f) => needsOf(f, terminalsIn(f.id, s)).map((n) => ({ ...n, factoryId: f.id }))),
     ...needsOf(undefined, terminalsIn('', s)).map((n) => ({ ...n, factoryId: '' })),
   ];
+  // Decisions first, oldest first. Everything else keeps its order behind them.
+  list.sort((a, b) => Number(b.kind === 'work') - Number(a.kind === 'work') || (a.kind === 'work' && b.kind === 'work' ? (a.at ?? 0) - (b.at ?? 0) : 0));
   needsCache = { terminals: s.terminals, factories: s.factories, list };
   return list;
+}
+
+/** Goes to the oldest thing that needs you, other than the work already on screen. */
+export function openNextNeed(): boolean {
+  const needs = allNeeds(state);
+  if (needs.length === 0) return false;
+  const r = state.route;
+  const here = r.screen === 'factory' && r.tab === 'work' ? r.work : undefined;
+  openNeed(needs.find((n) => !(n.kind === 'work' && r.screen === 'factory' && n.factoryId === r.id && n.work === here)) ?? needs[0]!);
+  return true;
 }
 
 /** Goes to what needs you: a terminal's question, the knowledge base to review, or what the engine gave up on. Opening an alert counts as seeing it. */
@@ -415,7 +445,7 @@ export function openNeed(n: FleetNeed) {
   else if (n.kind === 'proposal') openFactory(n.factoryId, 'setup');
   else if (n.kind === 'knowledge') openFactory(n.factoryId, 'knowledge');
   else if (n.kind === 'work') go({ screen: 'factory', id: n.factoryId, tab: 'work', work: n.work });
-  else if (n.kind === 'denied') go({ screen: 'factory', id: n.factoryId, tab: 'work' });
+  else if (n.kind === 'denied') go({ screen: 'factory', id: n.factoryId, tab: 'work', work: n.work });
   else {
     if (n.terminal) openFactory(n.factoryId, 'terminals', n.terminal);
     else openFactory(n.factoryId, 'runs');
@@ -444,10 +474,11 @@ export function needsOf(f: Factory | undefined, terminals: Terminal[]): Need[] {
     if (a.kind === 'proposal') {
       out.push({ text: a.text, target: a.key, kind: 'proposal' });
     } else if (a.kind === 'denied') {
-      out.push({ text: a.text, target: a.key, kind: 'denied', terminal: a.terminal });
+      const owner = f?.work.find((w) => a.terminal && Object.values(w.agents).includes(a.terminal));
+      out.push({ text: a.text, target: a.key, kind: 'denied', terminal: a.terminal, work: owner?.ticket.key });
     } else if (a.work) {
       const key = f?.work.find((w) => w.id === a.work)?.ticket.key;
-      out.push({ text: a.text, target: a.key, kind: 'work', terminal: a.terminal, work: key });
+      out.push({ text: a.text, target: a.key, kind: 'work', terminal: a.terminal, work: key, at: a.at });
     } else {
       out.push({ text: a.text, target: a.key, kind: 'alert', terminal: a.terminal });
     }

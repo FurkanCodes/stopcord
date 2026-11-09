@@ -84,7 +84,7 @@ export function Runs({ factory, runs, terminals }: { factory: Factory; runs: Run
         ['⏎', 'details'],
         ['a c i s', 'filter'],
         ['f', 'follow'],
-        ['1-4', 'sections'],
+        ['1-6', 'sections'],
         ['esc', 'back'],
         ['?', 'all keys'],
       ]}

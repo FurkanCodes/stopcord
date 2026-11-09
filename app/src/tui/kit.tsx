@@ -1,8 +1,9 @@
 // The terminal-style pieces every screen is built from: panes with their title on the
 // border, [key] buttons, status glyphs, the key-hint row and the status line.
 
-import { useEffect, type ButtonHTMLAttributes, type CSSProperties, type HTMLAttributes, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ButtonHTMLAttributes, type CSSProperties, type HTMLAttributes, type ReactNode } from 'react';
 import { allNeeds, go, openNeed, setState, useStore } from '../store';
+import { plain, useKeys } from './keys';
 
 export type Status = 'working' | 'needs' | 'idle';
 
@@ -79,6 +80,34 @@ export function Key({ k, pressed, current, expanded, size = 'md', className, chi
       {k !== undefined && <span className="t-dim">[{k}]</span>}
       {children}
     </button>
+  );
+}
+
+/** The first press arms an action and the second runs it, for things that are hard to take back. */
+export function useArm(ms = 3000) {
+  const [armed, setArmed] = useState('');
+  const timer = useRef(0);
+  useEffect(() => () => window.clearTimeout(timer.current), []);
+  const press = (name: string, run: () => void) => {
+    window.clearTimeout(timer.current);
+    if (armed === name) {
+      setArmed('');
+      run();
+      return;
+    }
+    setArmed(name);
+    timer.current = window.setTimeout(() => setArmed(''), ms);
+  };
+  return { armed, press };
+}
+
+/** A key that asks for a second press before it does anything. */
+export function ArmedKey({ onClick, children, ...rest }: KeyProps) {
+  const { armed, press } = useArm();
+  return (
+    <Key {...rest} onClick={(e) => press('go', () => onClick?.(e))}>
+      {armed ? 'press again' : children}
+    </Key>
   );
 }
 
@@ -261,6 +290,12 @@ export function Screen({ header, children, hints, status, message, bodyStyle }: 
 }
 
 function Problem({ text }: { text: string }) {
+  useKeys((e) => {
+    if (plain(e) && e.key === 'x') {
+      setState({ problem: null });
+      return true;
+    }
+  }, { priority: 5 });
   return (
     <div role="status" className="t-message" style={{ color: 'var(--ink)' }}>
       <span className="t-dim">✗</span>

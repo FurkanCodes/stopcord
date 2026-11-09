@@ -14,7 +14,7 @@ use crate::engine::{Engine, StartRequest};
 use crate::factories::{Alert, Factory, Finding, LineStage, Score, Stage, StageKind, Waiting, WorkItem};
 use crate::line::{self, Action, Step};
 use crate::runs::{self, Run};
-use crate::{gate, harness, hooks, shell, worktree};
+use crate::{gate, git, harness, hooks, shell, worktree};
 
 const LANDED_TIMEOUT: Duration = Duration::from_secs(30);
 pub(crate) const GATE_TIMEOUT: Duration = Duration::from_secs(30 * 60);
@@ -23,6 +23,26 @@ const REPORT_GRACE: Duration = Duration::from_secs(4);
 
 const TRUST_SETTLE: Duration = Duration::from_millis(1200);
 const TRUST_STEP: Duration = Duration::from_millis(250);
+
+/// A person's action, the way the timeline says it.
+fn person_said(action: &str, key: &str, note: &str) -> String {
+    let word = match action {
+        "approve" => "approved",
+        "sendBack" => "sent back",
+        "treatAsDone" => "marked done",
+        "drop" => "dropped",
+        "merge" => "asked to merge",
+        "landed" => "marked as merged",
+        "answer" => "answered",
+        other => other,
+    };
+    let note = note.trim();
+    if note.is_empty() || !matches!(action, "sendBack" | "answer") {
+        format!("{word} {key}")
+    } else {
+        format!("{word} {key}: {note}")
+    }
+}
 
 pub fn alert_key(work: &str) -> String {
     format!("work:{work}")
@@ -114,6 +134,14 @@ impl Engine {
             }
             Step::Person { stage, why, text } => {
                 self.flag_before_asking(factory, key, &stage, why, &w);
+                if why == Waiting::Handoff {
+                    self.drop_site_requests(factory, &w);
+                    let _ = self.store.update(factory, |fa| {
+                        if let Some(i) = fa.work.iter_mut().find(|i| i.ticket.key == key) {
+                            i.merge_error.clear();
+                        }
+                    });
+                }
                 let (kind, event) = match why {
                     Waiting::Approve => ("approve", "approve"),
                     Waiting::Handoff => ("handoff", "handoff"),
@@ -137,7 +165,7 @@ impl Engine {
                 });
                 self.log(
                     factory,
-                    Run::new("line", format!("{key} is waiting at {stage}: {text}"))
+                    Run::new("line", text.clone())
                         .ok(why != Waiting::Failed)
                         .work(&w.id)
                         .by("engine"),
@@ -145,6 +173,7 @@ impl Engine {
                 self.report_back(&f, &w, event, &text);
             }
             Step::End { outcome } => {
+                self.drop_site_requests(factory, &w);
                 let _ = self.store.update(factory, |fa| {
                     if let Some(i) = fa.work.iter_mut().find(|i| i.ticket.key == key) {
                         i.stage = Stage::Ended;
@@ -328,6 +357,32 @@ impl Engine {
         (passed, all)
     }
 
+    /// A request for a site from a stage that's over has nobody left to answer it for.
+    fn drop_site_requests(&self, factory: &str, w: &WorkItem) {
+        let _ = self.store.update(factory, |fa| {
+            fa.alerts.retain(|a| a.kind != "denied" || !a.terminal.as_ref().is_some_and(|t| w.agents.values().any(|x| x == t)));
+        });
+    }
+
+    /// What a person needs on screen to decide about this work.
+    pub fn evidence(&self, factory: &str, key: &str) -> Result<git::Evidence, String> {
+        let f = self.store.get(factory).map_err(|e| format!("{e:#}"))?;
+        let w = item_of(&f, key).ok_or_else(|| format!("there's no work item {key}"))?;
+        if w.worktree.is_empty() {
+            return Ok(git::Evidence::default());
+        }
+        Ok(git::evidence(Path::new(&w.worktree), &w.base, Path::new(&f.path)))
+    }
+
+    /// Says what a merge is doing, for the window. Empty means it's over.
+    fn merge_status(&self, factory: &str, key: &str, text: String) {
+        let _ = self.store.update(factory, |fa| {
+            if let Some(i) = fa.work.iter_mut().find(|i| i.ticket.key == key) {
+                i.merging = text.clone();
+            }
+        });
+    }
+
     /// What a person should know before answering, put on the work item itself.
     fn flag_before_asking(&self, factory: &str, key: &str, stage: &str, why: Waiting, w: &WorkItem) {
         let dir = Path::new(&w.worktree);
@@ -400,6 +455,12 @@ impl Engine {
 
     /// Picks up work the app was in the middle of when it stopped.
     pub(crate) fn resume(self: &Arc<Self>, f: &Factory) {
+        // A merge that was running when the app stopped isn't running any more.
+        for w in f.work.iter().filter(|w| !w.merging.is_empty()) {
+            if !self.state.lock().unwrap().stepping.contains(&(f.id.clone(), w.ticket.key.clone())) {
+                self.merge_status(&f.id, &w.ticket.key, String::new());
+            }
+        }
         for w in f.work.iter().filter(|w| w.stage == Stage::Running && w.waiting == Waiting::No && !w.line_stage.is_empty()) {
             let guard = (f.id.clone(), w.ticket.key.clone());
             if self.state.lock().unwrap().stepping.contains(&guard) {
@@ -628,27 +689,49 @@ impl Engine {
             return Err(format!("{key} has already ended"));
         }
         let guard = (factory.to_string(), key.to_string());
-        if action == "merge" {
-            if w.waiting != Waiting::Handoff {
-                return Err(format!("{key} isn't ready to merge"));
+        if action == "answer" {
+            if w.waiting != Waiting::Question {
+                return Err(format!("{key} isn't asking anything right now"));
             }
-            // A second press while the gates run is the same merge.
-            if !self.state.lock().unwrap().stepping.insert(guard.clone()) {
-                return Ok(());
+            if note.trim().is_empty() {
+                return Err("Write an answer first.".to_string());
+            }
+            if w.terminal.is_none() {
+                return Err(format!("{key} has no terminal to answer in. Send it back instead."));
             }
         }
-        self.log(factory, Run::new("line", format!("{action} on {key}")).work(&w.id).by("person"));
+        if action == "merge" && w.waiting != Waiting::Handoff {
+            return Err(format!("{key} isn't ready to merge"));
+        }
+        // A second press while this is still happening is the same press.
+        if matches!(action, "merge" | "answer") && !self.state.lock().unwrap().stepping.insert(guard.clone()) {
+            return Ok(());
+        }
+        self.log(factory, Run::new("line", person_said(action, key, note)).work(&w.id).by("person"));
         let act = match action {
             "approve" => Action::Approve,
             "sendBack" => Action::SendBack { note: note.to_string() },
             "treatAsDone" => Action::TreatAsDone,
             "drop" => Action::Drop,
             "landed" => Action::Merged,
+            "answer" => {
+                let me = Arc::clone(self);
+                let (fid, key, term, text) = (factory.to_string(), key.to_string(), w.terminal.clone().unwrap_or_default(), note.to_string());
+                std::thread::spawn(move || {
+                    // The agent starting its turn is what takes the work off "asking".
+                    if let Err(e) = me.type_engine_turn(&term, &text) {
+                        me.log(&fid, Run::new("line", format!("{key}: the answer didn't reach the agent. {e}")).ok(false).by("engine"));
+                    }
+                    me.state.lock().unwrap().stepping.remove(&(fid.clone(), key.clone()));
+                });
+                return Ok(());
+            }
             "merge" => {
                 let me = Arc::clone(self);
                 let (fid, key) = (factory.to_string(), key.to_string());
                 std::thread::spawn(move || {
                     me.merge(&fid, &key);
+                    me.merge_status(&fid, &key, String::new());
                     me.state.lock().unwrap().stepping.remove(&guard);
                 });
                 return Ok(());
@@ -671,6 +754,9 @@ impl Engine {
                 return;
             }
             let _ = self.store.update(factory, |fa| {
+                if let Some(i) = fa.work.iter_mut().find(|i| i.ticket.key == key) {
+                    i.merge_error = text.clone();
+                }
                 crate::work::raise_kind(
                     fa,
                     Alert {
@@ -686,7 +772,14 @@ impl Engine {
             });
             self.log(factory, Run::new("line", text).ok(false).work(&w.id).by("engine"));
         };
-        for stage in f.line.iter().filter(|s| s.kind == StageKind::Gate) {
+        let _ = self.store.update(factory, |fa| {
+            if let Some(i) = fa.work.iter_mut().find(|i| i.ticket.key == key) {
+                i.merge_error.clear();
+            }
+        });
+        let gates: Vec<&LineStage> = f.line.iter().filter(|s| s.kind == StageKind::Gate).collect();
+        for (n, stage) in gates.iter().enumerate() {
+            self.merge_status(factory, key, format!("running {}, {} of {}", stage.id, n + 1, gates.len()));
             let (passed, output) = self.gate_checks(&f, &w, stage);
             if !passed {
                 say(format!("{key} can't merge: {} failed again.\n{output}", stage.id));
@@ -696,6 +789,7 @@ impl Engine {
         if !still_open() {
             return;
         }
+        self.merge_status(factory, key, "merging".to_string());
         let how = stage_of(&f, &w).map(|s| s.merge.clone()).unwrap_or_default();
         let project = Path::new(&f.path);
         if how.trim().is_empty() {
@@ -793,7 +887,7 @@ impl Engine {
                 let _ = runs::append(
                     &store,
                     &fid,
-                    &Run::new("report", format!("{} {}", r.id, if ok { "sent" } else { "failed" })).ok(ok).work(&work).by("engine").detail(&output),
+                    &Run::new("report", format!("report {} {}", r.id, if ok { "sent" } else { "failed" })).ok(ok).work(&work).by("engine").detail(&output),
                 );
             }
         });

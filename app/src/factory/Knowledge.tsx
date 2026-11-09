@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState, type ReactElement } from 'react';
 import { confirm } from '@tauri-apps/plugin-dialog';
 import { listen } from '@tauri-apps/api/event';
 import { api, type Factory, type Knowledge as KnowledgeData } from '../api';
-import { refreshFactories, showProblem } from '../store';
+import { refreshFactories, showProblem, setLeaveGuard } from '../store';
 import { Empty, Key, Pane, Screen, Titled } from '../tui/kit';
 import { moveFocus, plain, useKeys } from '../tui/keys';
 import { FactoryHeader } from './FactoryHeader';
@@ -34,6 +34,10 @@ export function Knowledge({ factory, file }: { factory: Factory; file?: string }
   const [section, setSection] = useState<Section>(() => sectionFrom(file));
   const [text, setText] = useState('');
   const [dirty, setDirty] = useState(false);
+  useEffect(() => {
+    setLeaveGuard(dirty ? () => confirm('Leave without saving your changes?', { title: 'Unsaved changes', okLabel: 'Leave', cancelLabel: 'Stay' }) : null);
+    return () => setLeaveGuard(null);
+  }, [dirty]);
   const [decided, setDecided] = useState<Record<string, Decision>>({});
   // Runs of unchanged lines opened up in the diff, by where they start.
   const [unfolded, setUnfolded] = useState<Set<number>>(new Set());
@@ -220,7 +224,7 @@ export function Knowledge({ factory, file }: { factory: Factory; file?: string }
         ...(reviewing ? ([['y', 'ok to the next change'], ['n', 'no to the next change']] as [string, string][]) : []),
         ['⌘S', 'save'],
         ['tab', 'next pane'],
-        ['1-4', 'sections'],
+        ['1-6', 'sections'],
         ['esc', 'back'],
         ['?', 'all keys'],
       ]}

@@ -137,6 +137,24 @@ export interface WorkItem {
   bench?: { suite: string; run: string; task: string };
   summary: string;
   base: string;
+  merging: string;
+  mergeError: string;
+}
+
+export type WorkVerb = 'approve' | 'sendBack' | 'treatAsDone' | 'drop' | 'merge' | 'landed' | 'answer';
+
+export interface DiffLine {
+  kind: 'add' | 'del' | 'same' | 'gap';
+  line: number | null;
+  text: string;
+}
+
+export interface Evidence {
+  plan: string | null;
+  files: { path: string; lines: DiffLine[] }[];
+  uncommitted: string[];
+  target: string;
+  truncated: boolean;
 }
 
 export interface Ticket {
@@ -372,10 +390,9 @@ export const api = {
   readFile: (id: string, path: string) => invoke<string>('read_file', { id, path }),
   writeFile: (id: string, path: string, text: string) => invoke<void>('write_file', { id, path, text }),
   folderFiles: (id: string, partId: string) => invoke<FileEntry[]>('folder_files', { id, partId }),
-  listTickets: (id: string, source?: string) => invoke<Ticket[]>('list_tickets', { id, source }),
-  feedTickets: (id: string, tickets: Ticket[], source?: string) => invoke<Factory>('feed_tickets', { id, tickets, source }),
-  workAction: (id: string, key: string, action: 'approve' | 'sendBack' | 'treatAsDone' | 'drop' | 'merge' | 'landed', note?: string) =>
+  workAction: (id: string, key: string, action: WorkVerb, note?: string) =>
     invoke<Factory>('work_action', { id, key, action, note }),
+  workEvidence: (id: string, key: string) => invoke<Evidence>('work_evidence', { id, key }),
   runBenchmark: (id: string, suite: string) => invoke<string>('run_benchmark', { id, suite }),
   benchmarkResults: (id: string) => invoke<BenchResult[]>('benchmark_results', { id }),
   answerProposal: (id: string, proposal: string, apply: boolean) => invoke<Factory>('answer_proposal', { id, proposal, apply }),
