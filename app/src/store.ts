@@ -383,7 +383,9 @@ export interface Need {
   text: string;
   /** A terminal id, or a part id. */
   target: string;
-  kind: 'terminal' | 'knowledge';
+  kind: 'terminal' | 'knowledge' | 'alert';
+  /** An alert's terminal, when it has one. */
+  terminal?: string | null;
 }
 
 export interface FleetNeed extends Need {
@@ -403,10 +405,18 @@ export function allNeeds(s: Pick<State, 'terminals' | 'factories'>): FleetNeed[]
   return list;
 }
 
-/** Goes to what needs you: a terminal's question, or the knowledge base to review. */
+/** Goes to what needs you: a terminal's question, the knowledge base to review, or what the engine gave up on. Opening an alert counts as seeing it. */
 export function openNeed(n: FleetNeed) {
   if (n.kind === 'terminal') openFactory(n.factoryId, 'terminals', n.target);
-  else openFactory(n.factoryId, 'knowledge');
+  else if (n.kind === 'knowledge') openFactory(n.factoryId, 'knowledge');
+  else {
+    if (n.terminal) openFactory(n.factoryId, 'terminals', n.terminal);
+    else openFactory(n.factoryId, 'runs');
+    void api
+      .dismissAlert(n.factoryId, n.target)
+      .then(refreshFactories)
+      .catch(showProblem);
+  }
 }
 
 /** Sawtooth's own folder, from where it keeps worktrees. */
@@ -423,5 +433,6 @@ export function needsOf(f: Factory | undefined, terminals: Terminal[]): Need[] {
     const kb = f.parts.find((p) => p.kind === 'knowledge');
     out.push({ text: 'Review changes to the knowledge base', target: kb?.id ?? 'kb', kind: 'knowledge' });
   }
+  for (const a of f?.alerts ?? []) out.push({ text: a.text, target: a.key, kind: 'alert', terminal: a.terminal });
   return out;
 }

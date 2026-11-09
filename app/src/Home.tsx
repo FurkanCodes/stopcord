@@ -311,6 +311,17 @@ function FactoryPane({ card: c, runs, onOpen }: { card: Card; runs: Run[] | unde
             <span style={{ flexGrow: 1, minWidth: 0 }}>review what an agent changed</span>
           </span>
         )}
+        {c.factory?.alerts.map((alert) => (
+          <span key={alert.key} className="t-red" style={{ display: 'flex', gap: 10, padding: '1px 12px' }}>
+            <span aria-hidden="true" style={{ width: 10, flexShrink: 0, color: 'var(--red)' }}>
+              !
+            </span>
+            <span className="t-dim" style={{ width: '10ch', flexShrink: 0 }}>
+              stopped
+            </span>
+            <span style={{ flexGrow: 1, minWidth: 0 }}>{alert.text}</span>
+          </span>
+        ))}
       </span>
 
       <span

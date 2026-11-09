@@ -267,6 +267,14 @@ fn factories(app: State<'_, App>) -> Result<Vec<FactoryInfo>, Failure> {
     Ok(list.into_iter().map(|f| app.info(f)).collect())
 }
 
+/// The person has looked at an alert.
+#[tauri::command(async)]
+fn dismiss_alert(app: State<'_, App>, id: String, key: String) -> Result<(), Failure> {
+    app.store
+        .update(&id, |f| work::clear(f, &key))
+        .map_err(fail)
+}
+
 /// Factories whose settings can't be read, in words.
 #[tauri::command(async)]
 fn broken_factories(app: State<'_, App>) -> Vec<String> {
@@ -692,6 +700,7 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![
             broken_factories,
+            dismiss_alert,
             leave_key::in_terminal,
             daemon,
             view,

@@ -485,6 +485,17 @@ impl Engine {
         let _ = runs::append(&self.store, factory, &run);
     }
 
+    /// Puts something in front of the person, in NEEDS on every screen.
+    fn alert(&self, factory: &str, key: &str, text: &str, terminal: Option<&str>) {
+        let _ = self.store.update(factory, |f| {
+            work::raise(f, key, text, terminal, runs::now_ms());
+        });
+    }
+
+    fn clear_alert(&self, factory: &str, key: &str) {
+        let _ = self.store.update(factory, |f| work::clear(f, key));
+    }
+
     fn name_of(&self, id: &str) -> String {
         self.state
             .lock()
@@ -534,6 +545,9 @@ impl Engine {
             }
             (engine_turn, streak)
         };
+        if !engine_turn {
+            let _ = self.store.update(&factory.id, |f| work::clear_fixes(f, id));
+        }
         let checks: Vec<&Part> = factory
             .parts
             .iter()
@@ -553,6 +567,12 @@ impl Engine {
                         )
                         .ok(false)
                         .terminal(Some(id)),
+                    );
+                    self.alert(
+                        &factory.id,
+                        &format!("fix:{id}:quiet"),
+                        &format!("{name}: a check still fails after {MAX_FIX_TURNS} tries"),
+                        Some(id),
                     );
                 }
                 return;
@@ -593,6 +613,7 @@ impl Engine {
                         .insert(id.to_string());
                     if let Err(e) = self.type_prompt(id, &prompt) {
                         self.state.lock().unwrap().engine_turns.remove(id);
+                        self.alert(&factory.id, &format!("fix:{id}:quiet"), &format!("{} failed: {e}", part.name), Some(id));
                         self.log(
                             &factory.id,
                             Run::new("check", e).ok(false).terminal(Some(id)),
@@ -645,24 +666,29 @@ impl Engine {
         let id = match target {
             Ok(id) => id,
             Err(e) => {
+                self.alert(&factory.id, &format!("trigger:{}", part.id), &e, None);
                 self.log(&factory.id, Run::new("trigger", e).ok(false).part(&part.id));
                 return;
             }
         };
         self.state.lock().unwrap().engine_turns.insert(id.clone());
         match self.type_prompt(&id, &part.prompt) {
-            Ok(()) => self.log(
-                &factory.id,
-                Run::new(
-                    "trigger",
-                    format!("{} typed its prompt into {}", part.name, self.name_of(&id)),
-                )
-                .ok(true)
-                .part(&part.id)
-                .terminal(Some(&id)),
-            ),
+            Ok(()) => {
+                self.clear_alert(&factory.id, &format!("trigger:{}", part.id));
+                self.log(
+                    &factory.id,
+                    Run::new(
+                        "trigger",
+                        format!("{} typed its prompt into {}", part.name, self.name_of(&id)),
+                    )
+                    .ok(true)
+                    .part(&part.id)
+                    .terminal(Some(&id)),
+                );
+            }
             Err(e) => {
                 self.state.lock().unwrap().engine_turns.remove(&id);
+                self.alert(&factory.id, &format!("trigger:{}", part.id), &format!("{}: {e}", part.name), Some(&id));
                 self.log(
                     &factory.id,
                     Run::new("trigger", e)
@@ -765,12 +791,9 @@ impl Engine {
                 && !factory.queue.is_empty()
                 && self.state.lock().unwrap().warned.insert(factory.id.clone())
             {
-                self.log(
-                    &factory.id,
-                    Run::new("ticket", "Tickets are waiting, but the ticket source has no start command. Pick a harness for it.")
-                        .ok(false)
-                        .part(&s.id),
-                );
+                let text = "Tickets are waiting, but the ticket source has no start command. Pick a harness for it.";
+                self.alert(&factory.id, "source", text, None);
+                self.log(&factory.id, Run::new("ticket", text).ok(false).part(&s.id));
             }
             let room = source.as_ref().map_or(1, |s| s.at_once.max(1) as usize);
             let now = runs::now_ms();
@@ -796,6 +819,9 @@ impl Engine {
                     .map(|(_, key)| key.clone())
                     .collect();
                 let changes = work::settle(f, &live, &mine, lost, now);
+                if can_start {
+                    work::clear(f, "source");
+                }
                 let next = if can_start {
                     work::claim(f, room, now)
                 } else {
@@ -810,7 +836,15 @@ impl Engine {
                 continue;
             };
             for change in changes {
-                self.log(&id, change_run(change));
+                let run = change_run(&change);
+                match &change {
+                    Change::Lost { key, .. } => self.alert(&id, &work::ticket_alert(key), &run.text, None),
+                    Change::Adopted { key, terminal } => {
+                        self.alert(&id, &work::ticket_alert(key), &run.text, Some(terminal));
+                    }
+                    Change::Closed { .. } | Change::Requeued { .. } => {}
+                }
+                self.log(&id, run);
             }
             if let (Some(item), Some(source)) = (next, source) {
                 let me = Arc::clone(self);
@@ -870,6 +904,9 @@ impl Engine {
                         f.message
                     ),
                 };
+                if !matches!(retry, Ok(Retry::AfterSecs(_))) {
+                    self.alert(&factory.id, &work::ticket_alert(&ticket.key), &text, None);
+                }
                 self.log(&factory.id, Run::new("ticket", text).ok(false).part(&source.id));
                 return;
             }
@@ -893,12 +930,11 @@ impl Engine {
                     .part(&source.id)
                     .terminal(Some(&id)),
             ),
-            Err(e) => self.log(
-                &factory.id,
-                Run::new("ticket", format!("{}: {e}. It has a terminal but never got the ticket.", ticket.key))
-                    .ok(false)
-                    .terminal(Some(&id)),
-            ),
+            Err(e) => {
+                let text = format!("{}: {e}. It has a terminal but never got the ticket.", ticket.key);
+                self.alert(&factory.id, &work::ticket_alert(&ticket.key), &text, Some(&id));
+                self.log(&factory.id, Run::new("ticket", text).ok(false).terminal(Some(&id)));
+            }
         }
     }
 
@@ -970,7 +1006,12 @@ impl Engine {
                         continue;
                     }
                     match run.ok {
-                        Some(true) => self.state.lock().unwrap().fix_limit.passed(&f.id, check, terminal),
+                        Some(true) => {
+                            self.state.lock().unwrap().fix_limit.passed(&f.id, check, terminal);
+                            for scope in [terminal, "*"] {
+                                self.clear_alert(&f.id, &format!("fix:{scope}:{check}"));
+                            }
+                        }
                         Some(false) => self.check_failed(f, check, terminal),
                         None => {}
                     }
@@ -1020,16 +1061,17 @@ impl Engine {
                     let (factory, part, source) = (f.clone(), trigger.clone(), terminal.to_string());
                     thread::spawn(move || me.run_trigger(&factory, &part, Some(&source)));
                 }
-                Ask::StopNow => self.log(
-                    &f.id,
-                    Run::new(
-                        "trigger",
-                        format!("{} asked {MAX_FIX_TURNS} times in a row and the check still fails, so Sawtooth stopped asking", trigger.name),
-                    )
-                    .ok(false)
-                    .part(&trigger.id)
-                    .terminal(Some(terminal)),
-                ),
+                Ask::StopNow => {
+                    let text = format!("{} asked {MAX_FIX_TURNS} times in a row and the check still fails, so Sawtooth stopped asking", trigger.name);
+                    self.alert(&f.id, &format!("fix:{scope}:{check}"), &text, Some(terminal));
+                    self.log(
+                        &f.id,
+                        Run::new("trigger", text)
+                            .ok(false)
+                            .part(&trigger.id)
+                            .terminal(Some(terminal)),
+                    );
+                }
                 Ask::No => {}
             }
         }
@@ -1065,21 +1107,16 @@ impl Engine {
             if saved.is_err() {
                 continue;
             }
+            let alert = format!("schedule:{}", part.id);
             match when {
                 Due::Missed(at) => {
-                    self.log(
-                        &f.id,
-                        Run::new(
-                            "trigger",
-                            format!(
-                                "{} was due {} but Sawtooth wasn't awake, and that's too long ago to run it now",
-                                part.name,
-                                at.format("%a %H:%M")
-                            ),
-                        )
-                        .ok(false)
-                        .part(&part.id),
+                    let text = format!(
+                        "{} was due {} but Sawtooth wasn't awake, and that's too long ago to run it now",
+                        part.name,
+                        at.format("%a %H:%M")
                     );
+                    self.alert(&f.id, &alert, &text, None);
+                    self.log(&f.id, Run::new("trigger", text).ok(false).part(&part.id));
                     continue;
                 }
                 Due::Late(at) => self.log(
@@ -1096,6 +1133,7 @@ impl Engine {
                 ),
                 _ => {}
             }
+            self.clear_alert(&f.id, &alert);
             let me = Arc::clone(self);
             let (factory, part) = (f.clone(), part.clone());
             thread::spawn(move || me.run_trigger(&factory, &part, None));
@@ -1180,7 +1218,7 @@ pub fn knowledge_differs(store: &Store, id: &str) -> bool {
 }
 
 /// A change to a ticket, as a line for the run log.
-fn change_run(change: Change) -> Run {
+fn change_run(change: &Change) -> Run {
     match change {
         Change::Closed { key, branch } => Run::new(
             "ticket",
@@ -1200,7 +1238,7 @@ fn change_run(change: Change) -> Run {
             format!("{key} was starting when Sawtooth stopped and its terminal is still open. Check that it got the ticket."),
         )
         .ok(false)
-        .terminal(Some(&terminal)),
+        .terminal(Some(terminal)),
     }
 }
 

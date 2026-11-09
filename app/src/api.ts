@@ -59,6 +59,13 @@ export interface Pos {
   y: number;
 }
 
+export interface Alert {
+  key: string;
+  at: number;
+  text: string;
+  terminal: string | null;
+}
+
 export interface Factory {
   id: string;
   name: string;
@@ -67,6 +74,7 @@ export interface Factory {
   layout: Record<string, Pos>;
   queue: Ticket[];
   running: Record<string, string>;
+  alerts: Alert[];
   /** Filled in by the app, never saved. */
   worktreesDir: string;
   knowledgePath: string;
@@ -160,6 +168,7 @@ export const daemon = <T = unknown>(method: string, params?: Record<string, unkn
 export const api = {
   factories: () => invoke<Factory[]>('factories'),
   brokenFactories: () => invoke<string[]>('broken_factories'),
+  dismissAlert: (id: string, key: string) => invoke<void>('dismiss_alert', { id, key }),
   createFactory: (args: { path: string; name: string; template: 'open' | 'reviewed'; readAs: string[] }) =>
     invoke<Factory>('create_factory', args),
   saveFactory: (factory: Factory) => invoke<Factory>('save_factory', { factory }),

@@ -7,7 +7,7 @@
 
 use std::collections::{BTreeMap, HashSet};
 
-use crate::factories::{Factory, Stage, Ticket, WorkItem, slug};
+use crate::factories::{Alert, Factory, Stage, Ticket, WorkItem, slug};
 
 /// Tries to start a ticket before giving up on it.
 pub const MAX_START_ATTEMPTS: u32 = 3;
@@ -15,6 +15,8 @@ pub const MAX_START_ATTEMPTS: u32 = 3;
 const RETRY_AFTER_MS: [u64; 2] = [30_000, 120_000];
 /// Ended items kept, so what happened to a ticket can still be answered.
 const KEEP_ENDED: usize = 50;
+/// Alerts kept. Past this the oldest go, so a stuck factory can't grow without end.
+const KEEP_ALERTS: usize = 30;
 
 /// A terminal the daemon says is alive.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -52,6 +54,34 @@ pub fn branch_for(key: &str) -> String {
     } else {
         slug
     }
+}
+
+/// Adds or replaces the alert for `key`.
+pub fn raise(f: &mut Factory, key: &str, text: &str, terminal: Option<&str>, now: u64) {
+    clear(f, key);
+    f.alerts.push(Alert {
+        key: key.to_string(),
+        at: now,
+        text: text.to_string(),
+        terminal: terminal.map(String::from),
+    });
+    let extra = f.alerts.len().saturating_sub(KEEP_ALERTS);
+    f.alerts.drain(..extra);
+}
+
+pub fn clear(f: &mut Factory, key: &str) {
+    f.alerts.retain(|a| a.key != key);
+}
+
+/// A person took over a terminal, so "stopped asking" about it no longer needs saying.
+pub fn clear_fixes(f: &mut Factory, terminal: &str) {
+    f.alerts
+        .retain(|a| !(a.key.starts_with("fix:") && a.terminal.as_deref() == Some(terminal)));
+}
+
+/// The alert key for a ticket.
+pub fn ticket_alert(key: &str) -> String {
+    format!("ticket:{key}")
 }
 
 /// Files from before work items keep their tickets.
@@ -114,6 +144,7 @@ pub fn feed(f: &mut Factory, tickets: Vec<Ticket>) -> usize {
             }
             None => {}
         }
+        clear(f, &ticket_alert(&ticket.key));
         f.work.push(queued(ticket));
         added += 1;
     }
@@ -230,6 +261,11 @@ pub fn settle(
             _ => {}
         }
     }
+    f.alerts.retain(|a| {
+        a.terminal
+            .as_ref()
+            .is_none_or(|t| live.iter().any(|l| &l.id == t))
+    });
     trim(f);
     changes
 }
@@ -290,6 +326,62 @@ mod tests {
 
     fn stage(f: &Factory, key: &str) -> Stage {
         f.work.iter().find(|w| w.ticket.key == key).unwrap().stage
+    }
+
+    fn alerts(f: &Factory) -> Vec<&str> {
+        f.alerts.iter().map(|a| a.key.as_str()).collect()
+    }
+
+    #[test]
+    fn one_alert_per_thing() {
+        let mut f = Factory::default();
+        raise(&mut f, "ticket:A", "first", None, 1);
+        raise(&mut f, "ticket:A", "second", None, 2);
+        assert_eq!(f.alerts.len(), 1);
+        assert_eq!((f.alerts[0].text.as_str(), f.alerts[0].at), ("second", 2));
+        clear(&mut f, "ticket:A");
+        assert!(f.alerts.is_empty());
+    }
+
+    #[test]
+    fn alerts_dont_pile_up_forever() {
+        let mut f = Factory::default();
+        for i in 0..(KEEP_ALERTS as u64 + 5) {
+            raise(&mut f, &format!("k{i}"), "x", None, i);
+        }
+        assert_eq!(f.alerts.len(), KEEP_ALERTS);
+        assert_eq!(f.alerts[0].key, "k5", "the oldest go first");
+    }
+
+    #[test]
+    fn feeding_a_ticket_again_clears_its_alert() {
+        let mut f = fed(&["A"]);
+        claim(&mut f, 1, 0).unwrap();
+        started(&mut f, "A", "t1", "");
+        settle(&mut f, &[], &none(), true, 5);
+        raise(&mut f, "ticket:A", "lost", None, 5);
+        feed(&mut f, vec![ticket("A")]);
+        assert!(alerts(&f).is_empty());
+    }
+
+    #[test]
+    fn an_alert_about_a_terminal_goes_when_the_terminal_does() {
+        let mut f = Factory::default();
+        raise(&mut f, "fix:t1:tests", "stopped", Some("t1"), 1);
+        raise(&mut f, "fix:t2:tests", "stopped", Some("t2"), 1);
+        raise(&mut f, "schedule:s", "missed", None, 1);
+        settle(&mut f, &[live("t2", "x")], &none(), false, 5);
+        assert_eq!(alerts(&f), ["fix:t2:tests", "schedule:s"]);
+    }
+
+    #[test]
+    fn a_person_taking_over_clears_only_that_terminals_fix_alerts() {
+        let mut f = Factory::default();
+        raise(&mut f, "fix:t1:tests", "stopped", Some("t1"), 1);
+        raise(&mut f, "fix:t2:tests", "stopped", Some("t2"), 1);
+        raise(&mut f, "ticket:A", "never got it", Some("t1"), 1);
+        clear_fixes(&mut f, "t1");
+        assert_eq!(alerts(&f), ["fix:t2:tests", "ticket:A"]);
     }
 
     #[test]

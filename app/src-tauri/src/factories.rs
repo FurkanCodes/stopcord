@@ -137,6 +137,18 @@ pub struct WorkItem {
     pub outcome: String,
 }
 
+/// Something the engine had to stop or give up on, which needs a person to look.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct Alert {
+    /// What it's about, such as `ticket:LIN-92`. There's one alert per key.
+    pub key: String,
+    pub at: u64,
+    pub text: String,
+    /// The terminal to go to, when there is one.
+    pub terminal: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct Factory {
@@ -149,6 +161,8 @@ pub struct Factory {
     pub layout: BTreeMap<String, Pos>,
     /// Every ticket fed to this factory and where it stands. The engine owns this.
     pub work: Vec<WorkItem>,
+    /// What's waiting for a person to look at. The engine owns this.
+    pub alerts: Vec<Alert>,
     /// When each schedule last fired, by part id, in milliseconds. The engine owns this.
     pub fired: BTreeMap<String, u64>,
     /// For the window: tickets waiting for a terminal. Always rebuilt from `work`.
@@ -326,6 +340,7 @@ impl Store {
         next.path = current.path;
         next.work = current.work;
         next.fired = current.fired;
+        next.alerts = current.alerts;
         next.queue = current.queue;
         next.running = current.running;
         self.write(&next)?;
