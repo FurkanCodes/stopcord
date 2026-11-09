@@ -1,11 +1,19 @@
 import type { Factory, LineStage, WorkItem } from '../api';
 import { Empty } from '../tui/kit';
+import { Logo } from '../tui/Logo';
 
 const who: Record<LineStage['kind'], string> = { agent: 'agent', gate: 'engine', human: 'person' };
 
 /** The work sitting at a stage right now. */
 export function atStage(factory: Factory, stage: string): WorkItem[] {
   return factory.work.filter((w) => w.stage === 'running' && w.lineStage === stage);
+}
+
+/** What runs an agent stage: its agent's own harness, or the factory's. */
+export function stageHarness(factory: Factory, stage: LineStage): string | undefined {
+  if (stage.kind !== 'agent') return undefined;
+  const agent = [...factory.agents, ...factory.scorers].find((a) => a.id === stage.agent);
+  return agent?.harness || factory.defaults.harness || undefined;
 }
 
 /** The factory's line, left to right, with what's at each stage now. */
@@ -37,6 +45,7 @@ export function LineStrip({ factory, onPick, selected, onSelect }: { factory: Fa
             >
               <div style={{ fontWeight: 600, color: 'var(--ink)' }}>{s.id}</div>
               <div className="t-muted" style={{ fontSize: 12 }}>
+                <Logo name={stageHarness(factory, s)} size={12} style={{ marginRight: 5 }} />
                 {who[s.kind]}
                 {s.maxLoops ? ` · up to ${s.maxLoops} loops` : ''}
               </div>

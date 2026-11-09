@@ -200,6 +200,15 @@ pub fn agent_stopped(f: &mut Factory, key: &str, text: &str) -> Step {
     }
 }
 
+/// What a person sees for a question. One still unanswered stays above the new one, so neither hides the other.
+pub fn question_text(f: &Factory, key: &str, text: &str) -> String {
+    let earlier = f.work.iter().find(|w| w.ticket.key == key && w.waiting == Waiting::Question).and_then(|w| f.alerts.iter().find(|a| a.work == w.id && a.kind == "question"));
+    match earlier {
+        Some(alert) => format!("{}\n\n{text}", alert.text),
+        None => format!("{key} asks: {text}"),
+    }
+}
+
 /// A person answered in the terminal, so the agent is working again.
 pub fn agent_resumed(f: &mut Factory, key: &str) {
     if let Some(w) = item(f, key)
@@ -525,6 +534,19 @@ mod tests {
         assert_eq!(person(&mut f, "A", Action::Approve), Step::Nothing);
         f.work[0].waiting = Waiting::Failed;
         assert!(matches!(person(&mut f, "A", Action::Approve), Step::Agent { stage, .. } if stage == "review"));
+    }
+
+    #[test]
+    fn a_second_question_doesnt_hide_the_first() {
+        let mut f = factory();
+        to(&mut f, "build");
+        assert_eq!(question_text(&f, "A", "which db?"), "A asks: which db?");
+        agent_stopped(&mut f, "A", "A asks: which db?");
+        let work = f.work.last().unwrap().id.clone();
+        f.alerts.push(crate::factories::Alert { key: "k".into(), at: 0, text: "A asks: which db?".into(), terminal: None, kind: "question".into(), work, host: String::new() });
+        assert_eq!(question_text(&f, "A", "test connectivity"), "A asks: which db?\n\ntest connectivity");
+        agent_resumed(&mut f, "A");
+        assert_eq!(question_text(&f, "A", "next one"), "A asks: next one", "an answered question doesn't come back");
     }
 
     #[test]

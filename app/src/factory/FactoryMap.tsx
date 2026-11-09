@@ -4,6 +4,7 @@ import { askOf } from '../Home';
 import { changeFactory, go, harnessOf, lampOf, loadChanges, stateWords, useStore, type Draft } from '../store';
 import { ago, clock } from '../time';
 import { Glyph, Key, Screen, Titled, useArm } from '../tui/kit';
+import { Named } from '../tui/Logo';
 import { plain, useKeys } from '../tui/keys';
 import { FactoryHeader } from './FactoryHeader';
 import { LineStrip } from './LineStrip';
@@ -589,8 +590,8 @@ export function FactoryMap(props: FactoryMapProps) {
                   >
                     <span style={{ display: 'flex', gap: 10, minWidth: 0, width: '100%' }}>
                       <Glyph status={status} />
-                      <span className="t-dim" style={{ width: '8ch', flexShrink: 0, overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                        {harnessOf(t)}
+                      <span className="t-dim" style={{ width: '10ch', flexShrink: 0, display: 'inline-flex', alignItems: 'center', gap: 6, overflow: 'hidden' }}>
+                        <Named name={harnessOf(t)} />
                       </span>
                       <span
                         style={{
@@ -612,7 +613,7 @@ export function FactoryMap(props: FactoryMapProps) {
                     <span
                       style={{
                         alignSelf: 'stretch',
-                        paddingLeft: 'calc(8ch + 20px)',
+                        paddingLeft: 'calc(10ch + 20px)',
                         fontSize: 12,
                         overflow: 'hidden',
                         textOverflow: 'ellipsis',
@@ -647,14 +648,14 @@ export function FactoryMap(props: FactoryMapProps) {
                 >
                   <span style={{ display: 'flex', gap: 10, minWidth: 0, width: '100%' }}>
                     <Glyph status="idle" />
-                    <span className="t-dim" style={{ width: '8ch', flexShrink: 0 }}>
+                    <span className="t-dim" style={{ width: '10ch', flexShrink: 0 }}>
                       {d.command || 'shell'}
                     </span>
                     <span style={{ flexGrow: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', textAlign: 'left', color: 'var(--ink-2)' }}>
                       {d.name}
                     </span>
                   </span>
-                  <span className="t-dim" style={{ alignSelf: 'stretch', paddingLeft: 'calc(8ch + 20px)', fontSize: 12, textAlign: 'left' }}>
+                  <span className="t-dim" style={{ alignSelf: 'stretch', paddingLeft: 'calc(10ch + 20px)', fontSize: 12, textAlign: 'left' }}>
                     not started · pick a harness, then start it
                   </span>
                 </button>

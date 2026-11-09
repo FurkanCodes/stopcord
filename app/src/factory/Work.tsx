@@ -4,8 +4,10 @@ import { allNeeds, go, openFactory, openNextNeed, refreshFactories, showProblem,
 import { ago, clock } from '../time';
 import { Empty, Key, Pane, Screen, useArm, type Hint } from '../tui/kit';
 import { plain, useKeys } from '../tui/keys';
+import { Logo } from '../tui/Logo';
+import { Markdown } from '../tui/Markdown';
 import { FactoryHeader } from './FactoryHeader';
-import { atStage } from './LineStrip';
+import { atStage, stageHarness } from './LineStrip';
 
 const waitingWord: Record<WorkItem['waiting'], string> = {
   no: 'working',
@@ -156,7 +158,7 @@ export function Work({ factory, runs, terminals, selected }: { factory: Factory;
     return (
       <li key={w.id}>
         <button type="button" data-work-row className="t-row" aria-current={on ? 'true' : undefined} style={{ display: 'block', width: '100%', textAlign: 'left', padding: '3px 12px' }} onClick={() => pick(w.ticket.key)}>
-          <span style={{ color: 'var(--ink)' }}>{w.stage === 'proposed' ? (marked.includes(w.ticket.key) ? '[x] ' : '[ ] ') : ''}{w.ticket.key}</span> <span className="t-muted">{w.ticket.title}</span>
+          <span style={{ color: 'var(--ink)' }}>{w.stage === 'proposed' ? (marked.includes(w.ticket.key) ? '[x] ' : '[ ] ') : ''}<Logo name={w.source} size={12} style={{ marginRight: 5 }} />{w.ticket.key}</span> <span className="t-muted">{w.ticket.title}</span>
           <span style={{ display: 'block', fontSize: 12 }} className={hot ? 't-red' : 't-muted'}>
             {w.waiting === 'no' && sites.length > 0 ? `wants ${sites[0]!.host}` : statusOf(w)}
             {hot && waitingSince(factory, w) > 0 && <span className="t-dim"> · {ago(waitingSince(factory, w))}</span>}
@@ -242,6 +244,7 @@ function LineBar({ factory }: { factory: Factory }) {
             {i > 0 && <span aria-hidden="true" className="t-dim">›</span>}
             <span className={hot ? 't-red' : here.length ? undefined : 't-muted'}>
               {hot && '! '}
+              <Logo name={stageHarness(factory, s)} size={12} style={{ marginRight: 5 }} />
               {s.id}
               {here.length > 0 && ` ${here.length}`}
             </span>
@@ -261,6 +264,13 @@ function SiteRequest({ text, onAnswer }: { text: string; onAnswer: (allow: boole
       <Key size="sm" className="is-action" onClick={() => onAnswer(false, false)}>keep blocked</Key>
     </div>
   );
+}
+
+/** A ticket's text. Sentry's is a raw stack trace, where Markdown would eat names like __init__. */
+function TicketBody({ item, muted }: { item: WorkItem; muted?: boolean }) {
+  const style = { maxWidth: '90ch' };
+  if (item.source.startsWith('sentry')) return <p className={muted ? 't-muted' : undefined} style={{ ...style, whiteSpace: 'pre-wrap', margin: 0 }}>{item.ticket.body}</p>;
+  return <Markdown text={item.ticket.body} breaks className={muted ? 't-muted' : undefined} style={style} />;
 }
 
 /** What's half written, by factory. Cancelling doesn't lose it. */
@@ -399,10 +409,10 @@ function Incoming({ factory, item, starts, stage, marked, onStage, onStart }: { 
       <div style={{ flex: '1 1 0', minHeight: 0, overflow: 'auto', padding: '4px 12px 12px', display: 'flex', flexDirection: 'column', gap: 10 }}>
         <div style={{ color: 'var(--ink)', fontWeight: 600 }}>{item.ticket.title}</div>
         <div className="t-dim" style={{ fontSize: 12 }}>
-          from {factory.parts.find((p) => p.id === item.source)?.name ?? (item.source || 'by hand')}
+          from <Logo name={item.source} size={12} style={{ margin: '0 4px 0 1px' }} />{factory.parts.find((p) => p.id === item.source)?.name ?? (item.source || 'by hand')}
           {item.ticket.url && ` · ${item.ticket.url}`}
         </div>
-        {item.ticket.body ? <p style={{ whiteSpace: 'pre-wrap', margin: 0, maxWidth: '90ch' }}>{item.ticket.body}</p> : <Empty style={{ padding: 0 }}>this ticket has no description</Empty>}
+        {item.ticket.body ? <TicketBody item={item} /> : <Empty style={{ padding: 0 }}>this ticket has no description</Empty>}
       </div>
       <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8, padding: '8px 12px', borderTop: '1px solid var(--line)', background: 'var(--bar)' }}>
         <button type="button" className="t-solid is-sm" onClick={() => onStart(keys)}>
@@ -483,6 +493,7 @@ function Detail({ factory, item, runs, terminals, onSending, onSite }: { factory
   const arm = useArm();
   const [note, setNoteState] = useState(notes.get(item.id) ?? '');
   const [answer, setAnswer] = useState('');
+  const [sent, setSent] = useState('');
   const [busy, setBusy] = useState(false);
   const [sending, setSendingState] = useState(false);
   const [showTimeline, setShowTimeline] = useState(false);
@@ -527,13 +538,24 @@ function Detail({ factory, item, runs, terminals, onSending, onSite }: { factory
   })();
   const nextNeed = needs.find((n) => n.kind === 'work' && n.work !== item.ticket.key);
 
-  async function act(action: WorkVerb, text = '') {
+  // A new question needs a new answer. The timer outlasts the engine's wait for the agent,
+  // which ends in an alert: a box that came back sooner would swallow a second answer.
+  useEffect(() => setSent(''), [question]);
+  useEffect(() => {
+    if (!sent) return;
+    const timer = window.setTimeout(() => setSent(''), 120_000);
+    return () => window.clearTimeout(timer);
+  }, [sent]);
+
+  async function act(action: WorkVerb, text = ''): Promise<boolean> {
     setBusy(true);
     try {
       await api.workAction(factory.id, item.ticket.key, action, text);
       await refreshFactories();
+      return true;
     } catch (e) {
       showProblem(e);
+      return false;
     } finally {
       setBusy(false);
     }
@@ -546,10 +568,16 @@ function Detail({ factory, item, runs, terminals, onSending, onSite }: { factory
     setSending(false);
   }
 
-  function sendAnswer() {
-    if (!answer.trim()) return answerField.current?.focus();
-    void act('answer', answer);
+  async function sendAnswer() {
+    if (sent) return;
+    const text = answer;
+    if (!text.trim()) return answerField.current?.focus();
+    setSent(text);
     setAnswer('');
+    if (!(await act('answer', text))) {
+      setSent('');
+      setAnswer(text);
+    }
   }
 
   const drop: Verb = {
@@ -576,7 +604,7 @@ function Detail({ factory, item, runs, terminals, onSending, onSite }: { factory
       verbs = item.mergeError || blocked || highs > 0 ? [{ ...back, primary: true, label: 'send back' }, merge, ...(terminalVerb ? [terminalVerb] : []), drop] : [merge, back, drop];
       say = blocked || item.mergeError ? '' : highs > 0 ? `${highs} high finding${highs === 1 ? '' : 's'}` : stage?.merge ? 'gates run again, then your merge command' : 'gates run once more before merging';
     } else if (w === 'question') {
-      verbs = [{ k: '⏎', label: 'answer', run: sendAnswer, primary: true }, { k: 'd', label: 'mark done anyway', run: () => void act('treatAsDone') }, back, drop];
+      verbs = [{ k: '⏎', label: sent ? 'answer sent' : 'answer', run: () => void sendAnswer(), primary: true, off: !!sent }, { k: 'd', label: 'mark done anyway', run: () => void act('treatAsDone') }, back, drop];
       say = 'your answer goes straight to the agent';
     } else if (w === 'failed') {
       const gate = stage?.kind === 'gate';
@@ -628,7 +656,7 @@ function Detail({ factory, item, runs, terminals, onSending, onSite }: { factory
             {item.branch && `${item.branch}${evidence?.target ? ` → ${evidence.target}` : ''}`}
             {files.length > 0 && ` · ${files.length} file${files.length === 1 ? '' : 's'} · +${added} −${removed}`}
           </div>
-          {item.ticket.body && <p className="t-muted" style={{ whiteSpace: 'pre-wrap', margin: '6px 0 0', maxWidth: '90ch' }}>{item.ticket.body}</p>}
+          {item.ticket.body && <div style={{ marginTop: 6 }}><TicketBody item={item} muted /></div>}
         </div>
 
         {sites.map((a) => (
@@ -637,7 +665,12 @@ function Detail({ factory, item, runs, terminals, onSending, onSite }: { factory
 
         {open && w === 'question' && (
           <div style={{ border: '1px solid var(--red-line)', padding: '8px 10px', display: 'flex', flexDirection: 'column', gap: 8 }}>
-            <div style={{ color: 'var(--ink)' }}>{speaker} asks: {question ?? 'it stopped without saying what it needs'}</div>
+            <div style={{ color: 'var(--ink)', maxWidth: '90ch' }}>
+              {speaker} asks: <Markdown text={question ?? 'it stopped without saying what it needs'} breaks className="is-lead" />
+            </div>
+            {sent ? (
+              <div role="status" className="t-muted">sent: {sent} · {speaker} gets it as soon as it stops to read</div>
+            ) : (
             <input
               ref={answerField}
               className="t-field"
@@ -647,10 +680,11 @@ function Detail({ factory, item, runs, terminals, onSending, onSite }: { factory
               value={answer}
               onChange={(e) => setAnswer(e.currentTarget.value)}
               onKeyDown={(e) => {
-                if (e.key === 'Enter') sendAnswer();
+                if (e.key === 'Enter') void sendAnswer();
                 if (e.key === 'Escape') e.currentTarget.blur();
               }}
             />
+            )}
           </div>
         )}
 
@@ -659,18 +693,18 @@ function Detail({ factory, item, runs, terminals, onSending, onSite }: { factory
         {w === 'approve' && (
           <section aria-label="The plan">
             <h2 className="t-dim" style={{ fontSize: 12, fontWeight: 400, marginBottom: 4 }}>the plan</h2>
-            <div style={{ border: '1px solid var(--line-soft)', padding: '8px 10px', color: 'var(--ink)', whiteSpace: 'pre-wrap', maxWidth: '90ch' }}>
-              {evidence?.plan ?? item.summary ?? ''}
+            <div style={{ border: '1px solid var(--line-soft)', padding: '8px 10px', color: 'var(--ink)', maxWidth: '90ch' }}>
+              <Markdown text={evidence?.plan ?? item.summary ?? ''} />
               {evidence && !evidence.plan && !item.summary && <span className="t-dim">the planner didn't write a plan</span>}
             </div>
           </section>
         )}
 
         {w !== 'approve' && item.summary && (
-          <p style={{ margin: 0, maxWidth: '90ch' }}>
+          <div style={{ maxWidth: '90ch' }}>
             <span className="t-dim">{speaker}: </span>
-            {item.summary}
-          </p>
+            <Markdown text={item.summary} breaks className="is-lead" />
+          </div>
         )}
 
         {checks.length > 0 && w !== 'approve' && (
@@ -689,7 +723,7 @@ function Detail({ factory, item, runs, terminals, onSending, onSite }: { factory
             <ul>
               {item.scores.map((s, i) => (
                 <li key={i}>
-                  <span className="t-muted">{s.score}/10</span> {s.why}
+                  <span className="t-muted">{s.score}/10</span> <Markdown text={s.why} breaks className="is-lead" />
                 </li>
               ))}
             </ul>
@@ -802,7 +836,7 @@ function FindingLine({ f }: { f: Finding }) {
     <>
       <span className={f.severity === 'high' ? 't-red' : 't-muted'}>{f.severity}</span> {f.kind === 'clear' && <span className="t-dim">clear fix </span>}
       {where && <span className="t-dim">{where}</span>}
-      {f.text}
+      <Markdown text={f.text} breaks className="is-lead" />
     </>
   );
 }

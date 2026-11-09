@@ -1,8 +1,9 @@
 import type { Factory, Run, Terminal } from './api';
 import { laneOf } from './factory/parts';
 import { allNeeds, go, harnessOf, lampOf, needsOf, openFactory, openNeed, sawtoothHome, setState, terminalsIn, useStore } from './store';
-import { tilde } from './text';
+import { firstLine, tilde } from './text';
 import { ago } from './time';
+import { Logo, Named } from './tui/Logo';
 import { Brand, Empty, Glyph, Key, Pane, Screen, Sep, Titled, type Status } from './tui/kit';
 import { nothingFocused, plain, useKeys } from './tui/keys';
 import { useEffect, useState } from 'react';
@@ -198,7 +199,7 @@ export function Home({ onSearch }: { onSearch: () => void }) {
                   <button type="button" className="t-row" style={{ display: 'flex', gap: 12, width: '100%', textAlign: 'left', padding: '3px 12px' }} onClick={() => openNeed(d)}>
                     <Glyph status="needs" />
                     <span className="t-muted" style={{ flex: '0 0 18ch', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{factories.find((f) => f.id === d.factoryId)?.name}</span>
-                    <span style={{ flex: '1 1 0', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d.text}</span>
+                    <span style={{ flex: '1 1 0', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{firstLine(d.text)}</span>
                     {d.at !== undefined && <span className="t-dim">{ago(d.at)}</span>}
                   </button>
                 </li>
@@ -300,8 +301,8 @@ function FactoryPane({ card: c, runs, onOpen }: { card: Card; runs: Run[] | unde
           <span key={t.id} className="t-line" style={{ display: 'flex', flexDirection: 'column', padding: '1px 12px' }}>
             <span style={{ display: 'flex', gap: 10, minWidth: 0 }}>
               <Glyph status={lampOf(t)} />
-              <span className="t-dim" style={{ width: '10ch', flexShrink: 0, overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                {harnessOf(t)}
+              <span className="t-dim" style={{ width: '12ch', flexShrink: 0, display: 'inline-flex', alignItems: 'center', gap: 6, overflow: 'hidden' }}>
+                <Named name={harnessOf(t)} />
               </span>
               <span
                 style={{
@@ -320,7 +321,7 @@ function FactoryPane({ card: c, runs, onOpen }: { card: Card; runs: Run[] | unde
               </span>
             </span>
             {t.needs_you && (
-              <span className="t-red" style={{ paddingLeft: 'calc(10ch + 20px)' }}>
+              <span className="t-red" style={{ paddingLeft: 'calc(12ch + 20px)' }}>
                 └ {askOf(t)}
               </span>
             )}
@@ -332,7 +333,7 @@ function FactoryPane({ card: c, runs, onOpen }: { card: Card; runs: Run[] | unde
             <span aria-hidden="true" style={{ width: 10, flexShrink: 0, color: 'var(--red)' }}>
               !
             </span>
-            <span className="t-dim" style={{ width: '10ch', flexShrink: 0 }}>
+            <span className="t-dim" style={{ width: '12ch', flexShrink: 0 }}>
               knowledge
             </span>
             <span style={{ flexGrow: 1, minWidth: 0 }}>review what an agent changed</span>
@@ -343,10 +344,10 @@ function FactoryPane({ card: c, runs, onOpen }: { card: Card; runs: Run[] | unde
             <span aria-hidden="true" style={{ width: 10, flexShrink: 0, color: 'var(--red)' }}>
               !
             </span>
-            <span className="t-dim" style={{ width: '10ch', flexShrink: 0 }}>
+            <span className="t-dim" style={{ width: '12ch', flexShrink: 0 }}>
               {alert.kind || 'stopped'}
             </span>
-            <span style={{ flexGrow: 1, minWidth: 0 }}>{alert.text}</span>
+            <span style={{ flexGrow: 1, minWidth: 0, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>{firstLine(alert.text)}</span>
           </span>
         ))}
       </span>
@@ -434,6 +435,7 @@ function FactoryList({ cards, onOpen }: { cards: Card[]; onOpen: (c: Card) => vo
                   {c.terms.map((t) => (
                     <span key={t.id} className="t-muted" style={{ display: 'inline-flex', gap: 6 }}>
                       <Glyph status={lampOf(t)} style={{ width: 'auto' }} />
+                      <Logo name={harnessOf(t)} />
                       {harnessOf(t)}
                     </span>
                   ))}

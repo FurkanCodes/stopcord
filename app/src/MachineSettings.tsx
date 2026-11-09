@@ -3,6 +3,7 @@ import { api, failureText, type HarnessProfile, type Machine, type Settings } fr
 import { go, showProblem, useStore } from './store';
 import { Brand, Check, FieldRow, Key, ListInput, Pane, Screen, Sep } from './tui/kit';
 import { useKeys } from './tui/keys';
+import { Logo, Named } from './tui/Logo';
 
 const paneStyle = { padding: '14px 12px 12px', maxWidth: 820, width: '100%', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 8 } as const;
 
@@ -86,7 +87,7 @@ export function MachineSettings() {
             <p>{m.sandbox ? <span className="t-red">{m.sandbox}</span> : 'this machine can run contained agents'}</p>
           </Pane>
 
-          <Pane title="slack" style={paneStyle}>
+          <Pane title={<span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, }}><Logo name="slack" size={12} />slack</span>} style={paneStyle}>
             <p className="t-muted">an @mention becomes a proposal in a factory. needs your own slack app with socket mode on, and the scopes app_mentions:read, chat:write, channels:read, groups:read, channels:history and groups:history. only the people listed below can send work.</p>
             <Check id="sl-on" checked={s.slack.enabled} onChange={(enabled) => void change({ ...s, slack: { ...s.slack, enabled } })}>
               connect to slack
@@ -124,7 +125,7 @@ export function MachineSettings() {
           <Pane title="harnesses" style={paneStyle}>
             {harnesses.map((h) => (
               <div key={h.id} style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 10 }}>
-                <span style={{ width: '12ch', color: 'var(--ink)' }}>{h.id}</span>
+                <span style={{ width: '14ch', display: 'inline-flex', alignItems: 'center', gap: 6, color: 'var(--ink)' }}><Named name={h.id} /></span>
                 <span className="t-muted" style={{ flex: '1 1 240px', fontSize: 12, minWidth: 0 }}>{h.domains.join(' · ') || 'no sites listed'}</span>
                 {h.trust && (
                   <Check id={`tr-${h.id}`} checked={h.trust.auto} onChange={(on) => void trust(h, on)}>

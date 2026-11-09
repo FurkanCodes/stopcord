@@ -5,6 +5,7 @@ import { api, type Factory, type Knowledge as KnowledgeData } from '../api';
 import { refreshFactories, showProblem, setLeaveGuard } from '../store';
 import { ArmedKey, Empty, Key, Pane, Screen, Titled } from '../tui/kit';
 import { moveFocus, plain, useKeys } from '../tui/keys';
+import { Markdown } from '../tui/Markdown';
 import { FactoryHeader } from './FactoryHeader';
 
 type Section = { kind: 'kb' } | { kind: 'folder'; partId: string } | { kind: 'file'; partId: string; path: string };
@@ -34,6 +35,7 @@ export function Knowledge({ factory, file }: { factory: Factory; file?: string }
   const [section, setSection] = useState<Section>(() => sectionFrom(file));
   const [text, setText] = useState('');
   const [dirty, setDirty] = useState(false);
+  const [rendered, setRendered] = useState(false);
   useEffect(() => {
     setLeaveGuard(dirty ? () => confirm('Leave without saving your changes?', { title: 'Unsaved changes', okLabel: 'Leave', cancelLabel: 'Stay' }) : null);
     return () => setLeaveGuard(null);
@@ -180,6 +182,7 @@ export function Knowledge({ factory, file }: { factory: Factory; file?: string }
 
   useKeys((e) => {
     if (!plain(e)) return;
+    if (e.key === 'v' && canRender) return setRendered((r) => !r), true;
     if (e.key === 'j' || e.key === 'k') {
       moveFocus('[data-kfile]', e.key === 'j' ? 1 : -1);
       return true;
@@ -198,6 +201,7 @@ export function Knowledge({ factory, file }: { factory: Factory; file?: string }
   const kbName = data ? base(data.path) : 'knowledge.md';
   const folder = section.kind !== 'kb' ? data?.folders.find((f) => f.partId === section.partId) : undefined;
   const isFolder = section.kind === 'folder';
+  const canRender = !reviewing && !isFolder && (!!kbPart || section.kind === 'file');
   const label = section.kind === 'kb' ? kbName : section.kind === 'file' ? joinPath(folder?.folder ?? '', section.path) : folder?.folder || folder?.name || 'folder';
   const lines = text.split('\n');
   const state = isFolder ? 'folder' : dirty ? '● edited' : 'saved';
@@ -222,6 +226,7 @@ export function Knowledge({ factory, file }: { factory: Factory; file?: string }
         ['j/k', 'move'],
         ['⏎', 'open'],
         ...(reviewing ? ([['y', 'ok to the next change'], ['n', 'no to the next change']] as [string, string][]) : []),
+        ...(canRender ? ([['v', rendered ? 'edit' : 'read it rendered']] as [string, string][]) : []),
         ['⌘S', 'save'],
         ['1-6', 'sections'],
         ['esc', 'back'],
@@ -368,7 +373,8 @@ export function Knowledge({ factory, file }: { factory: Factory; file?: string }
               })()}
             </div>
           )}
-          {!reviewing && !isFolder && (kbPart || section.kind === 'file') && (
+          {canRender && rendered && <Markdown text={text} style={{ padding: '12px 14px 24px', maxWidth: '90ch' }} />}
+          {canRender && !rendered && (
             <div style={{ display: 'flex', alignItems: 'flex-start', padding: '8px 0 24px', minWidth: 'max-content' }}>
               <pre aria-hidden="true" className="t-faint" style={{ padding: '0 12px 0 14px', flexShrink: 0, textAlign: 'right', fontSize: 13, lineHeight: 1.7, userSelect: 'none' }}>
                 {lines.map((_, i) => i + 1).join('\n')}
@@ -426,6 +432,11 @@ export function Knowledge({ factory, file }: { factory: Factory; file?: string }
           <span>{section.kind === 'kb' && data ? data.path.replace(/^\/(Users|home)\/[^/]+/, '~') : label}</span>
           <span>{isFolder ? `${folder?.files.length ?? 0} files · read when needed` : `${lines.length} lines`}</span>
           <span style={{ flexGrow: 1 }} />
+          {canRender && (
+            <Key k="v" size="xs" pressed={rendered} onClick={() => setRendered(!rendered)}>
+              rendered
+            </Key>
+          )}
           {section.kind === 'file' && folder && (
             <Key k="esc" size="xs" onClick={() => void open({ kind: 'folder', partId: folder.partId })}>
               back to {folder.folder || folder.name}
@@ -441,7 +452,7 @@ export function Knowledge({ factory, file }: { factory: Factory; file?: string }
               </Key>
             </span>
           ) : (
-            <span>{reviewing ? 'say ok or no to each change, then it saves' : isFolder ? 'agents open these when they need them' : 'markdown · edit in place'}</span>
+            <span>{reviewing ? 'say ok or no to each change, then it saves' : isFolder ? 'agents open these when they need them' : rendered ? 'press v to edit' : 'markdown · edit in place'}</span>
           )}
         </div>
       </Pane>

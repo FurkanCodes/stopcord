@@ -3,6 +3,7 @@
 
 import { useEffect, useRef, useState, type ButtonHTMLAttributes, type CSSProperties, type HTMLAttributes, type ReactNode } from 'react';
 import { allNeeds, go, openNeed, setState, useStore } from '../store';
+import { firstLine } from '../text';
 import { plain, useKeys } from './keys';
 
 export type Status = 'working' | 'needs' | 'idle';
@@ -241,7 +242,7 @@ export function Announcer({ where }: { where: string }) {
   return (
     <>
       <div className="sr-only" role="status">{where}</div>
-      <div className="sr-only" role="status">{needs.length ? `${needs.length} need${needs.length === 1 ? 's' : ''} you. ${needs[0]!.text}` : ''}</div>
+      <div className="sr-only" role="status">{needs.length ? `${needs.length} need${needs.length === 1 ? 's' : ''} you. ${firstLine(needs[0]!.text)}` : ''}</div>
     </>
   );
 }
@@ -257,7 +258,7 @@ export function StatusLine({ mode, path, info }: StatusLineProps) {
         <button
           type="button"
           className="t-needs"
-          aria-label={`NEEDS ${needs.length}. Open the next one: ${needs[0]!.text}`}
+          aria-label={`NEEDS ${needs.length}. Open the next one: ${firstLine(needs[0]!.text)}`}
           title="Open the next thing that needs you"
           onClick={() => openNeed(needs[0]!)}
         >

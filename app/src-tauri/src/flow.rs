@@ -517,7 +517,10 @@ impl Engine {
         self.log(&factory, Run::new("agent", format!("{verb}: {text}")).terminal(Some(terminal)).work(&work_id).by("agent"));
         let step = match verb {
             "done" => self.store.update(&factory, |f| line::agent_done(f, &key, &text)),
-            "ask" => self.store.update(&factory, |f| line::agent_stopped(f, &key, &format!("{key} asks: {text}"))),
+            "ask" => self.store.update(&factory, |f| {
+                let question = line::question_text(f, &key, &text);
+                line::agent_stopped(f, &key, &question)
+            }),
             "score" => {
                 let score = report["score"].as_u64().unwrap_or(0) as u32;
                 self.store.update(&factory, |f| {
@@ -718,9 +721,14 @@ impl Engine {
                 let me = Arc::clone(self);
                 let (fid, key, term, text) = (factory.to_string(), key.to_string(), w.terminal.clone().unwrap_or_default(), note.to_string());
                 std::thread::spawn(move || {
-                    // The agent starting its turn is what takes the work off "asking".
-                    if let Err(e) = me.type_engine_turn(&term, &text) {
-                        me.log(&fid, Run::new("line", format!("{key}: the answer didn't reach the agent. {e}")).ok(false).by("engine"));
+                    match me.type_engine_turn(&term, &text) {
+                        // An agent can ask mid-turn and carry on, and then no new turn starts to clear the question.
+                        Ok(()) => me.line_turn_began(&term),
+                        Err(e) => {
+                            let said = format!("{key}: the answer didn't reach the agent. {e}");
+                            me.log(&fid, Run::new("line", said.clone()).ok(false).by("engine"));
+                            me.alert(&fid, &format!("answer:{key}"), &said, Some(&term));
+                        }
                     }
                     me.state.lock().unwrap().stepping.remove(&(fid.clone(), key.clone()));
                 });

@@ -204,6 +204,37 @@ pub fn login_command(shell: &str, command: &str) -> String {
     format!("{} -l -c {}", quote(shell), quote(command))
 }
 
+/// What git sets while a hook runs, tying every git command under it to this repository.
+const GIT_REPO_ENV: &[&str] = &[
+    "GIT_DIR",
+    "GIT_WORK_TREE",
+    "GIT_INDEX_FILE",
+    "GIT_COMMON_DIR",
+    "GIT_OBJECT_DIRECTORY",
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+    "GIT_PREFIX",
+    "GIT_CONFIG",
+    "GIT_CONFIG_COUNT",
+    "GIT_CONFIG_PARAMETERS",
+    "GIT_IMPLICIT_WORK_TREE",
+    "GIT_GRAFT_FILE",
+    "GIT_NO_REPLACE_OBJECTS",
+    "GIT_REPLACE_REF_BASE",
+    "GIT_SHALLOW_FILE",
+];
+
+/// A check's own git commands must not land in the repository being committed to: a test
+/// suite that makes a temporary repo would otherwise rewrite the real one. A check that reads
+/// what's staged keeps them, because `git commit -a` stages into an index of its own.
+fn clear_git_env(cmd: &mut Command, command: &str) {
+    if command.contains("--cached") || command.contains("--staged") {
+        return;
+    }
+    for name in GIT_REPO_ENV {
+        cmd.env_remove(name);
+    }
+}
+
 /// Runs a shell command in `cwd`, copying its output to `echo` as it comes.
 /// Returns whether it passed and everything it printed. With a timeout, a
 /// command still running then is stopped, along with everything it started,
@@ -214,14 +245,15 @@ pub fn run_command(
     echo: &mut dyn Write,
     timeout: Option<std::time::Duration>,
 ) -> (bool, String) {
-    let child = Command::new("sh")
-        .arg("-c")
+    let mut cmd = Command::new("sh");
+    cmd.arg("-c")
         .arg(format!("exec 2>&1; {command}"))
         .current_dir(cwd)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .process_group(0)
-        .spawn();
+        .process_group(0);
+    clear_git_env(&mut cmd, command);
+    let child = cmd.spawn();
     let mut child = match child {
         Ok(c) => c,
         Err(e) => return (false, format!("couldn't run it: {e}")),
@@ -506,6 +538,17 @@ mod tests {
         );
         assert!(ok);
         assert_eq!(out, "hi\nerr\n");
+    }
+
+    #[test]
+    fn a_check_cant_reach_the_repository_being_committed_to() {
+        let mut tests = Command::new("sh");
+        clear_git_env(&mut tests, "cargo test --workspace");
+        assert!(tests.get_envs().any(|(k, v)| k == "GIT_DIR" && v.is_none()));
+        assert!(tests.get_envs().any(|(k, v)| k == "GIT_INDEX_FILE" && v.is_none()));
+        let mut staged = Command::new("sh");
+        clear_git_env(&mut staged, "git diff --cached -U0 | grep -q secret");
+        assert_eq!(staged.get_envs().count(), 0, "reading what's staged needs git's own view");
     }
 
     #[test]

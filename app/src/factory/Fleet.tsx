@@ -24,6 +24,7 @@ import {
 } from '../store';
 import { tilde } from '../text';
 import { Brand, Empty, Glyph, Key, Pane, Screen, Titled } from '../tui/kit';
+import { Logo } from '../tui/Logo';
 import { nothingFocused, plain, useKeys } from '../tui/keys';
 import { diffOf } from './FactoryMap';
 import { FactoryHeader } from './FactoryHeader';
@@ -330,6 +331,7 @@ export function Fleet({ route, onSearch, git }: { route: Extract<Route, { screen
                     <Glyph status={lampOf(t)} />
                     <span style={{ flexGrow: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
                       <span style={{ display: 'flex', gap: 8 }}>
+                        <Logo name={harnessOf(t)} />
                         <span style={{ flexGrow: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.name}</span>
                         <span className="t-dim" style={{ flexShrink: 0 }}>
                           {diffOf(changes[t.cwd])}
@@ -504,6 +506,7 @@ function Current({
         {!factory && <span className="t-dim">outside every factory · make a factory for its folder to see it on a map</span>}
         <span style={{ flexGrow: 1 }} />
         <span className="t-dim">
+          <Logo name={harnessOf(t)} size={12} style={{ marginRight: 6 }} />
           {harnessOf(t)} · {branch ?? tilde(t.cwd)} · {age(t.started_at)}
         </span>
       </div>

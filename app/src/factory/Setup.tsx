@@ -2,6 +2,8 @@ import { useEffect, useState, type ReactNode } from 'react';
 import { api, type Agent, type BenchResult, type BenchTask, type Factory, type LineStage, type Part, type Report, type Runner, type Skill, type SourceTemplate, type Suite } from '../api';
 import { changeFactory, refreshFactories, showProblem } from '../store';
 import { ArmedKey, Check, Empty, FieldRow, Key, ListInput, Pane, Screen } from '../tui/kit';
+import { Logo } from '../tui/Logo';
+import { Markdown } from '../tui/Markdown';
 import { FactoryHeader } from './FactoryHeader';
 import { LineStrip } from './LineStrip';
 
@@ -103,7 +105,7 @@ export function Setup({ factory, onRemove }: { factory: Factory; onRemove: () =>
 
       {factory.proposals.map((p) => (
         <Pane key={p.id} title={`proposed change · ${p.agent}`} style={paneStyle}>
-          <p style={{ whiteSpace: 'pre-wrap' }}>{p.why}</p>
+          <Markdown text={p.why} breaks />
           <p className="t-dim" style={{ fontSize: 12 }}>from {p.evidence.join(', ')}</p>
           <div className="grid" style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) minmax(0,1fr)', gap: 12 }}>
             <div><h3 className="t-dim" style={{ fontSize: 12 }}>now</h3><pre style={{ whiteSpace: 'pre-wrap', margin: 0, fontSize: 12 }}>{p.before}</pre></div>
@@ -163,9 +165,9 @@ export function Setup({ factory, onRemove }: { factory: Factory; onRemove: () =>
         ))}
       </Pane>
 
-      <RolePane title="agents" noun="agent" items={factory.agents} runners={runners} onChange={(next) => set({ agents: next })} />
+      <RolePane title="agents" noun="agent" fallback={factory.defaults.harness} items={factory.agents} runners={runners} onChange={(next) => set({ agents: next })} />
 
-      <RolePane title="scorers" noun="scorer" note="an optional line stage that scores work from 0 to 10. the score shows at handoff and never passes or fails anything" items={factory.scorers} runners={runners} onChange={(next) => set({ scorers: next })} />
+      <RolePane title="scorers" noun="scorer" note="an optional line stage that scores work from 0 to 10. the score shows at handoff and never passes or fails anything" fallback={factory.defaults.harness} items={factory.scorers} runners={runners} onChange={(next) => set({ scorers: next })} />
 
       <BenchPane factory={factory} set={set} />
 
@@ -241,7 +243,7 @@ function Sources({ factory, sources, part, set }: { factory: Factory; sources: P
       right={
         <span style={{ display: 'inline-flex', gap: 4 }}>
           {templates.map((t) => (
-            <Key key={t.id} size="xs" onClick={() => add(t)}>{t.name.toLowerCase()}</Key>
+            <Key key={t.id} size="xs" onClick={() => add(t)}><Logo name={t.id} size={12} />{t.name.toLowerCase()}</Key>
           ))}
           <Key size="xs" onClick={() => add()}>other</Key>
         </span>
@@ -257,12 +259,13 @@ function Sources({ factory, sources, part, set }: { factory: Factory; sources: P
 }
 
 /** One line until it's opened, so a long setup page stays readable. */
-function Fold({ title, hint, children }: { title: string; hint?: string; children: ReactNode }) {
+function Fold({ title, hint, logo, children }: { title: string; hint?: string; logo?: string; children: ReactNode }) {
   const [open, setOpen] = useState(false);
   return (
     <div style={open ? card : undefined}>
       <button type="button" className="t-key" aria-expanded={open} style={{ width: '100%', justifyContent: 'flex-start', gap: 8 }} onClick={() => setOpen(!open)}>
         <span className="t-dim" aria-hidden="true">{open ? '▾' : '▸'}</span>
+        <Logo name={logo} />
         <span style={{ color: 'var(--ink)' }}>{title}</span>
         {hint && <span className="t-muted" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{hint}</span>}
       </button>
@@ -271,14 +274,14 @@ function Fold({ title, hint, children }: { title: string; hint?: string; childre
   );
 }
 
-function RolePane({ title, noun, note, items, runners, onChange }: { title: string; noun: string; note?: string; items: Agent[]; runners: [string, string][]; onChange: (next: Agent[]) => void }) {
+function RolePane({ title, noun, note, fallback, items, runners, onChange }: { title: string; noun: string; note?: string; fallback?: string; items: Agent[]; runners: [string, string][]; onChange: (next: Agent[]) => void }) {
   const edit = (i: number, patch: Partial<Agent>) => onChange(items.map((a, j) => (j === i ? { ...a, ...patch } : a)));
   return (
     <Pane title={title} right={<Key size="xs" onClick={() => onChange([...items, { id: uniq(noun, items.map((a) => a.id)), description: '', harness: '', runner: '', prompt: '' }])}>add {noun}</Key>} style={paneStyle}>
       {note && <p className="t-muted">{note}</p>}
       {items.length === 0 && <Empty style={{ padding: 0 }}>no {title}</Empty>}
       {items.map((a, i) => (
-        <Fold key={i} title={a.id} hint={a.description}>
+        <Fold key={i} title={a.id} logo={a.harness || fallback} hint={a.description}>
           <Text id={`${noun}-id-${i}`} label="name" value={a.id} onChange={(id) => edit(i, { id })} />
           <Text id={`${noun}-d-${i}`} label="what it does" value={a.description} onChange={(description) => edit(i, { description })} />
           <Text id={`${noun}-h-${i}`} label="harness" value={a.harness} placeholder="empty uses the default" onChange={(harness) => edit(i, { harness })} />
@@ -358,7 +361,7 @@ function BenchPane({ factory, set }: { factory: Factory; set: (patch: Partial<Fa
 
 function SourceCard({ p, part, needs, remove }: { p: Part; part: (id: string, patch: Partial<Part>) => void; needs?: string; remove: () => void }) {
   return (
-    <Fold title={p.name} hint={p.every || 'by hand'}>
+    <Fold title={p.name} logo={p.id} hint={p.every || 'by hand'}>
       <Text id={`src-n-${p.id}`} label="name" value={p.name} onChange={(name) => part(p.id, { name })} />
       <FieldRow id={`src-c-${p.id}`} label="pull command" width="14ch" top>
         <textarea id={`src-c-${p.id}`} className="t-field" spellCheck={false} rows={2} value={p.command} onChange={(e) => part(p.id, { command: e.currentTarget.value })} />

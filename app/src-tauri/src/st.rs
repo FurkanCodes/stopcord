@@ -78,7 +78,11 @@ pub fn main(args: &[String]) -> i32 {
     };
     let outcome = parse(args).and_then(|report| send(&socket, &report));
     match outcome {
-        Ok(()) => 0,
+        Ok(()) => {
+            // Silence reads as failure: an agent that heard nothing sent another question to check.
+            println!("{}", if args.first().is_some_and(|v| v == "ask") { "st: asked. a person's answer will be typed here" } else { "st: sent" });
+            0
+        }
         Err(e) => {
             eprintln!("st: {e}");
             1

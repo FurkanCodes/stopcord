@@ -34,7 +34,7 @@ Generic SaaS dashboards with big number tiles. Node editors full of tangled wire
 - Every part shows its real state, and every part can be changed where it's shown.
 - The canvas and the list show the same factory, so switching between them loses nothing.
 - Work with any harness and any model. No screen assumes one.
-- Quiet by default. Color and motion only mark state.
+- Quiet by default. Color and motion only mark state. The one exception is a small logo in its own colors, always beside the name of the tool it stands for.
 
 ## Accessibility & Inclusion
 

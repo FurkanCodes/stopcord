@@ -530,7 +530,7 @@ impl Engine {
     }
 
     /// Puts something in front of the person, in NEEDS on every screen.
-    fn alert(&self, factory: &str, key: &str, text: &str, terminal: Option<&str>) {
+    pub(crate) fn alert(&self, factory: &str, key: &str, text: &str, terminal: Option<&str>) {
         let _ = self.store.update(factory, |f| {
             work::raise(f, key, text, terminal, runs::now_ms());
         });

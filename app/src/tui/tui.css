@@ -720,3 +720,110 @@ textarea.t-field {
 .t-hunk .t-diff-line > .text {
   padding-right: 190px;
 }
+
+/* ---- Markdown, for reading ------------------------------------------------- */
+
+.t-md {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.t-md > * + * {
+  margin-top: 8px;
+}
+.t-md h3,
+.t-md h4 {
+  font-size: 13px;
+  font-weight: 600;
+}
+.t-md h3 {
+  color: var(--ink);
+}
+.t-md h4 {
+  color: var(--ink-2);
+}
+.t-md > * + h3,
+.t-md > * + h4 {
+  margin-top: 14px;
+}
+.t-md strong {
+  font-weight: 600;
+  color: var(--ink);
+}
+.t-md ul,
+.t-md ol {
+  padding-left: 3ch;
+}
+.t-md ul {
+  list-style: '- ';
+}
+.t-md ol {
+  padding-left: 4ch;
+  list-style: decimal;
+}
+.t-md li::marker {
+  color: var(--ink-3);
+}
+.t-md li + li,
+.t-md li > ul,
+.t-md li > ol {
+  margin-top: 2px;
+}
+.t-md li.task-list-item {
+  list-style: none;
+  margin-left: -3ch;
+}
+.t-md code {
+  padding: 0 4px;
+  border-radius: 2px;
+  background: var(--bar-2);
+  font-size: 12px;
+}
+.t-md pre {
+  padding: 8px 10px;
+  overflow-x: auto;
+  background: var(--bar);
+  line-height: 1.6;
+}
+.t-md pre code {
+  padding: 0;
+  background: none;
+}
+.t-md blockquote {
+  margin: 0;
+  padding-left: 10px;
+  border-left: 2px solid var(--line);
+  color: var(--ink-2);
+}
+.t-md hr {
+  border: 0;
+  border-top: 1px solid var(--line);
+}
+.t-md table {
+  display: block;
+  overflow-x: auto;
+  border-collapse: collapse;
+}
+.t-md th,
+.t-md td {
+  padding: 2px 8px;
+  border: 1px solid var(--line);
+  text-align: left;
+}
+.t-md th {
+  font-weight: 600;
+  color: var(--ink);
+}
+.t-md-link {
+  text-decoration: underline;
+  text-decoration-color: var(--ink-3);
+  text-underline-offset: 2px;
+}
+.t-md-link .t-dim {
+  display: inline;
+  text-decoration: none;
+}
+/* Runs on from a label: "reviewer: what it said". */
+.t-md.is-lead,
+.t-md.is-lead > p:first-child {
+  display: inline;
+}
