@@ -1,11 +1,12 @@
 import { useEffect, useState, type ReactNode } from 'react';
-import { api, type Agent, type BenchResult, type BenchTask, type Factory, type LineStage, type Part, type Report, type Runner, type Skill, type SourceTemplate, type Suite } from '../api';
+import { api, type Agent, type BenchResult, type BenchTask, type Factory, type LineStage, type Part, type Report, type Skill, type SourceTemplate, type Suite } from '../api';
 import { changeFactory, refreshFactories, showProblem } from '../store';
 import { ArmedKey, Check, Empty, FieldRow, Key, ListInput, Pane, Screen } from '../tui/kit';
 import { Logo } from '../tui/Logo';
 import { Markdown } from '../tui/Markdown';
 import { FactoryHeader } from './FactoryHeader';
 import { LineStrip } from './LineStrip';
+import { SandboxPane } from './Sandbox';
 
 const uniq = (base: string, taken: string[]) => {
   let id = base;
@@ -43,7 +44,7 @@ function Pick({ id, label, value, options, onChange }: { id: string; label: stri
 }
 
 const paneStyle = { padding: '14px 12px 12px', maxWidth: 960, width: '100%', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 10 } as const;
-const sections = ['defaults', 'line', 'agents', 'scorers', 'benchmarks', 'runners', 'sources', 'skills', 'reporting back'];
+const sections = ['defaults', 'line', 'agents', 'scorers', 'benchmarks', 'sandbox', 'sources', 'skills', 'reporting back'];
 
 /** Stays at the top of a long page and jumps to a section. */
 function SectionIndex() {
@@ -72,7 +73,6 @@ export function Setup({ factory, onRemove }: { factory: Factory; onRemove: () =>
   const stageIds: [string, string][] = factory.line.map((s) => [s.id, s.id]);
 
   const stage = (i: number, patch: Partial<LineStage>) => set({ line: factory.line.map((s, j) => (j === i ? { ...s, ...patch } : s)) });
-  const runner = (i: number, patch: Partial<Runner>) => set({ runners: factory.runners.map((r, j) => (j === i ? { ...r, ...patch } : r)) });
   const skill = (i: number, patch: Partial<Skill>) => set({ skills: factory.skills.map((s, j) => (j === i ? { ...s, ...patch } : s)) });
   const report = (i: number, patch: Partial<Report>) => set({ reports: factory.reports.map((r, j) => (j === i ? { ...r, ...patch } : r)) });
   const part = (id: string, patch: Partial<Part>) => set({ parts: factory.parts.map((p) => (p.id === id ? { ...p, ...patch } : p)) });
@@ -120,7 +120,7 @@ export function Setup({ factory, onRemove }: { factory: Factory; onRemove: () =>
 
       <Pane title="defaults" heading={1} style={paneStyle}>
         <Text id="def-harness" label="harness" value={factory.defaults.harness ?? ''} placeholder="claude, codex, gemini, opencode, or any command" onChange={(harness) => set({ defaults: { ...factory.defaults, harness } })} />
-        <Pick id="def-runner" label="runner" value={factory.defaults.runner ?? ''} options={[['', 'plain worktree'], ...factory.runners.map((r): [string, string] => [r.id, `${r.id} (${r.level})`])]} onChange={(r) => set({ defaults: { ...factory.defaults, runner: r } })} />
+        <Pick id="def-runner" label="sandbox" value={factory.defaults.runner ?? ''} options={[['', 'none'], ...factory.runners.map((r): [string, string] => [r.id, `${r.id} (${r.level})`])]} onChange={(r) => set({ defaults: { ...factory.defaults, runner: r } })} />
         <FieldRow id="def-once" label="at once" width="14ch">
           <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <input id="def-once" type="number" min={1} className="t-field" style={{ width: '8ch' }} value={factory.defaults.atOnce ?? 1} onChange={(e) => set({ defaults: { ...factory.defaults, atOnce: Number(e.currentTarget.value) || 1 } })} />
@@ -172,24 +172,7 @@ export function Setup({ factory, onRemove }: { factory: Factory; onRemove: () =>
 
       <BenchPane factory={factory} set={set} />
 
-      <Pane title="runners" right={<Key size="xs" onClick={() => set({ runners: [...factory.runners, { id: uniq('runner', factory.runners.map((r) => r.id)), level: 'contained' }] })}>add runner</Key>} style={paneStyle}>
-        {factory.runners.map((r, i) => (
-          <Fold key={i} title={r.id} hint={r.level}>
-            <Text id={`rn-id-${i}`} label="name" value={r.id} onChange={(id) => runner(i, { id })} />
-            <Pick id={`rn-l-${i}`} label="level" value={r.level} options={[['worktree', 'worktree: its own folder and branch'], ['contained', 'contained: OS sandbox and web filter'], ['vm', 'vm: a Linux virtual machine']]} onChange={(level) => runner(i, { level: level as Runner['level'] })} />
-            {r.level === 'contained' && (
-              <>
-                <ListText id={`rn-n-${i}`} label="sites allowed" value={r.networkAllow} placeholder="registry.npmjs.org, crates.io" onChange={(v) => runner(i, { networkAllow: v })} />
-                <ListText id={`rn-w-${i}`} label="also writes" value={r.write} placeholder="~/.gradle" onChange={(v) => runner(i, { write: v })} />
-                <ListText id={`rn-d-${i}`} label="can't read" value={r.denyRead} placeholder="~/.config/mine" onChange={(v) => runner(i, { denyRead: v })} />
-              </>
-            )}
-            <ListText id={`rn-s-${i}`} label="setup commands" value={r.setupCommands} separator="&&" placeholder="npm ci && npm run build" onChange={(v) => runner(i, { setupCommands: v })} />
-            {r.level === 'vm' && <Text id={`rn-v-${i}`} label="vm command" value={r.vmCommand ?? ''} placeholder="limactl shell --workdir {dir} default bash -lc {cmd}" onChange={(vmCommand) => runner(i, { vmCommand })} />}
-            <span><ArmedKey size="xs" onClick={() => set({ runners: factory.runners.filter((_, j) => j !== i) })}>remove runner</ArmedKey></span>
-          </Fold>
-        ))}
-      </Pane>
+      <SandboxPane factory={factory} set={set} style={paneStyle} />
 
       <Sources factory={factory} sources={sources} part={part} set={set} />
 
@@ -286,7 +269,7 @@ function RolePane({ title, noun, note, fallback, items, runners, onChange }: { t
           <Text id={`${noun}-id-${i}`} label="name" value={a.id} onChange={(id) => edit(i, { id })} />
           <Text id={`${noun}-d-${i}`} label="what it does" value={a.description} onChange={(description) => edit(i, { description })} />
           <Text id={`${noun}-h-${i}`} label="harness" value={a.harness} placeholder="empty uses the default" onChange={(harness) => edit(i, { harness })} />
-          <Pick id={`${noun}-r-${i}`} label="runner" value={a.runner} options={runners} onChange={(r) => edit(i, { runner: r })} />
+          <Pick id={`${noun}-r-${i}`} label="sandbox" value={a.runner} options={runners} onChange={(r) => edit(i, { runner: r })} />
           <FieldRow id={`${noun}-p-${i}`} label="role prompt" width="14ch" top>
             <textarea id={`${noun}-p-${i}`} className="t-field" spellCheck={false} rows={5} value={a.prompt} onChange={(e) => edit(i, { prompt: e.currentTarget.value })} />
           </FieldRow>

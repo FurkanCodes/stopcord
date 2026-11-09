@@ -15,6 +15,6 @@ mod wrap;
 pub use bridge::bridge_main;
 pub use bwrap::bwrap_args;
 pub use filter::{Denied, Filter};
-pub use policy::{Network, Policy};
+pub use policy::{COMMON_DENY_READS, Network, Policy, Reads};
 pub use seatbelt::seatbelt_profile;
 pub use wrap::{Wrapped, available, wrap};

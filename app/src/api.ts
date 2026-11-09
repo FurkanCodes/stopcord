@@ -50,7 +50,7 @@ export interface Part {
   autoStart?: boolean;
 }
 
-export type Level = 'worktree' | 'contained' | 'vm';
+export type Level = 'worktree' | 'contained' | 'vm' | 'harness';
 
 export interface Runner {
   id: string;
@@ -59,8 +59,38 @@ export interface Runner {
   networkAllow?: string[];
   write?: string[];
   denyRead?: string[];
+  /** Built-in read blocks turned off, by id. */
+  unblock?: string[];
+  reads?: 'everything' | 'listed';
+  /** When reads are listed: more paths agents may read. */
+  read?: string[];
+  /** Sites blocked without asking anyone. */
+  networkQuiet?: string[];
+  otherSites?: 'ask' | 'block';
   vmCommand?: string;
   setupCommands?: string[];
+}
+
+/** What the sandbox settings show that isn't in a factory. */
+export interface SandboxInfo {
+  blocks: { id: string; label: string; paths: string[] }[];
+  escapes: { what: string; why: string }[];
+  alwaysReads: string[];
+  harnesses: { id: string; sites: string[]; quiet: string[]; ownSandbox: boolean }[];
+}
+
+export interface SandboxCheck {
+  name: string;
+  want: string;
+  got: string;
+  /** Whether it went the way the settings say. Null when it couldn't be told. */
+  held: boolean | null;
+}
+
+export interface SandboxTest {
+  checks: SandboxCheck[];
+  note: string;
+  at: number;
 }
 
 export interface Agent {
@@ -396,6 +426,8 @@ export const api = {
     invoke<Factory>('work_action', { id, key, action, note }),
   workEvidence: (id: string, key: string) => invoke<Evidence>('work_evidence', { id, key }),
   runBenchmark: (id: string, suite: string) => invoke<string>('run_benchmark', { id, suite }),
+  sandboxInfo: () => invoke<SandboxInfo>('sandbox_info'),
+  testRunner: (id: string, runner: string) => invoke<SandboxTest>('test_runner', { id, runner }),
   benchmarkResults: (id: string) => invoke<BenchResult[]>('benchmark_results', { id }),
   answerProposal: (id: string, proposal: string, apply: boolean) => invoke<Factory>('answer_proposal', { id, proposal, apply }),
   suggestStart: (id: string, key: string) => invoke<string>('suggest_start', { id, key }),

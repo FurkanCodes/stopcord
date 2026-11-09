@@ -6,7 +6,7 @@
 use std::path::{Path, PathBuf};
 
 use crate::paths::{GIT_POINTERS, GIT_WRITES, protected_git_paths, resolve, resolve_parent};
-use crate::policy::{Network, Policy};
+use crate::policy::{Network, Policy, Reads};
 
 /// Everything a normal program needs that isn't a path or the network.
 const BASE: &str = r#"(version 1)
@@ -15,7 +15,6 @@ const BASE: &str = r#"(version 1)
 (allow process-info*)
 (allow signal (target same-sandbox))
 (allow sysctl-read)
-(allow file-read*)
 (allow file-ioctl)
 (allow pseudo-tty)
 (allow ipc-posix-shm* ipc-posix-sem)
@@ -37,9 +36,56 @@ const NO_APP_LAUNCHING: &str = r##"(deny mach-lookup (global-name "com.apple.cor
 (deny process-exec (literal "/usr/bin/open") (literal "/usr/bin/osascript"))
 "##;
 
+/// System folders every program reads to start, for a policy that reads only what's listed.
+const SYSTEM_READS: &[&str] = &[
+    "/System",
+    "/usr",
+    "/bin",
+    "/sbin",
+    "/Library",
+    "/opt",
+    "/etc",
+    "/private/etc",
+    "/var/db",
+    "/private/var/db",
+    "/private/var/select",
+    "/dev",
+    "/Applications/Xcode.app",
+];
+
+/// Everything, or only the listed paths. A listed policy still sees every file's metadata,
+/// because finding a path means looking at each folder on the way to it.
+fn read_allows(policy: &Policy) -> String {
+    let Reads::Listed(listed) = &policy.reads else {
+        return "(allow file-read*)\n".to_string();
+    };
+    let mut paths: Vec<String> = SYSTEM_READS.iter().map(|p| real(Path::new(p))).collect();
+    paths.push(real(&policy.worktree));
+    if let Some(common) = &policy.git_common_dir {
+        paths.push(real(common));
+    }
+    paths.extend(policy.write.iter().map(|p| real(p)));
+    paths.extend(listed.iter().map(|p| real(p)));
+    paths.push(real(&policy.program));
+    if let Some(report) = &policy.report_socket {
+        paths.push(real(report));
+    }
+    dedupe(&mut paths);
+    let mut out = String::from("(allow file-read-metadata)\n(allow file-read*\n  (literal \"/\")\n");
+    for path in paths {
+        out.push_str(&format!("  {}\n", subpath(&path)));
+    }
+    for prefix in &policy.write_prefix {
+        out.push_str(&format!("  (regex #\"^{}\")\n", regex_escape(&real(prefix))));
+    }
+    out.push_str(")\n");
+    out
+}
+
 /// Renders the Seatbelt profile for a policy.
 pub fn seatbelt_profile(policy: &Policy) -> String {
     let mut out = String::from(BASE);
+    out.push_str(&read_allows(policy));
     out.push_str(&network_allows(policy));
     out.push_str(&write_allows(policy));
 
@@ -237,6 +283,26 @@ mod tests {
         profile
             .rfind(needle)
             .unwrap_or_else(|| panic!("{needle} not in profile:\n{profile}"))
+    }
+
+    #[test]
+    fn reads_everything_unless_told_otherwise() {
+        assert!(seatbelt_profile(&policy()).contains("(allow file-read*)\n"));
+    }
+
+    #[test]
+    fn a_listed_policy_reads_only_its_paths_and_the_system() {
+        let mut p = policy();
+        p.reads = Reads::Listed(vec!["/opt/tools".into()]);
+        let s = seatbelt_profile(&p);
+        assert!(!s.contains("(allow file-read*)\n"), "{s}");
+        assert!(s.contains("(allow file-read-metadata)"), "{s}");
+        let allow = &s[pos(&s, "(allow file-read*\n")..pos(&s, "(allow file-write*")];
+        for want in ["/usr", "/System", "/opt/tools"] {
+            assert!(allow.contains(&format!("(subpath \"{}\")", real(Path::new(want)))), "missing {want} in {allow}");
+        }
+        assert!(allow.contains(&format!("(subpath \"{}\")", real(&p.worktree))), "its own folder: {allow}");
+        assert!(pos(&s, "(allow file-read*\n") < pos(&s, "(deny file-read*"), "denies still win: {s}");
     }
 
     #[test]

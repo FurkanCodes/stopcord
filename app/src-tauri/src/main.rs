@@ -22,6 +22,7 @@ mod bench;
 mod intake;
 mod learn;
 mod oneshot;
+mod probe;
 mod kb;
 mod leave_key;
 mod line;
@@ -350,6 +351,7 @@ fn create_factory(
         let level = match level.as_deref() {
             Some("contained") => Level::Contained,
             Some("vm") => Level::Vm,
+            Some("harness") => Level::Harness,
             _ => Level::Worktree,
         };
         templates::standard_line(&mut factory, &harness, &reviewer, test.as_deref(), level);
@@ -633,6 +635,20 @@ fn feed_tickets(
     Ok(app.info(app.store.get(&id).map_err(fail)?))
 }
 
+/// Tries a runner's sandbox from the inside and says what held.
+#[tauri::command(async)]
+fn test_runner(app: State<'_, App>, bridge: State<'_, Bridge>, id: String, runner: String) -> Result<runner::TestReport, Failure> {
+    let f = app.store.get(&id).map_err(fail)?;
+    let r = f.runners.iter().find(|r| r.id == runner).ok_or_else(|| Failure::new("runner", format!("there's no runner {runner}")))?;
+    runner::test(&app.store, &bridge, &f, r, &app.program)
+}
+
+/// What the sandbox settings screen shows that isn't in the factory: built-in blocks, locked escapes, harness sites.
+#[tauri::command]
+fn sandbox_info(app: State<'_, App>) -> serde_json::Value {
+    runner::info(&app.store)
+}
+
 #[tauri::command(async)]
 fn run_benchmark(engine: State<'_, Arc<Engine>>, id: String, suite: String) -> Result<String, Failure> {
     engine.run_benchmark(&id, &suite).map_err(|e| Failure::new("benchmark", e))
@@ -807,6 +823,7 @@ fn main() {
         }
         Some("st") => std::process::exit(st::main(&args[2..])),
         Some("sandbox-bridge") => std::process::exit(sawtooth_sandbox::bridge_main(&args[2..])),
+        Some("probe") => std::process::exit(probe::main(&args[2..])),
         _ => {}
     }
 
@@ -894,6 +911,8 @@ fn main() {
             folder_files,
             list_tickets,
             run_benchmark,
+            test_runner,
+            sandbox_info,
             benchmark_results,
             suggest_start,
             answer_proposal,

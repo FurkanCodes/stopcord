@@ -19,6 +19,7 @@ No test calls a model unless you ask for `real_answer`, which spends quota. Each
 | `work_states` | The send-back box, landing, and a gate that keeps failing |
 | `answer_failure` | An answer that can't be typed says so, keeps the words, and clears when one lands |
 | `isolation` | A misbehaving planner and reviewer change nothing real, with and without a sandbox |
+| `sandbox` | Testing a sandbox from setup reports what really held, for each kind of runner |
 | `markdown`, `logos`, `terminal` | Rendering |
 
 ## Stand-in agents

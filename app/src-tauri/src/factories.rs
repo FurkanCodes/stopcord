@@ -109,6 +109,34 @@ pub enum Level {
     Contained,
     /// A Linux virtual machine.
     Vm,
+    /// The harness's own sandbox, turned on with its own flags. Sawtooth's web filter isn't used.
+    Harness,
+}
+
+/// What happens to a site that's on neither list.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum OtherSites {
+    /// Blocked, and a person is asked in NEEDS when an agent wanted it mid-task.
+    #[default]
+    Ask,
+    /// Blocked without asking anyone.
+    Block,
+}
+
+/// What agents may read.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ReadMode {
+    /// Everything except what's blocked.
+    #[default]
+    Everything,
+    /// Only their folder, the tools any program needs, and what's listed.
+    Listed,
+}
+
+fn is_default<T: Default + PartialEq>(v: &T) -> bool {
+    *v == T::default()
 }
 
 fn no_text(s: &str) -> bool {
@@ -141,6 +169,19 @@ pub struct Runner {
     /// Extra paths it may not read.
     #[serde(skip_serializing_if = "none")]
     pub deny_read: Vec<String>,
+    /// Built-in read blocks turned off, by name, from `runner::built_in_blocks`.
+    #[serde(skip_serializing_if = "none")]
+    pub unblock: Vec<String>,
+    #[serde(skip_serializing_if = "is_default")]
+    pub reads: ReadMode,
+    /// When reads are listed: more paths agents may read.
+    #[serde(skip_serializing_if = "none")]
+    pub read: Vec<String>,
+    /// Sites blocked without asking anyone, such as a harness checking for updates.
+    #[serde(skip_serializing_if = "none")]
+    pub network_quiet: Vec<String>,
+    #[serde(skip_serializing_if = "is_default")]
+    pub other_sites: OtherSites,
     /// VM level: the command that runs a command inside the VM. `{dir}` is the worktree and `{cmd}` the command.
     #[serde(skip_serializing_if = "no_text")]
     pub vm_command: String,

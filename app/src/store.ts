@@ -278,6 +278,15 @@ function scheduleSave(f: Factory) {
   );
 }
 
+/** Saves a factory now, rather than after the usual pause, for an action that needs what's on screen. */
+export async function saveNow(f: Factory) {
+  clearTimeout(saving.get(f.id));
+  saving.delete(f.id);
+  const saved = await api.saveFactory(f);
+  setState((s) => ({ factories: s.factories.map((x) => (x.id === saved.id ? saved : x)) }));
+  return saved;
+}
+
 let connected = false;
 
 /** Starts listening to the daemon and the engine. Call once, before the first render. */

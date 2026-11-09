@@ -58,6 +58,49 @@ fn masked_sockets(home: &Path, sawtooth_home: &Path, daemon_socket: &Path) -> Ve
     ]
 }
 
+/// A path agents can't read unless a runner turns the block off.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct Block {
+    pub id: String,
+    pub label: String,
+    pub paths: Vec<PathBuf>,
+}
+
+/// Every built-in read block, by the name a runner's `unblock` uses. Covers the sandbox crate's own list.
+pub fn built_in_blocks(home: &Path, sawtooth_home: &Path) -> Vec<Block> {
+    let block = |id: &str, label: &str, paths: &[&str]| Block {
+        id: id.into(),
+        label: label.into(),
+        paths: paths.iter().map(|p| home.join(p)).collect(),
+    };
+    let mut secrets = block("secrets", "sawtooth's secrets", &[".sawtooth/secrets"]);
+    if !secrets.paths.contains(&sawtooth_home.join("secrets")) {
+        secrets.paths.push(sawtooth_home.join("secrets"));
+    }
+    vec![
+        block("ssh", "ssh keys", &[".ssh"]),
+        block("cloud", "cloud logins", &[".aws", ".config/gcloud", ".kube"]),
+        block("gpg", "gpg keys", &[".gnupg"]),
+        block("tokens", "registry tokens", &[".docker/config.json", ".netrc", ".npmrc"]),
+        block("history", "shell history", &[".zsh_history", ".bash_history"]),
+        secrets,
+    ]
+}
+
+/// What no runner can open, and why. Opening any of these would let an agent start something outside.
+pub const ESCAPES: &[(&str, &str)] = &[
+    ("the daemon's socket", "an agent that reached it could ask for a terminal with no sandbox"),
+    ("docker's socket", "a container started through it runs outside the sandbox"),
+    ("launching apps", "an app macOS starts for an agent runs outside the sandbox"),
+];
+
+/// Readable under home when a runner reads only what's listed: shells, toolchains and git settings.
+pub const LISTED_HOME_READS: &[&str] = &[
+    ".zshrc", ".zprofile", ".zshenv", ".zlogin", ".oh-my-zsh", ".bashrc", ".bash_profile", ".profile",
+    ".gitconfig", ".config/git", ".nvm", ".volta", ".bun", ".deno", ".cargo", ".rustup", ".local",
+    ".pyenv", ".asdf", ".sdkman",
+];
+
 /// Everything the sandbox needs to know, as data, so it can be tested.
 #[allow(clippy::too_many_arguments)]
 pub fn policy_for(
@@ -86,6 +129,18 @@ pub fn policy_for(
     p.deny_read.push(store.home().join("secrets"));
     // A shell's history often holds tokens typed on a command line.
     p.deny_read.extend([".zsh_history", ".bash_history"].map(|f| home.join(f)));
+    let unblocked: Vec<PathBuf> = built_in_blocks(home, store.home())
+        .into_iter()
+        .filter(|b| runner.unblock.contains(&b.id))
+        .flat_map(|b| b.paths)
+        .collect();
+    p.deny_read.retain(|d| !unblocked.contains(d));
+    if runner.reads == crate::factories::ReadMode::Listed {
+        let mut listed: Vec<PathBuf> = LISTED_HOME_READS.iter().map(|r| home.join(r)).collect();
+        listed.push(store.home().join("bin"));
+        listed.extend(runner.read.iter().map(|r| expand(home, r)));
+        p.reads = sawtooth_sandbox::Reads::Listed(listed);
+    }
     // Login shells rewrite their completion cache, and complain on every start if they can't.
     p.write_prefix.push(home.join(".zcompdump"));
     p.masked_sockets = masked_sockets(home, store.home(), daemon_socket);
@@ -100,6 +155,113 @@ fn fail(text: impl Into<String>) -> Failure {
 
 fn home_dir() -> PathBuf {
     std::env::var_os("HOME").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("/"))
+}
+
+/// What a sandbox test found.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TestReport {
+    pub checks: Vec<crate::probe::Check>,
+    /// Said instead of checks when this kind of runner can't be tested from here.
+    pub note: String,
+    pub at: u64,
+}
+
+/// Runs the probe under exactly the confinement an agent on this runner would get, in a scratch folder.
+pub fn test(store: &Store, bridge: &Bridge, factory: &Factory, runner: &Runner, program: &Path) -> Result<TestReport, Failure> {
+    use crate::probe;
+    let at = crate::runs::now_ms();
+    let note = |text: &str| Ok(TestReport { checks: Vec::new(), note: text.to_string(), at });
+    match runner.level {
+        Level::Harness => return note("A harness's own sandbox runs inside the harness, so Sawtooth can't test it from outside."),
+        Level::Vm => return note("Testing a VM runner isn't built yet."),
+        _ => {}
+    }
+    let home = home_dir();
+    let dir = store.worktrees_dir(&factory.id).join(".probe");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).map_err(|e| fail(format!("couldn't make a folder to test in: {e}")))?;
+    let mut blocks: Vec<probe::Block> = built_in_blocks(&home, store.home())
+        .into_iter()
+        .map(|b| probe::Block { blocked: !runner.unblock.contains(&b.id), label: b.label, paths: b.paths })
+        .collect();
+    if !runner.deny_read.is_empty() {
+        let paths = runner.deny_read.iter().map(|p| expand(&home, p)).collect();
+        blocks.push(probe::Block { label: "your own blocks".into(), paths, blocked: true });
+    }
+    let daemon = sawtooth_daemon::paths::socket();
+    let mut sockets = vec![
+        probe::Socket { label: "the daemon".into(), path: daemon.clone() },
+        probe::Socket { label: "the app".into(), path: store.home().join("sawtooth.sock") },
+    ];
+    // A machine can have several, often one linked to another, so each is named by where it is.
+    let tilde = |p: &Path| p.strip_prefix(&home).map_or_else(|_| p.display().to_string(), |r| format!("~/{}", r.display()));
+    sockets.extend(
+        masked_sockets(&home, store.home(), &daemon)
+            .into_iter()
+            .skip(2)
+            .map(|path| probe::Socket { label: format!("docker at {}", tilde(&path)), path }),
+    );
+    let spec = probe::Spec {
+        contained: runner.level == Level::Contained,
+        listed: runner.reads == crate::factories::ReadMode::Listed,
+        outside: home.join(format!(".sawtooth-probe-{}", std::process::id())),
+        sample: PathBuf::from(&factory.path),
+        blocks,
+        sockets,
+    };
+    let argv = vec![program.display().to_string(), "probe".into(), serde_json::to_string(&spec).unwrap_or_default()];
+    let (argv, env, token) = if runner.level == Level::Contained {
+        sawtooth_sandbox::available().map_err(|why| fail(format!("This machine can't make a sandbox: {why}")))?;
+        let info = bridge.call("confine.prepare", json!({ "allow": allowed_sites(runner, None) }))?;
+        let token = info["token"].as_str().unwrap_or_default().to_string();
+        let network = Network::Filter {
+            port: info["port"].as_u64().unwrap_or(0) as u16,
+            socket: PathBuf::from(info["filter"].as_str().unwrap_or_default()),
+        };
+        let policy = policy_for(store, factory, runner, None, &dir, program, &home, &daemon, network, None);
+        match wrap(&policy, &argv, &store.home().join("run")) {
+            Ok(w) => (w.argv, w.env, token),
+            Err(e) => {
+                let _ = bridge.call("confine.release", json!({ "token": token }));
+                return Err(fail(format!("{e:#}")));
+            }
+        }
+    } else {
+        (argv, Vec::new(), String::new())
+    };
+    let output = std::process::Command::new(&argv[0]).args(&argv[1..]).envs(env).current_dir(&dir).output();
+    if !token.is_empty() {
+        let _ = bridge.call("confine.release", json!({ "token": token }));
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+    let output = output.map_err(|e| fail(format!("couldn't start the test: {e}")))?;
+    let checks = probe::parse(&String::from_utf8_lossy(&output.stdout)).ok_or_else(|| {
+        fail(format!("the test didn't report back: {}", crate::runs::last_lines(&String::from_utf8_lossy(&output.stderr), 5)))
+    })?;
+    Ok(TestReport { checks, note: String::new(), at })
+}
+
+/// What the settings screen shows that isn't in a factory: built-in blocks, locked escapes, what
+/// listed reads always include, and the sites each harness needs.
+pub fn info(store: &Store) -> Value {
+    let home = home_dir();
+    let tilde = |p: &Path| p.strip_prefix(&home).map_or_else(|_| p.display().to_string(), |r| format!("~/{}", r.display()));
+    let (harnesses, _) = harness::load(&store.home().join("harnesses"));
+    let blocks: Vec<Value> = built_in_blocks(&home, store.home())
+        .iter()
+        .map(|b| {
+            let mut paths: Vec<String> = b.paths.iter().map(|p| tilde(p)).collect();
+            paths.dedup();
+            json!({ "id": b.id, "label": b.label, "paths": paths })
+        })
+        .collect();
+    json!({
+        "blocks": blocks,
+        "escapes": ESCAPES.iter().map(|(what, why)| json!({ "what": what, "why": why })).collect::<Vec<_>>(),
+        "alwaysReads": LISTED_HOME_READS.iter().map(|r| format!("~/{r}")).collect::<Vec<_>>(),
+        "harnesses": harnesses.iter().map(|h| json!({ "id": h.id, "sites": h.domains, "quiet": h.quiet_domains, "ownSandbox": !h.own_sandbox_args.trim().is_empty() })).collect::<Vec<_>>(),
+    })
 }
 
 /// Fills in a VM command. `{dir}` is the folder and `{cmd}` the command, already quoted for a shell.
@@ -177,6 +339,10 @@ pub fn prepare(
     let harness = command.and_then(|c| harness::find(&harnesses, c));
     let level = runner.map_or(Level::Worktree, |r| r.level);
     let contained = level == Level::Contained;
+    if level == Level::Harness && command.is_some() && harness.is_none_or(|h| h.own_sandbox_args.trim().is_empty()) {
+        let name = harness.map_or("This command", |h| h.id.as_str());
+        return Err(fail(format!("{name} has no sandbox of its own that Sawtooth knows how to turn on. Use Sawtooth's sandbox, or none.")));
+    }
     let setup = runner.map_or(&[][..], |r| r.setup_commands.as_slice());
     if !setup.is_empty()
         && let Some((_, failed)) = setup_markers(cwd)
@@ -187,7 +353,11 @@ pub fn prepare(
     let run_command = command.map(|c| {
         // A throwaway copy is a repository of its own, so that's what a harness has to trust.
         let trusted = if cwd.join(".git").is_dir() { cwd.display().to_string() } else { factory.path.clone() };
-        let c = if contained { harness::sandboxed_command(harness, c, &trusted) } else { c.to_string() };
+        let c = match level {
+            Level::Contained => harness::sandboxed_command(harness, c, &trusted),
+            Level::Harness => harness::own_sandbox_command(harness, c, &trusted).unwrap_or_else(|| c.to_string()),
+            _ => c.to_string(),
+        };
         with_setup(setup, &c)
     });
     let argv = shell::argv(&shell_path, run_command.as_deref());
@@ -323,6 +493,53 @@ mod tests {
         assert!(p.write.contains(&store.knowledge_file("f")));
         assert!(p.read_only.contains(&PathBuf::from("/Users/me/.claude/settings.json")));
         assert_eq!(p.report_socket, Some(PathBuf::from("/r.sock")));
+    }
+
+    fn policy_with(edit: impl FnOnce(&mut Runner)) -> (tempfile::TempDir, Store, sawtooth_sandbox::Policy) {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::new(dir.path().join("st"));
+        let mut f = factory();
+        edit(&mut f.runners[0]);
+        let p = policy_for(&store, &f, &f.runners[0], None, dir.path(), Path::new("/app"), Path::new("/Users/me"), Path::new("/d.sock"), Network::Off, None);
+        (dir, store, p)
+    }
+
+    #[test]
+    fn every_built_in_block_is_on_until_a_runner_turns_it_off() {
+        let (_d, store, on) = policy_with(|_| {});
+        for block in built_in_blocks(Path::new("/Users/me"), store.home()) {
+            for path in &block.paths {
+                assert!(on.deny_read.contains(path), "{} isn't blocked by default", path.display());
+            }
+        }
+        let (_d, _s, off) = policy_with(|r| r.unblock = vec!["ssh".into(), "history".into()]);
+        assert!(!off.deny_read.contains(&PathBuf::from("/Users/me/.ssh")));
+        assert!(!off.deny_read.contains(&PathBuf::from("/Users/me/.zsh_history")));
+        assert!(off.deny_read.contains(&PathBuf::from("/Users/me/.aws")), "only what was named comes off");
+        assert!(off.deny_read.contains(&PathBuf::from("/Users/me/.config/mine")), "a runner's own blocks stay");
+        assert!(off.masked_sockets.contains(&PathBuf::from("/d.sock")), "escapes never come off");
+    }
+
+    #[test]
+    fn the_crates_own_blocks_all_have_a_name() {
+        let named: Vec<PathBuf> = built_in_blocks(Path::new("/h"), Path::new("/h/.sawtooth")).into_iter().flat_map(|b| b.paths).collect();
+        for path in sawtooth_sandbox::COMMON_DENY_READS {
+            assert!(named.contains(&Path::new("/h").join(path)), "{path} can't be turned off by name");
+        }
+    }
+
+    #[test]
+    fn listed_reads_add_the_tools_and_what_the_runner_lists() {
+        let (_d, _s, everything) = policy_with(|_| {});
+        assert_eq!(everything.reads, sawtooth_sandbox::Reads::Everything);
+        let (_d, store, listed) = policy_with(|r| {
+            r.reads = crate::factories::ReadMode::Listed;
+            r.read = vec!["~/notes".into()];
+        });
+        let sawtooth_sandbox::Reads::Listed(paths) = listed.reads else { panic!("not listed") };
+        assert!(paths.contains(&PathBuf::from("/Users/me/notes")));
+        assert!(paths.contains(&PathBuf::from("/Users/me/.nvm")));
+        assert!(paths.contains(&store.home().join("bin")), "st has to be readable to report");
     }
 
     #[test]

@@ -5,7 +5,7 @@ use anyhow::Context;
 use anyhow::bail;
 use std::path::Path;
 
-use crate::policy::{Network, Policy};
+use crate::policy::{Network, Policy, Reads};
 
 /// A sandboxed command: run `argv` with `env` added to the environment.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -68,6 +68,9 @@ pub fn wrap(policy: &Policy, argv: &[String], dir: &Path) -> anyhow::Result<Wrap
 fn validate(policy: &Policy, argv: &[String]) -> anyhow::Result<()> {
     if argv.is_empty() {
         bail!("nothing to run");
+    }
+    if cfg!(target_os = "linux") && matches!(policy.reads, Reads::Listed(_)) {
+        bail!("reading only what's listed works on macOS only for now");
     }
     let mut paths: Vec<&Path> = vec![&policy.worktree, &policy.home, &policy.program];
     let lists = [

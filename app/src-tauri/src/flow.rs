@@ -727,7 +727,13 @@ impl Engine {
         let (all, _) = harness::load(&self.store.home().join("harnesses"));
         // Harnesses phone home when they start and while they sit idle. Only a site wanted mid-task is worth stopping for.
         let working = self.state.lock().unwrap().terminals.get(terminal).is_some_and(|t| t["state"] == "working");
-        if !working || harness::is_quiet(all.iter().find(|h| Some(&h.id) == agent.as_ref()), host) {
+        // The runner this terminal's agent uses decides which sites nobody needs to be asked about.
+        let quiet_here = self.store.get(&factory).ok().is_some_and(|f| {
+            let role = f.work.iter().find_map(|w| w.agents.iter().find(|(_, t)| t.as_str() == terminal).map(|(a, _)| a.clone()));
+            let asked = role.and_then(|a| f.agents.iter().chain(&f.scorers).find(|x| x.id == a).map(|x| x.runner.clone()));
+            crate::runner::pick(&f, asked.as_deref()).is_some_and(|r| r.other_sites == crate::factories::OtherSites::Block || harness::matches(&r.network_quiet, host))
+        });
+        if !working || quiet_here || harness::is_quiet(all.iter().find(|h| Some(&h.id) == agent.as_ref()), host) {
             self.log(&factory, Run::new("network", format!("{name} was blocked from {host}")).terminal(Some(terminal)).by("engine"));
             return;
         }

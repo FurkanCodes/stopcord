@@ -16,6 +16,16 @@ pub enum Network {
     Open,
 }
 
+/// What a sandboxed process may read.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum Reads {
+    /// Everything except `deny_read`.
+    #[default]
+    Everything,
+    /// Only these paths, the paths it may write, and the system folders any program needs. macOS only for now.
+    Listed(Vec<PathBuf>),
+}
+
 /// One terminal's confinement, independent of the backend that enforces it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Policy {
@@ -34,6 +44,8 @@ pub struct Policy {
     /// Stay read-only even under a writable path, such as harness settings.
     pub read_only: Vec<PathBuf>,
     pub deny_read: Vec<PathBuf>,
+    #[serde(default)]
+    pub reads: Reads,
     /// Unix sockets to make unreachable by path (daemon control, Docker). Linux needs this; see the spike doc.
     pub masked_sockets: Vec<PathBuf>,
     /// The one Unix socket the agent may connect to, for reporting back.
@@ -55,7 +67,7 @@ const COMMON_WRITES: &[&str] = &[
 ];
 
 /// Unreadable under home for every terminal: credentials.
-const COMMON_DENY_READS: &[&str] = &[
+pub const COMMON_DENY_READS: &[&str] = &[
     ".ssh",
     ".aws",
     ".gnupg",
@@ -87,6 +99,7 @@ impl Policy {
             write_prefix: Vec::new(),
             read_only: Vec::new(),
             deny_read,
+            reads: Reads::Everything,
             masked_sockets: Vec::new(),
             report_socket: None,
             network: Network::Off,

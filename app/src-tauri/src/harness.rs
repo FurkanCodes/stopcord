@@ -43,6 +43,9 @@ pub struct Harness {
     /// the OS holding the boundary, a prompt for every edit would only stall unattended work.
     /// `{project}` becomes the project's folder.
     pub sandboxed_args: String,
+    /// Flags that turn on the harness's own sandbox, for the harness level. Empty means none Sawtooth knows.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub own_sandbox_args: String,
     /// How to run a single prompt and exit, with `{prompt}` where the prompt goes. For judges and suggestions.
     pub one_shot: String,
     pub trust: Option<Trust>,
@@ -72,6 +75,7 @@ pub fn builtin() -> Vec<Harness> {
             quiet_domains: strings(&["formulae.brew.sh"]),
             // Not bypass mode: that shows a confirmation we'd have to edit its settings to skip.
             sandboxed_args: "--permission-mode acceptEdits --allowedTools Bash".into(),
+            own_sandbox_args: r#"--permission-mode acceptEdits --settings '{"sandbox":{"enabled":true,"autoAllowBashIfSandboxed":true}}'"#.into(),
             one_shot: "claude -p {prompt}".into(),
             trust: Some(Trust {
                 contains: "Yes, I trust this folder".into(),
@@ -92,6 +96,7 @@ pub fn builtin() -> Vec<Harness> {
             // Trust is set for this run only: its config is read-only in here, so a saved answer would fail.
             // A whole table, because Codex splits a dotted key at every dot, including those in the path.
             sandboxed_args: r#"--sandbox danger-full-access --ask-for-approval never --no-daemon -c 'projects={"{project}"={trust_level="trusted"}}'"#.into(),
+            own_sandbox_args: r#"--sandbox workspace-write --ask-for-approval never -c 'projects={"{project}"={trust_level="trusted"}}'"#.into(),
             one_shot: "codex exec --skip-git-repo-check --sandbox danger-full-access {prompt}".into(),
             trust: Some(Trust {
                 contains: "Trust this folder?".into(),
@@ -109,6 +114,7 @@ pub fn builtin() -> Vec<Harness> {
             domains: strings(&["googleapis.com", "google.com", "gstatic.com"]),
             quiet_domains: Vec::new(),
             sandboxed_args: "--yolo".into(),
+            own_sandbox_args: String::new(),
             one_shot: "gemini -p {prompt}".into(),
             trust: None,
         },
@@ -121,6 +127,7 @@ pub fn builtin() -> Vec<Harness> {
             domains: strings(&["opencode.ai", "models.dev"]),
             quiet_domains: Vec::new(),
             sandboxed_args: "--auto".into(),
+            own_sandbox_args: String::new(),
             one_shot: "opencode run {prompt}".into(),
             trust: None,
         },
@@ -184,7 +191,20 @@ pub fn in_sandbox(terminal: &serde_json::Value) -> bool {
 
 /// Whether a blocked site is only this harness talking to itself.
 pub fn is_quiet(harness: Option<&Harness>, host: &str) -> bool {
-    harness.is_some_and(|h| h.quiet_domains.iter().any(|d| host == d || host.ends_with(&format!(".{d}"))))
+    harness.is_some_and(|h| matches(&h.quiet_domains, host))
+}
+
+/// Whether `host` is one of `sites` or under one of them.
+pub fn matches(sites: &[String], host: &str) -> bool {
+    sites.iter().any(|d| host == d || host.ends_with(&format!(".{d}")))
+}
+
+/// The start command for the harness level, with the harness's own sandbox turned on. None when
+/// Sawtooth doesn't know how to turn it on for this harness.
+pub fn own_sandbox_command(harness: Option<&Harness>, command: &str, project: &str) -> Option<String> {
+    let h = harness.filter(|h| !h.own_sandbox_args.trim().is_empty())?;
+    let args = h.own_sandbox_args.replace("{project}", &project.replace('\'', r"'\''"));
+    Some(if command.contains(&args) { command.to_string() } else { format!("{command} {args}") })
 }
 
 /// The start command to use inside a sandbox.
@@ -200,6 +220,25 @@ pub fn sandboxed_command(harness: Option<&Harness>, command: &str, project: &str
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_harness_level_turns_on_only_sandboxes_it_knows() {
+        let all = builtin();
+        let find = |id: &str| all.iter().find(|h| h.id == id);
+        let claude = own_sandbox_command(find("claude"), "claude", "/p").unwrap();
+        assert!(claude.contains(r#""sandbox":{"enabled":true"#), "{claude}");
+        let codex = own_sandbox_command(find("codex"), "codex", "/my 'p").unwrap();
+        assert!(codex.contains("--sandbox workspace-write") && codex.contains(r"/my '\''p"), "{codex}");
+        assert!(own_sandbox_command(find("gemini"), "gemini", "/p").is_none());
+        assert!(own_sandbox_command(None, "anything", "/p").is_none());
+    }
+
+    #[test]
+    fn a_site_matches_itself_and_what_is_under_it() {
+        let sites = vec!["github.com".to_string()];
+        assert!(matches(&sites, "github.com") && matches(&sites, "api.github.com"));
+        assert!(!matches(&sites, "notgithub.com"));
+    }
 
     #[test]
     fn a_command_finds_its_harness_however_it_is_written() {

@@ -23,6 +23,7 @@ TESTS = [
     ('answer_failure', []),
     ('isolation', ['worktree']),
     ('isolation', ['contained']),
+    ('sandbox', []),
     ('markdown', []),
     ('logos', []),
     ('terminal', []),
