@@ -280,31 +280,46 @@ mod tests {
             }
         });
 
-        let port = free_port();
-        let argv = args(&[
-            &port.to_string(),
-            path.to_str().unwrap(),
-            "--",
-            "/bin/sleep",
-            "2",
-        ]);
-        let bridge = thread::spawn(move || bridge_main(&argv));
+        // `free_port` lets go of the port before the bridge binds it, so another test can take it first.
+        // The bridge then exits 125, and whatever answered wasn't the bridge, so try a new port.
+        for _ in 0..10 {
+            let port = free_port();
+            let argv = args(&[
+                &port.to_string(),
+                path.to_str().unwrap(),
+                "--",
+                "/bin/sleep",
+                "2",
+            ]);
+            let bridge = thread::spawn(move || bridge_main(&argv));
+            let echoed = echo_through(port);
+            let code = bridge.join().unwrap();
+            if code == 125 {
+                continue;
+            }
+            echoed.unwrap();
+            assert_eq!(code, 0);
+            return;
+        }
+        panic!("never got a port for the bridge");
+    }
 
+    fn echo_through(port: u16) -> std::io::Result<()> {
         let deadline = Instant::now() + Duration::from_secs(3);
         let mut client = loop {
             match TcpStream::connect(("127.0.0.1", port)) {
                 Ok(stream) => break stream,
                 Err(_) if Instant::now() < deadline => thread::sleep(Duration::from_millis(10)),
-                Err(e) => panic!("{e}"),
+                Err(e) => return Err(e),
             }
         };
-        client
-            .set_read_timeout(Some(Duration::from_secs(2)))
-            .unwrap();
-        client.write_all(b"hello").unwrap();
+        client.set_read_timeout(Some(Duration::from_secs(2)))?;
+        client.write_all(b"hello")?;
         let mut back = [0u8; 5];
-        client.read_exact(&mut back).unwrap();
-        assert_eq!(&back, b"hello");
-        assert_eq!(bridge.join().unwrap(), 0);
+        client.read_exact(&mut back)?;
+        if &back != b"hello" {
+            return Err(std::io::Error::other("something else answered"));
+        }
+        Ok(())
     }
 }
