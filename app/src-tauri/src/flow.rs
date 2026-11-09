@@ -48,6 +48,11 @@ pub fn alert_key(work: &str) -> String {
     format!("work:{work}")
 }
 
+/// A person's answer that couldn't be typed. It's about one try: the next try, or the agent moving on, ends it.
+pub fn answer_alert(key: &str) -> String {
+    format!("answer:{key}")
+}
+
 fn item_of<'a>(f: &'a Factory, key: &str) -> Option<&'a WorkItem> {
     f.work.iter().find(|w| w.ticket.key == key)
 }
@@ -112,6 +117,7 @@ impl Engine {
         let Some(w) = item_of(&f, key).cloned() else { return };
         if step != Step::Nothing {
             self.clear_alert(factory, &alert_key(&w.id));
+            self.clear_alert(factory, &answer_alert(key));
         }
         match step {
             Step::Nothing => {}
@@ -618,6 +624,7 @@ impl Engine {
             let id = w.id.clone();
             let _ = self.store.update(&factory, |fa| line::agent_resumed(fa, &key));
             self.clear_alert(&factory, &alert_key(&id));
+            self.clear_alert(&factory, &answer_alert(&key));
         }
     }
 
@@ -721,13 +728,14 @@ impl Engine {
                 let me = Arc::clone(self);
                 let (fid, key, term, text) = (factory.to_string(), key.to_string(), w.terminal.clone().unwrap_or_default(), note.to_string());
                 std::thread::spawn(move || {
+                    me.clear_alert(&fid, &answer_alert(&key));
                     match me.type_engine_turn(&term, &text) {
                         // An agent can ask mid-turn and carry on, and then no new turn starts to clear the question.
                         Ok(()) => me.line_turn_began(&term),
                         Err(e) => {
                             let said = format!("{key}: the answer didn't reach the agent. {e}");
                             me.log(&fid, Run::new("line", said.clone()).ok(false).by("engine"));
-                            me.alert(&fid, &format!("answer:{key}"), &said, Some(&term));
+                            me.alert(&fid, &answer_alert(&key), &said, Some(&term));
                         }
                     }
                     me.state.lock().unwrap().stepping.remove(&(fid.clone(), key.clone()));

@@ -438,6 +438,8 @@ function Incoming({ factory, item, starts, stage, marked, onStage, onStart }: { 
 
 /** Notes survive moving between tickets, until they're sent. */
 const notes = new Map<string, string>();
+/** The last answer sent for each ticket, so one that can't be typed comes back to the box. */
+const lastAnswers = new Map<string, string>();
 
 function useEvidence(factoryId: string, item: WorkItem): Evidence | null {
   const [evidence, setEvidence] = useState<Evidence | null>(null);
@@ -525,6 +527,7 @@ function Detail({ factory, item, runs, terminals, onSending, onSite }: { factory
   const sites = sitesFor(factory, item);
   const question = factory.alerts.find((a) => a.work === item.id && a.kind === 'question')?.text.replace(`${item.ticket.key} asks: `, '');
   const stopped = factory.alerts.find((a) => a.work === item.id && a.kind === 'failed')?.text;
+  const answerFailed = factory.alerts.find((a) => a.key === `answer:${item.ticket.key}`);
   const findings: Finding[] = item.findings.filter((f) => f.stage !== 'approve' || w === 'approve').sort((a, b) => (severityRank[a.severity] ?? 3) - (severityRank[b.severity] ?? 3));
   const highs = findings.filter((f) => f.severity === 'high').length;
   const uncommitted = evidence?.uncommitted ?? [];
@@ -546,6 +549,12 @@ function Detail({ factory, item, runs, terminals, onSending, onSite }: { factory
     const timer = window.setTimeout(() => setSent(''), 120_000);
     return () => window.clearTimeout(timer);
   }, [sent]);
+  // The engine couldn't type it, so it isn't sent: the words come back, with the reason beside them.
+  useEffect(() => {
+    if (!answerFailed) return;
+    setSent('');
+    setAnswer((now) => now || (lastAnswers.get(item.id) ?? ''));
+  }, [answerFailed?.at]);
 
   async function act(action: WorkVerb, text = ''): Promise<boolean> {
     setBusy(true);
@@ -572,6 +581,7 @@ function Detail({ factory, item, runs, terminals, onSending, onSite }: { factory
     if (sent) return;
     const text = answer;
     if (!text.trim()) return answerField.current?.focus();
+    lastAnswers.set(item.id, text);
     setSent(text);
     setAnswer('');
     if (!(await act('answer', text))) {
@@ -671,6 +681,8 @@ function Detail({ factory, item, runs, terminals, onSending, onSite }: { factory
             {sent ? (
               <div role="status" className="t-muted">sent: {sent} · {speaker} gets it as soon as it stops to read</div>
             ) : (
+            <>
+            {answerFailed && <div role="alert" className="t-red">{answerFailed.text.replace(`${item.ticket.key}: `, '')}</div>}
             <input
               ref={answerField}
               className="t-field"
@@ -684,6 +696,7 @@ function Detail({ factory, item, runs, terminals, onSending, onSite }: { factory
                 if (e.key === 'Escape') e.currentTarget.blur();
               }}
             />
+            </>
             )}
           </div>
         )}
