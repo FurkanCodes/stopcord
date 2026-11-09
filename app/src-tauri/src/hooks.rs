@@ -195,6 +195,13 @@ pub fn uninstall(factory: &Factory) {
     }
 }
 
+/// `command` as the person's login shell runs it. An app opened from Finder has a
+/// bare PATH without node, cargo and the rest; a commit hook doesn't need this,
+/// because it runs inside the agent's terminal.
+pub fn login_command(shell: &str, command: &str) -> String {
+    format!("{} -l -c {}", quote(shell), quote(command))
+}
+
 /// Runs a shell command in `cwd`, copying its output to `echo` as it comes.
 /// Returns whether it passed and everything it printed. With a timeout, a
 /// command still running then is stopped, along with everything it started,
@@ -340,6 +347,17 @@ mod tests {
     use super::*;
     use crate::factories::Part;
     use crate::worktree::tests::repo;
+
+    #[test]
+    fn a_login_shell_command_keeps_its_output_exit_code_and_quotes() {
+        let dir = tempfile::tempdir().unwrap();
+        let cmd = login_command("/bin/sh", "echo 'it'\\''s'; exit 3");
+        let (ok, text) = run_command(&cmd, dir.path(), &mut std::io::sink(), None);
+        assert!(!ok);
+        assert_eq!(text.trim(), "it's");
+        let (ok, _) = run_command(&login_command("/bin/sh", "true"), dir.path(), &mut std::io::sink(), None);
+        assert!(ok);
+    }
 
     #[test]
     fn a_timeout_stops_everything_the_command_started() {

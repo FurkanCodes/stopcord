@@ -581,7 +581,7 @@ impl Engine {
             }
             for part in checks {
                 let (ok, output) = hooks::run_command(
-                    &part.command,
+                    &hooks::login_command(&shell::user_shell(), &part.command),
                     Path::new(&cwd),
                     &mut std::io::sink(),
                     Some(QUIET_CHECK_TIMEOUT),
