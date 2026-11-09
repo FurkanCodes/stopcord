@@ -22,6 +22,7 @@ mod shell;
 #[cfg(debug_assertions)]
 mod testbridge;
 mod tickets;
+mod typing;
 mod work;
 mod worktree;
 
@@ -176,6 +177,7 @@ impl App {
 #[tauri::command(async)]
 fn daemon(
     bridge: State<'_, Bridge>,
+    engine: State<'_, Arc<Engine>>,
     method: String,
     params: Option<Value>,
 ) -> Result<Value, Failure> {
@@ -185,7 +187,11 @@ fn daemon(
             format!("the window can't call {method}"),
         ));
     }
-    bridge.call(&method, params.unwrap_or_else(|| json!({})))
+    let params = params.unwrap_or_else(|| json!({}));
+    if method == "terminal.send" {
+        engine.person_typed(&params);
+    }
+    bridge.call(&method, params)
 }
 
 #[tauri::command(async)]

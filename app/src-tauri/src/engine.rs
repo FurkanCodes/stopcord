@@ -24,6 +24,7 @@ use serde_json::{Value, json};
 use crate::bridge::{Bridge, Failure};
 use crate::factories::{Factory, Kind, Part, RunsIn, RunsOn, Store, Ticket, When, WorkItem};
 use crate::runs::{self, Run};
+use crate::typing::{Port, Typist};
 use crate::work::{self, Change, Live, Retry};
 use crate::{hooks, kb, shell, worktree};
 
@@ -32,6 +33,9 @@ pub type Emit = Arc<dyn Fn(&str, Value) + Send + Sync>;
 
 const TICK: Duration = Duration::from_secs(2);
 const READY_TIMEOUT: Duration = Duration::from_secs(90);
+/// How long a typed prompt holds the terminal while its turn gets going.
+const TURN_START: Duration = Duration::from_secs(5);
+const TYPING_POLL: Duration = Duration::from_millis(500);
 const QUIET_CHECK_TIMEOUT: Duration = Duration::from_secs(600);
 /// Fix turns the engine starts in a row before it stops asking.
 const MAX_FIX_TURNS: u32 = 3;
@@ -273,7 +277,21 @@ pub struct Engine {
     program: PathBuf,
     emit: Emit,
     state: Mutex<State>,
+    typist: Typist,
     started: Instant,
+}
+
+impl Port for Bridge {
+    fn get(&self, id: &str) -> Result<Value, String> {
+        self.call("terminal.get", json!({ "id": id }))
+            .map_err(|f| f.message)
+    }
+
+    fn send(&self, id: &str, data: &[u8]) -> Result<(), String> {
+        self.call("terminal.send", json!({ "id": id, "data": B64.encode(data) }))
+            .map(|_| ())
+            .map_err(|f| f.message)
+    }
 }
 
 impl Engine {
@@ -284,6 +302,7 @@ impl Engine {
             program,
             emit,
             state: Mutex::new(State::default()),
+            typist: Typist::new(READY_TIMEOUT, TURN_START, TYPING_POLL),
             started: Instant::now(),
         })
     }
@@ -354,6 +373,7 @@ impl Engine {
             Some("terminal.closed") => {
                 if let Some(id) = event["id"].as_str() {
                     self.state.lock().unwrap().terminals.remove(id);
+                    self.typist.forget(id);
                 }
                 self.pump_tickets();
             }
@@ -370,6 +390,7 @@ impl Engine {
                     .insert(id.to_string(), terminal.clone());
                 let was_working = before.as_ref().is_some_and(|t| t["state"] == "working");
                 if terminal["state"] == "working" && !was_working {
+                    self.typist.turn_began(id);
                     self.state.lock().unwrap().turn_started.insert(id.to_string(), Instant::now());
                 }
                 if kind == "terminal.changed" && was_working && terminal["state"] == "idle" {
@@ -630,47 +651,19 @@ impl Engine {
         Ok(id)
     }
 
-    /// Waits until an agent is at its prompt in the terminal, then types `prompt` and presses Enter.
+    /// Types `prompt` into the terminal once it's safe to. See `typing.rs`.
     fn type_prompt(&self, id: &str, prompt: &str) -> Result<(), String> {
-        let deadline = Instant::now() + READY_TIMEOUT;
-        loop {
-            let t = self
-                .bridge
-                .call("terminal.get", json!({ "id": id }))
-                .map_err(|f| format!("{} is gone: {}", id, f.message))?;
-            if t["state"] == "exited" {
-                return Err(format!(
-                    "{} ended before the prompt could be typed",
-                    self.name_of(id)
-                ));
-            }
-            if !t["agent"].is_null() && t["state"] == "idle" {
-                break;
-            }
-            if Instant::now() > deadline {
-                return Err(format!(
-                    "{} wasn't ready for a prompt within {} seconds, so nothing was typed",
-                    self.name_of(id),
-                    READY_TIMEOUT.as_secs()
-                ));
-            }
-            thread::sleep(Duration::from_millis(500));
+        self.typist
+            .type_prompt(&self.bridge, id, prompt, &self.name_of(id))
+    }
+
+    /// The window sent a person's keys to a terminal.
+    pub fn person_typed(&self, params: &Value) {
+        if let (Some(id), Some(data)) = (params["id"].as_str(), params["data"].as_str())
+            && let Ok(bytes) = B64.decode(data)
+        {
+            self.typist.person_typed(id, &bytes);
         }
-        let paste = format!("\x1b[200~{}\x1b[201~", prompt.trim());
-        self.bridge
-            .call(
-                "terminal.send",
-                json!({ "id": id, "data": B64.encode(paste) }),
-            )
-            .map_err(|f| f.message)?;
-        thread::sleep(Duration::from_millis(300));
-        self.bridge
-            .call(
-                "terminal.send",
-                json!({ "id": id, "data": B64.encode("\r") }),
-            )
-            .map_err(|f| f.message)?;
-        Ok(())
     }
 
     // ---- Tickets ------------------------------------------------------------
