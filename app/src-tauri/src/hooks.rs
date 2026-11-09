@@ -5,14 +5,51 @@
 //! sees it in its terminal), writes the run log, and stops the commit when one fails.
 
 use std::io::{Read, Write};
+use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicI32, Ordering};
+use std::time::Duration;
 
 use crate::factories::{Factory, Kind, RunsOn, Store};
 use crate::runs::{self, Run};
 use crate::worktree::{common_dir, git, is_git};
 
 const MARKER: &str = "# sawtooth-hook";
+
+/// The longest a check on a commit or push may run. Long enough for a full test
+/// suite; short enough that a hung one can't hold an agent's commit forever.
+const HOOK_TIMEOUT: Duration = Duration::from_secs(30 * 60);
+/// How long a timed-out check gets to stop cleanly before it's killed.
+const STOP_GRACE: Duration = Duration::from_secs(2);
+
+/// The process group of the check running now, for `forward_signal`.
+static RUNNING_GROUP: AtomicI32 = AtomicI32::new(0);
+
+/// A check runs in its own process group, so that a timeout can stop all of it.
+/// That also takes it out of the reach of a Ctrl-C at the terminal, so the hook
+/// passes the signal on before dying itself.
+extern "C" fn forward_signal(signal: libc::c_int) {
+    let group = RUNNING_GROUP.load(Ordering::SeqCst);
+    // SAFETY: kill, signal and raise are all async-signal-safe.
+    unsafe {
+        if group > 0 {
+            libc::kill(-group, libc::SIGTERM);
+        }
+        libc::signal(signal, libc::SIG_DFL);
+        libc::raise(signal);
+    }
+}
+
+fn forward_signals() {
+    let handler = forward_signal as extern "C" fn(libc::c_int) as libc::sighandler_t;
+    for signal in [libc::SIGINT, libc::SIGTERM, libc::SIGHUP] {
+        // SAFETY: the handler does only async-signal-safe work.
+        unsafe {
+            libc::signal(signal, handler);
+        }
+    }
+}
 
 /// The hooks a factory can need, and which checks each one runs.
 const HOOKS: [(&str, RunsOn); 2] = [("pre-commit", RunsOn::Commit), ("pre-push", RunsOn::Merge)];
@@ -132,7 +169,8 @@ pub fn uninstall(factory: &Factory) {
 
 /// Runs a shell command in `cwd`, copying its output to `echo` as it comes.
 /// Returns whether it passed and everything it printed. With a timeout, a
-/// command still running then is stopped and counts as failed.
+/// command still running then is stopped, along with everything it started,
+/// and counts as failed.
 pub fn run_command(
     command: &str,
     cwd: &Path,
@@ -145,11 +183,13 @@ pub fn run_command(
         .current_dir(cwd)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
+        .process_group(0)
         .spawn();
     let mut child = match child {
         Ok(c) => c,
         Err(e) => return (false, format!("couldn't run it: {e}")),
     };
+    RUNNING_GROUP.store(child.id() as i32, Ordering::SeqCst);
     let mut out = child.stdout.take().unwrap();
     let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let timed_out = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
@@ -160,7 +200,18 @@ pub fn run_command(
             while !done.load(std::sync::atomic::Ordering::SeqCst) {
                 if std::time::Instant::now() > deadline {
                     timed_out.store(true, std::sync::atomic::Ordering::SeqCst);
-                    let _ = Command::new("kill").arg(pid.to_string()).status();
+                    let group = pid as i32;
+                    // SAFETY: only sends a signal to the group this function started.
+                    unsafe { libc::kill(-group, libc::SIGTERM) };
+                    let hard = std::time::Instant::now() + STOP_GRACE;
+                    while std::time::Instant::now() < hard {
+                        if done.load(std::sync::atomic::Ordering::SeqCst) {
+                            return;
+                        }
+                        std::thread::sleep(std::time::Duration::from_millis(50));
+                    }
+                    // SAFETY: as above.
+                    unsafe { libc::kill(-group, libc::SIGKILL) };
                     return;
                 }
                 std::thread::sleep(std::time::Duration::from_millis(200));
@@ -201,6 +252,7 @@ pub fn run_hook(store: &Store, id: &str, hook: &str, cwd: &Path) -> i32 {
             return 0;
         }
     };
+    forward_signals();
     let terminal = std::env::var("SAWTOOTH_TERMINAL").ok();
     let branch = git(cwd, &["branch", "--show-current"]).unwrap_or_default();
     let what = if on == RunsOn::Commit {
@@ -216,7 +268,7 @@ pub fn run_hook(store: &Store, id: &str, hook: &str, cwd: &Path) -> i32 {
         .filter(|p| p.kind == Kind::Check && p.runs_on == on && !p.command.trim().is_empty())
     {
         let _ = writeln!(stderr, "sawtooth: {} ({})", part.name, part.command);
-        let (ok, output) = run_command(&part.command, cwd, &mut stderr, None);
+        let (ok, output) = run_command(&part.command, cwd, &mut stderr, Some(HOOK_TIMEOUT));
         let _ = writeln!(
             stderr,
             "sawtooth: {} {}",
@@ -258,6 +310,25 @@ pub fn run_hook(store: &Store, id: &str, hook: &str, cwd: &Path) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_timeout_stops_everything_the_command_started() {
+        let dir = tempfile::tempdir().unwrap();
+        let started = std::time::Instant::now();
+        let (ok, text) = run_command(
+            "sleep 8 | cat",
+            dir.path(),
+            &mut std::io::sink(),
+            Some(std::time::Duration::from_millis(200)),
+        );
+        assert!(!ok);
+        assert!(text.contains("ran too long"), "{text}");
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(5),
+            "took {:?}, so the children were left running",
+            started.elapsed()
+        );
+    }
     use crate::factories::Part;
     use crate::worktree::tests::repo;
 

@@ -2599,6 +2599,7 @@ dependencies = [
  "base64 0.22.1",
  "block2",
  "chrono",
+ "libc",
  "objc2",
  "objc2-app-kit",
  "sawtooth-daemon",

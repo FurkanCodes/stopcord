@@ -188,6 +188,51 @@ pub fn parse_schedule(text: &str) -> Option<Schedule> {
     }
 }
 
+// ---- Limits -----------------------------------------------------------------
+
+/// Whether to ask an agent to fix a failed check again.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Ask {
+    Yes,
+    /// This is the failure that hit the limit: stop, and say so once.
+    StopNow,
+    No,
+}
+
+/// Failed checks in a row for each "when a check fails" trigger, so one that
+/// can't be fixed doesn't keep an agent going all night.
+#[derive(Default)]
+struct FixLimit {
+    /// (factory, trigger, check, scope) -> failures in a row. The scope is the
+    /// terminal, or `*` for a trigger that opens a new terminal each time.
+    streak: HashMap<(String, String, String, String), u32>,
+}
+
+impl FixLimit {
+    fn failed(&mut self, factory: &str, trigger: &str, check: &str, scope: &str) -> Ask {
+        let key = (factory.into(), trigger.into(), check.into(), scope.into());
+        let n = self.streak.entry(key).or_insert(0);
+        *n += 1;
+        match *n {
+            n if n <= MAX_FIX_TURNS => Ask::Yes,
+            n if n == MAX_FIX_TURNS + 1 => Ask::StopNow,
+            _ => Ask::No,
+        }
+    }
+
+    /// That check passed. Only that check's count starts over, so a passing
+    /// lint can't keep resetting a failing test.
+    fn passed(&mut self, factory: &str, check: &str, terminal: &str) {
+        self.streak
+            .retain(|(f, _, c, scope), _| !(f == factory && c == check && (scope == terminal || scope == "*")));
+    }
+
+    /// A person's own turn in the terminal: they've seen it.
+    fn person_took_over(&mut self, terminal: &str) {
+        self.streak.retain(|(_, _, _, scope), _| scope != terminal);
+    }
+}
+
 // ---- The engine -------------------------------------------------------------
 
 #[derive(Default)]
@@ -214,6 +259,8 @@ struct State {
     knowledge_mtime: HashMap<String, SystemTime>,
     /// Ticket sources with no harness, already logged.
     warned: HashSet<String>,
+    /// How often "when a check fails" triggers have asked in a row.
+    fix_limit: FixLimit,
     /// Tickets this run of the app is starting right now: (factory, key).
     starting: HashSet<(String, String)>,
     /// The terminal list was just read afresh, so a missing terminal went unwatched.
@@ -401,7 +448,11 @@ impl Engine {
             } else {
                 *streak = 0;
             }
-            (engine_turn, *streak)
+            let streak = *streak;
+            if !engine_turn {
+                st.fix_limit.person_took_over(id);
+            }
+            (engine_turn, streak)
         };
         let checks: Vec<&Part> = factory
             .parts
@@ -839,18 +890,23 @@ impl Engine {
         if len > from {
             (self.emit)("factory:runs", json!({ "id": f.id }));
             if let Ok(text) = std::fs::read(&runs_file) {
-                let new =
-                    String::from_utf8_lossy(&text[(from as usize).min(text.len())..]).into_owned();
+                // Only up to `len`: anything newer is read next time, and must not be read twice.
+                let end = (len as usize).min(text.len());
+                let new = String::from_utf8_lossy(&text[(from as usize).min(end)..end]).into_owned();
                 for run in new
                     .lines()
                     .filter_map(|l| serde_json::from_str::<Run>(l).ok())
                 {
-                    if run.kind == "check"
-                        && run.ok == Some(false)
-                        && run.part.is_some()
-                        && let Some(t) = run.terminal
-                    {
-                        self.fire(f, When::CheckFails, Some(t));
+                    let (Some(check), Some(terminal)) = (run.part.as_deref(), run.terminal.as_deref()) else {
+                        continue;
+                    };
+                    if run.kind != "check" {
+                        continue;
+                    }
+                    match run.ok {
+                        Some(true) => self.state.lock().unwrap().fix_limit.passed(&f.id, check, terminal),
+                        Some(false) => self.check_failed(f, check, terminal),
+                        None => {}
                     }
                 }
             }
@@ -880,6 +936,36 @@ impl Engine {
             (self.emit)("knowledge:changed", json!({ "id": f.id }));
         } else if !differs && before == Some(true) {
             (self.emit)("knowledge:changed", json!({ "id": f.id }));
+        }
+    }
+
+    /// Fires the "when a check fails" triggers, each until its limit.
+    fn check_failed(self: &Arc<Self>, f: &Factory, check: &str, terminal: &str) {
+        for trigger in f
+            .parts
+            .iter()
+            .filter(|p| p.kind == Kind::Trigger && p.when == When::CheckFails)
+        {
+            let scope = if trigger.runs_in == RunsIn::Same { terminal } else { "*" };
+            let ask = self.state.lock().unwrap().fix_limit.failed(&f.id, &trigger.id, check, scope);
+            match ask {
+                Ask::Yes => {
+                    let me = Arc::clone(self);
+                    let (factory, part, source) = (f.clone(), trigger.clone(), terminal.to_string());
+                    thread::spawn(move || me.run_trigger(&factory, &part, Some(&source)));
+                }
+                Ask::StopNow => self.log(
+                    &f.id,
+                    Run::new(
+                        "trigger",
+                        format!("{} asked {MAX_FIX_TURNS} times in a row and the check still fails, so Sawtooth stopped asking", trigger.name),
+                    )
+                    .ok(false)
+                    .part(&trigger.id)
+                    .terminal(Some(terminal)),
+                ),
+                Ask::No => {}
+            }
         }
     }
 
@@ -971,9 +1057,73 @@ fn change_run(change: Change) -> Run {
     }
 }
 
+/// At most `max` characters, cut at a word, with "…" when cut.
+fn shorten(text: &str, max: usize) -> String {
+    let flat: String = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    if flat.chars().count() <= max {
+        return flat;
+    }
+    let cut: String = flat.chars().take(max).collect();
+    let cut = cut.rsplit_once(' ').map_or(cut.as_str(), |(head, _)| head);
+    format!("{cut}…")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_check_that_keeps_failing_stops_being_asked_about() {
+        let mut l = FixLimit::default();
+        for _ in 0..MAX_FIX_TURNS {
+            assert_eq!(l.failed("f", "fix", "tests", "t1"), Ask::Yes);
+        }
+        assert_eq!(l.failed("f", "fix", "tests", "t1"), Ask::StopNow);
+        assert_eq!(l.failed("f", "fix", "tests", "t1"), Ask::No);
+    }
+
+    #[test]
+    fn another_check_passing_doesnt_reset_the_one_that_fails() {
+        let mut l = FixLimit::default();
+        for _ in 0..MAX_FIX_TURNS {
+            l.failed("f", "fix", "tests", "t1");
+            l.passed("f", "lint", "t1");
+        }
+        assert_eq!(l.failed("f", "fix", "tests", "t1"), Ask::StopNow);
+    }
+
+    #[test]
+    fn a_pass_or_a_person_starts_the_count_over() {
+        let mut l = FixLimit::default();
+        for _ in 0..MAX_FIX_TURNS {
+            l.failed("f", "fix", "tests", "t1");
+        }
+        l.passed("f", "tests", "t1");
+        assert_eq!(l.failed("f", "fix", "tests", "t1"), Ask::Yes);
+        for _ in 0..MAX_FIX_TURNS {
+            l.failed("f", "fix", "tests", "t1");
+        }
+        l.person_took_over("t1");
+        assert_eq!(l.failed("f", "fix", "tests", "t1"), Ask::Yes);
+    }
+
+    #[test]
+    fn a_trigger_that_opens_new_terminals_is_limited_across_them() {
+        let mut l = FixLimit::default();
+        for _ in 0..MAX_FIX_TURNS {
+            assert_eq!(l.failed("f", "fix", "tests", "*"), Ask::Yes);
+        }
+        assert_eq!(l.failed("f", "fix", "tests", "*"), Ask::StopNow);
+    }
+
+    #[test]
+    fn terminals_are_counted_apart() {
+        let mut l = FixLimit::default();
+        for _ in 0..MAX_FIX_TURNS {
+            l.failed("f", "fix", "tests", "t1");
+        }
+        assert_eq!(l.failed("f", "fix", "tests", "t2"), Ask::Yes);
+    }
 
     #[test]
     fn schedules() {
@@ -1025,15 +1175,4 @@ mod tests {
         std::fs::write(store.knowledge_file("f"), "b").unwrap();
         assert!(knowledge_differs(&store, "f"));
     }
-}
-
-/// At most `max` characters, cut at a word, with "…" when cut.
-fn shorten(text: &str, max: usize) -> String {
-    let flat: String = text.split_whitespace().collect::<Vec<_>>().join(" ");
-    if flat.chars().count() <= max {
-        return flat;
-    }
-    let cut: String = flat.chars().take(max).collect();
-    let cut = cut.rsplit_once(' ').map_or(cut.as_str(), |(head, _)| head);
-    format!("{cut}…")
 }
