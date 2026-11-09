@@ -138,7 +138,48 @@ pub fn agent_done(f: &mut Factory, key: &str, summary: &str) -> Step {
     if let Some(w) = item(f, key) {
         w.summary = summary.to_string();
     }
+    if let Some(back) = send_back_clear_findings(f, key, &s) {
+        return back;
+    }
     next(f, key, &s)
+}
+
+/// Findings with an obvious fix go back to the builder, up to the stage's limit, so a person
+/// only sees what needs a decision. Past the limit they stay on the item for handoff.
+fn send_back_clear_findings(f: &mut Factory, key: &str, s: &LineStage) -> Option<Step> {
+    if s.on_fail.is_empty() {
+        return None;
+    }
+    let w = item(f, key)?;
+    let is_clear = |x: &Finding| x.stage == s.id && x.kind == "clear";
+    let clear: Vec<Finding> = w.findings.iter().filter(|x| is_clear(x)).cloned().collect();
+    let count = w.loops.entry(s.id.clone()).or_insert(0);
+    if clear.is_empty() || *count >= s.max_loops {
+        return None;
+    }
+    *count += 1;
+    w.findings.retain(|x| !is_clear(x));
+    let list: Vec<String> = clear
+        .iter()
+        .map(|x| match (x.file.is_empty(), x.line) {
+            (true, _) => format!("- {}", x.text),
+            (false, 0) => format!("- {}: {}", x.file, x.text),
+            (false, line) => format!("- {}:{line}: {}", x.file, x.text),
+        })
+        .collect();
+    let note = format!("The {} stage found these. Fix them, commit, then finish.\n\n{}", s.id, list.join("\n"));
+    Some(enter(f, key, &s.on_fail, &note))
+}
+
+/// A merge command ran, but only the branch landing finishes the work.
+pub fn landing(f: &mut Factory, key: &str) -> bool {
+    match item(f, key) {
+        Some(w) if w.waiting == Waiting::Handoff => {
+            w.waiting = Waiting::Landing;
+            true
+        }
+        _ => false,
+    }
 }
 
 /// The agent stopped: it asked something, or went quiet without saying it was done.
@@ -185,7 +226,11 @@ pub fn terminal_lost(f: &mut Factory, key: &str) -> Step {
 
 pub fn add_finding(f: &mut Factory, key: &str, finding: Finding) {
     if let Some(w) = item(f, key) {
-        w.findings.push(finding);
+        // Each re-review starts fresh, and shouldn't say the same thing to a person twice.
+        let repeat = w.findings.iter().any(|x| x.file == finding.file && x.line == finding.line && x.text == finding.text && x.kind == finding.kind);
+        if !repeat {
+            w.findings.push(finding);
+        }
     }
 }
 
@@ -223,13 +268,20 @@ pub fn gate_result(f: &mut Factory, key: &str, passed: bool, output: &str) -> St
     enter(f, key, &s.on_fail, &note)
 }
 
-/// Where sending work back goes: the stage's `onFail`, or else the last agent stage before it.
+/// Where sending work back goes: the stage's `onFail`, then the nearest earlier one (a reviewer
+/// can't change anything, so work goes on to whoever it sends fixes to), then the last agent stage.
 fn send_back_to(f: &Factory, s: &LineStage) -> Option<String> {
     if !s.on_fail.is_empty() {
         return Some(s.on_fail.clone());
     }
     let at = f.line.iter().position(|t| t.id == s.id)?;
-    f.line[..at].iter().rev().find(|t| t.kind == StageKind::Agent).map(|t| t.id.clone())
+    let earlier = &f.line[..at];
+    earlier
+        .iter()
+        .rev()
+        .find(|t| !t.on_fail.is_empty())
+        .map(|t| t.on_fail.clone())
+        .or_else(|| earlier.iter().rev().find(|t| t.kind == StageKind::Agent).map(|t| t.id.clone()))
 }
 
 /// A person decided something.
@@ -246,7 +298,7 @@ pub fn person(f: &mut Factory, key: &str, action: Action) -> Step {
         // A failed gate can be waved through. Only a person can do that.
         Action::Approve if waiting == Waiting::Failed && s.kind == StageKind::Gate => next(f, key, &s),
         Action::TreatAsDone if s.kind == StageKind::Agent && waiting != Waiting::No => next(f, key, &s),
-        Action::Merged if waiting == Waiting::Handoff => finish(f, key, "merged"),
+        Action::Merged if matches!(waiting, Waiting::Handoff | Waiting::Landing) => finish(f, key, "merged"),
         Action::SendBack { note } if waiting != Waiting::No => match send_back_to(f, &s) {
             Some(to) => {
                 let note = if note.trim().is_empty() {
@@ -291,8 +343,13 @@ fn brief_body(prompt: &str, w: &WorkItem, skills: &[(String, String, String)]) -
 }
 
 pub fn brief(prompt: &str, w: &WorkItem, skills: &[(String, String, String)], st: &str) -> String {
+    let finding = if prompt.contains("st finding") {
+        format!("\n\nTo report a finding, run: {st} finding --file a.rs --line 9 --severity high --kind clear \"what's wrong and the fix\"")
+    } else {
+        String::new()
+    };
     format!(
-        "{}\n\nCommit your work. When you've finished, run: {st} done \"one line on what you did\". If you need a person, run: {st} ask \"your question\".",
+        "{}{finding}\n\nIf your role changes files, commit them. If it says not to, leave every file alone. When you've finished, run: {st} done \"one line on what you did\". If you need a person, run: {st} ask \"your question\".",
         brief_body(prompt, w, skills)
     )
 }
@@ -449,12 +506,12 @@ mod tests {
     }
 
     #[test]
-    fn sending_back_goes_to_the_last_agent_stage_with_the_note() {
+    fn sending_back_goes_to_whoever_makes_the_fixes_with_the_note() {
         let mut f = factory();
         to(&mut f, "handoff");
         match person(&mut f, "A", Action::SendBack { note: "rename it".into() }) {
             Step::Agent { stage, note, .. } => {
-                assert_eq!(stage, "review");
+                assert_eq!(stage, "build");
                 assert_eq!(note, "rename it");
             }
             other => panic!("{other:?}"),
@@ -527,5 +584,35 @@ mod tests {
         assert!(text.contains("/d/skills/crash/SKILL.md"));
         assert!(text.contains("/h/bin/st done"));
         assert!(text.contains("/h/bin/st ask"));
+    }
+
+    #[test]
+    fn the_same_finding_is_only_kept_once() {
+        let mut f = factory();
+        f.work.push(WorkItem { ticket: Ticket { key: "R".into(), ..Ticket::default() }, ..WorkItem::default() });
+        for _ in 0..2 {
+            add_finding(&mut f, "R", Finding { file: "a.rs".into(), text: "same".into(), ..Finding::default() });
+        }
+        assert_eq!(f.work.last().unwrap().findings.len(), 1);
+    }
+
+    #[test]
+    fn clear_findings_loop_up_to_the_limit_and_judgment_calls_wait_for_a_person() {
+        let mut f = factory();
+        let review = f.line.iter_mut().find(|s| s.id == "review").unwrap();
+        review.on_fail = "build".into();
+        review.max_loops = 1;
+        f.work.push(WorkItem { id: "w".into(), ticket: crate::factories::Ticket { key: "R".into(), ..Default::default() }, stage: Stage::Running, line_stage: "review".into(), ..Default::default() });
+        let found = |kind: &str| Finding { file: "a.rs".into(), line: 9, text: "off by one".into(), stage: "review".into(), kind: kind.into(), ..Default::default() };
+        add_finding(&mut f, "R", found("clear"));
+        add_finding(&mut f, "R", found("judgment"));
+        let back = agent_done(&mut f, "R", "reviewed");
+        assert!(matches!(&back, Step::Agent { note, .. } if note.contains("a.rs:9") ), "{back:?}");
+        assert_eq!(f.work.last_mut().unwrap().findings.len(), 1, "the judgment call stays for the person");
+
+        f.work.last_mut().unwrap().line_stage = "review".into();
+        add_finding(&mut f, "R", found("clear"));
+        assert!(matches!(agent_done(&mut f, "R", "again"), Step::Person { why: Waiting::Handoff, .. }), "past the limit it goes to the person");
+        assert_eq!(f.work.last_mut().unwrap().findings.len(), 2, "and the person sees what's left");
     }
 }

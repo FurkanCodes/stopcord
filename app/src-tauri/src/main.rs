@@ -36,9 +36,7 @@ mod templates;
 #[cfg(debug_assertions)]
 mod testbridge;
 mod tickets;
-mod tunnel;
 mod typing;
-mod webhook;
 mod work;
 mod worktree;
 
@@ -304,6 +302,7 @@ fn broken_factories(app: State<'_, App>) -> Vec<String> {
 }
 
 #[tauri::command(async)]
+#[allow(clippy::too_many_arguments)]
 fn create_factory(
     app: State<'_, App>,
     path: String,
@@ -644,6 +643,12 @@ fn benchmark_results(app: State<'_, App>, id: String) -> Vec<bench::BenchResult>
 }
 
 #[tauri::command(async)]
+fn answer_proposal(app: State<'_, App>, engine: State<'_, Arc<Engine>>, id: String, proposal: String, apply: bool) -> Result<FactoryInfo, Failure> {
+    engine.answer_proposal(&id, &proposal, apply).map_err(|e| Failure::new("proposal", e))?;
+    Ok(app.info(app.store.get(&id).map_err(fail)?))
+}
+
+#[tauri::command(async)]
 fn suggest_start(engine: State<'_, Arc<Engine>>, id: String, key: String) -> Result<String, Failure> {
     engine.suggest_start(&id, &key).map_err(|e| Failure::new("suggest", e))
 }
@@ -708,28 +713,19 @@ fn source_templates() -> Vec<templates::SourceTemplate> {
 #[serde(rename_all = "camelCase")]
 struct Machine {
     settings: settings::Settings,
-    tunnel: tunnel::Status,
-    /// The port the webhook listener is on. 0 when it's off.
-    port: u16,
-    problem: String,
     sandbox: Option<String>,
 }
 
-fn machine_of(app: &App, engine: &Engine) -> Result<Machine, Failure> {
-    // Read first: a guard taken inside the literal would still be held when `intake_problem` locks.
-    let port = engine.intake.lock().unwrap().port;
+fn machine_of(app: &App) -> Result<Machine, Failure> {
     Ok(Machine {
         settings: settings::load(app.store.home()).map_err(fail)?,
-        tunnel: engine.tunnel.status(),
-        port,
-        problem: engine.intake_problem(),
         sandbox: sawtooth_sandbox::available().err(),
     })
 }
 
 #[tauri::command(async)]
-fn machine(app: State<'_, App>, engine: State<'_, Arc<Engine>>) -> Result<Machine, Failure> {
-    machine_of(&app, &engine)
+fn machine(app: State<'_, App>) -> Result<Machine, Failure> {
+    machine_of(&app)
 }
 
 #[tauri::command(async)]
@@ -740,35 +736,12 @@ fn save_machine(
 ) -> Result<Machine, Failure> {
     settings::save(app.store.home(), &settings).map_err(fail)?;
     engine.apply_settings();
-    machine_of(&app, &engine)
-}
-
-#[tauri::command(async)]
-fn start_tunnel(app: State<'_, App>, engine: State<'_, Arc<Engine>>) -> Result<Machine, Failure> {
-    let settings = settings::load(app.store.home()).map_err(fail)?;
-    engine.start_tunnel(&settings).map_err(|e| Failure::new("tunnel", e))?;
-    machine_of(&app, &engine)
-}
-
-#[tauri::command(async)]
-fn stop_tunnel(app: State<'_, App>, engine: State<'_, Arc<Engine>>) -> Result<Machine, Failure> {
-    engine.tunnel.stop();
-    machine_of(&app, &engine)
+    machine_of(&app)
 }
 
 #[tauri::command(async)]
 fn set_secret(app: State<'_, App>, name: String, value: String) -> Result<(), Failure> {
     settings::set_secret(app.store.home(), &name, &value).map_err(fail)
-}
-
-#[tauri::command(async)]
-fn has_secrets(app: State<'_, App>, names: Vec<String>) -> Vec<String> {
-    names.into_iter().filter(|n| settings::has_secret(app.store.home(), n)).collect()
-}
-
-#[tauri::command(async)]
-fn hook_url(engine: State<'_, Arc<Engine>>, id: String, part: String) -> String {
-    engine.hook_url(&id, &part)
 }
 
 #[tauri::command(async)]
@@ -916,6 +889,7 @@ fn main() {
             run_benchmark,
             benchmark_results,
             suggest_start,
+            answer_proposal,
             feed_tickets,
             nearby_folders,
             detect_project,
@@ -927,11 +901,7 @@ fn main() {
             source_templates,
             machine,
             save_machine,
-            start_tunnel,
-            stop_tunnel,
             set_secret,
-            has_secrets,
-            hook_url,
             harnesses,
             save_harness,
         ])

@@ -1,17 +1,8 @@
 import { useEffect, useState } from 'react';
-import { api, failureText, type HarnessProfile, type Machine, type Settings, type TunnelKind } from './api';
+import { api, failureText, type HarnessProfile, type Machine, type Settings } from './api';
 import { go, showProblem, useStore } from './store';
-import { Brand, Check, FieldRow, Key, Pane, Radio, Screen, Sep } from './tui/kit';
+import { Brand, Check, FieldRow, Key, Pane, Screen, Sep } from './tui/kit';
 import { useKeys } from './tui/keys';
-
-const kinds: [TunnelKind, string, string][] = [
-  ['none', 'none', 'you run your own, or webhooks stay on this machine'],
-  ['cloudflaredQuick', 'cloudflare, temporary', 'no account. the address changes every start'],
-  ['cloudflaredNamed', 'cloudflare, your tunnel', 'a stable address, using your token'],
-  ['tailscaleFunnel', 'tailscale funnel', 'a stable address on your tailnet'],
-  ['ngrok', 'ngrok', 'uses your ngrok login'],
-  ['custom', 'your own command', '{port} is the listener’s port'],
-];
 
 const paneStyle = { padding: '14px 12px 12px', maxWidth: 820, width: '100%', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 8 } as const;
 
@@ -20,7 +11,6 @@ export function MachineSettings() {
   const factories = useStore((s) => s.factories);
   const [m, setM] = useState<Machine | null>(null);
   const [harnesses, setHarnesses] = useState<HarnessProfile[]>([]);
-  const [token, setToken] = useState('');
   const [appToken, setAppToken] = useState('');
   const [botToken, setBotToken] = useState('');
   const [message, setMessage] = useState('');
@@ -60,15 +50,6 @@ export function MachineSettings() {
     }
   }
 
-  async function tunnel(on: boolean) {
-    try {
-      setM(on ? await api.startTunnel() : await api.stopTunnel());
-      setMessage('');
-    } catch (e) {
-      setMessage(failureText(e));
-    }
-  }
-
   async function trust(h: HarnessProfile, auto: boolean) {
     if (!h.trust) return;
     const next = { ...h, trust: { ...h.trust, auto } };
@@ -99,66 +80,6 @@ export function MachineSettings() {
         <>
           <Pane title="sandbox" heading={1} style={paneStyle}>
             <p>{m.sandbox ? <span className="t-red">{m.sandbox}</span> : 'this machine can run contained agents'}</p>
-          </Pane>
-
-          <Pane title="webhooks" style={paneStyle}>
-            <Check id="wh-on" checked={s.webhooks.enabled} onChange={(enabled) => void change({ ...s, webhooks: { ...s.webhooks, enabled } })}>
-              listen for webhooks on this machine
-            </Check>
-            <FieldRow id="wh-port" label="port" width="12ch">
-              <input id="wh-port" type="number" className="t-field" style={{ width: '10ch' }} value={s.webhooks.port} onChange={(e) => void change({ ...s, webhooks: { ...s.webhooks, port: Number(e.currentTarget.value) || s.webhooks.port } })} />
-            </FieldRow>
-            <p className="t-muted">{m.port ? `listening on 127.0.0.1:${m.port}. only this machine can reach it until a tunnel is running` : 'off'}</p>
-            {m.problem && <p className="t-red">{m.problem}</p>}
-          </Pane>
-
-          <Pane title="tunnel" right={<span className="t-muted">{m.tunnel.running ? 'running' : 'stopped'}</span>} style={paneStyle}>
-            <p className="t-muted">sentry and others have to reach this machine over the internet. a tunnel gives it a public address, and that address reaches a machine holding your logins. only signed deliveries get past the listener.</p>
-            <div role="radiogroup" aria-label="Tunnel">
-              {kinds.map(([v, title, note]) => (
-                <Radio key={v} id={`tn-${v}`} name="tunnel" checked={s.tunnel.kind === v} note={note} onChange={() => void change({ ...s, tunnel: { ...s.tunnel, kind: v } })}>
-                  {title}
-                </Radio>
-              ))}
-            </div>
-            {s.tunnel.kind === 'custom' && (
-              <FieldRow id="tn-cmd" label="command" width="12ch">
-                <input id="tn-cmd" className="t-field" value={s.tunnel.command} placeholder="mytunnel --to {port}" onChange={(e) => void change({ ...s, tunnel: { ...s.tunnel, command: e.currentTarget.value } })} />
-              </FieldRow>
-            )}
-            {s.tunnel.kind === 'cloudflaredNamed' && (
-              <FieldRow id="tn-tok" label="token" width="12ch">
-                <div style={{ display: 'flex', gap: 6 }}>
-                  <input id="tn-tok" type="password" autoComplete="off" className="t-field" style={{ flexGrow: 1 }} value={token} onChange={(e) => setToken(e.currentTarget.value)} />
-                  <Key
-                    size="sm"
-                    disabled={!token}
-                    onClick={() => {
-                      const name = s.tunnel.tokenSecret || 'CLOUDFLARE_TUNNEL_TOKEN';
-                      void secret(name, token, () => setToken(''));
-                      if (!s.tunnel.tokenSecret) void change({ ...s, tunnel: { ...s.tunnel, tokenSecret: name } });
-                    }}
-                  >
-                    save
-                  </Key>
-                </div>
-              </FieldRow>
-            )}
-            {s.tunnel.kind !== 'none' && (
-              <>
-                <FieldRow id="tn-url" label="address" width="12ch">
-                  <input id="tn-url" className="t-field" value={s.tunnel.publicUrl} placeholder="filled in by the tunnel when it can tell" onChange={(e) => void change({ ...s, tunnel: { ...s.tunnel, publicUrl: e.currentTarget.value } })} />
-                </FieldRow>
-                <Check id="tn-auto" checked={s.tunnel.autoStart} onChange={(autoStart) => void change({ ...s, tunnel: { ...s.tunnel, autoStart } })}>
-                  start the tunnel with sawtooth
-                </Check>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  {m.tunnel.running ? <Key size="sm" onClick={() => void tunnel(false)}>stop</Key> : <button type="button" className="t-solid is-sm" onClick={() => void tunnel(true)}>start</button>}
-                  {m.tunnel.url && <code style={{ overflowWrap: 'anywhere' }}>{m.tunnel.url}</code>}
-                </div>
-                {m.tunnel.error && <p className="t-red" style={{ overflowWrap: 'anywhere' }}>{m.tunnel.error}</p>}
-              </>
-            )}
           </Pane>
 
           <Pane title="slack" style={paneStyle}>

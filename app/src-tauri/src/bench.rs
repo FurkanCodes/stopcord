@@ -22,6 +22,9 @@ pub struct BenchResult {
     pub suite: String,
     pub run: String,
     pub task: String,
+    /// The harness command tried. Empty when nothing was being compared.
+    pub candidate: String,
+    pub repeat: u32,
     pub passed: bool,
     pub seconds: u64,
     /// How many times a stage failed before it got this far.
@@ -57,16 +60,30 @@ impl Engine {
         let suite = f.benchmarks.iter().find(|s| s.id == suite_id).cloned().ok_or_else(|| format!("there's no benchmark {suite_id}"))?;
         let run = (runs::now_ms() / 1000 % 1_000_000).to_string();
         let mut queued = Vec::new();
+        let candidates: Vec<String> = if suite.candidates.is_empty() { vec![String::new()] } else { suite.candidates.clone() };
         for task in &suite.tasks {
-            let key = format!("bench-{}-{}-{run}", slug(&suite.id), slug(&task.key));
-            if !suite.base.is_empty() {
-                // A fixed starting commit keeps runs comparable as main moves on.
-                worktree::git(Path::new(&f.path), &["branch", &work::branch_for(&key), &suite.base]).map_err(|e| format!("couldn't start from {}: {e:#}", suite.base))?;
+            for (c, candidate) in candidates.iter().enumerate() {
+                for repeat in 1..=suite.repeats.max(1) {
+                    let key = format!("bench-{}-{}-c{c}-r{repeat}-{run}", slug(&suite.id), slug(&task.key));
+                    if !suite.base.is_empty() {
+                        // A fixed starting commit keeps runs comparable as main moves on.
+                        worktree::git(Path::new(&f.path), &["branch", &work::branch_for(&key), &suite.base]).map_err(|e| format!("couldn't start from {}: {e:#}", suite.base))?;
+                    }
+                    queued.push((
+                        Ticket { key, title: task.title.clone(), body: task.body.clone(), url: String::new() },
+                        BenchRef {
+                            suite: suite.id.clone(),
+                            run: run.clone(),
+                            task: task.key.clone(),
+                            check: task.check.clone(),
+                            begun_at: 0,
+                            agent: suite.agent.clone(),
+                            candidate: candidate.clone(),
+                            repeat,
+                        },
+                    ));
+                }
             }
-            queued.push((
-                Ticket { key, title: task.title.clone(), body: task.body.clone(), url: String::new() },
-                BenchRef { suite: suite.id.clone(), run: run.clone(), task: task.key.clone(), check: task.check.clone(), begun_at: 0 },
-            ));
         }
         let tickets: Vec<Ticket> = queued.iter().map(|(t, _)| t.clone()).collect();
         self.store
@@ -80,7 +97,7 @@ impl Engine {
                 }
             })
             .map_err(|e| format!("{e:#}"))?;
-        self.log(factory, Run::new("benchmark", format!("{} started with {} tasks", suite.id, suite.tasks.len())).by("person"));
+        self.log(factory, Run::new("benchmark", format!("{} started with {} runs", suite.id, queued.len())).by("person"));
         self.pump_tickets();
         Ok(run)
     }
@@ -130,6 +147,8 @@ impl Engine {
                 suite: bench.suite.clone(),
                 run: bench.run.clone(),
                 task: bench.task.clone(),
+                candidate: bench.candidate.clone(),
+                repeat: bench.repeat,
                 passed,
                 seconds: now.saturating_sub(bench.begun_at) / 1000,
                 loops: w.loops.values().sum(),

@@ -18,7 +18,7 @@ const PLANNER: &str = "You plan one change. Read the request and the code it tou
 
 const BUILDER: &str = "You make one change. Stay inside what was asked. Write a failing test first when the change can be tested. Keep the diff small and leave unrelated code alone. Commit your work.";
 
-const REVIEWER: &str = "You review a diff as if a stranger wrote it. Compare the branch with where it started. For each real problem report the file and line, the impact, and the fix, using st finding. Do not change any files and do not approve anything. A person decides.";
+const REVIEWER: &str = "You review a diff as if a stranger wrote it. Compare the branch with where it started. For each real problem report the file and line, the impact, and the fix, using st finding. Use --kind clear when the fix is obvious and needs no decision, and --kind judgment when a person should decide. Do not change any files and do not approve anything. A person decides.";
 
 /// A line from plan to handoff. `harness` starts every agent, and `reviewer` the reviewer when it differs.
 pub fn standard_line(f: &mut Factory, harness: &str, reviewer: &str, tests: Option<&str>, level: Level) {
@@ -66,6 +66,8 @@ pub fn standard_line(f: &mut Factory, harness: &str, reviewer: &str, tests: Opti
     }
     line.push(LineStage {
         agent: "reviewer".into(),
+        on_fail: "build".into(),
+        max_loops: 2,
         ..stage("review", StageKind::Agent, "handoff")
     });
     line.push(stage("handoff", StageKind::Human, ""));
@@ -79,8 +81,6 @@ pub struct SourceTemplate {
     pub id: &'static str,
     pub name: &'static str,
     pub command: &'static str,
-    pub webhook: &'static str,
-    pub secret: &'static str,
     pub every: &'static str,
     /// What the person has to do first.
     pub needs: &'static str,
@@ -91,18 +91,16 @@ pub fn source_templates() -> Vec<SourceTemplate> {
         SourceTemplate {
             id: "sentry",
             name: "Sentry",
-            command: r#"curl -sf -H "Authorization: Bearer $SENTRY_AUTH_TOKEN" "https://sentry.io/api/0/projects/$SENTRY_ORG/$SENTRY_PROJECT/issues/?query=is:unresolved%20level:fatal" | jq '[.[] | {key: .shortId, title: .title, body: .culprit, url: .permalink}]'"#,
-            webhook: "sentry",
-            secret: "SENTRY_WEBHOOK_SECRET",
+            // The stack trace comes along, fetched here with your token, so an agent never needs Sentry access.
+            // The event goes through stdin because a whole event can be too long for one argument on Linux.
+            command: r##"set -o pipefail; api="${SENTRY_URL:-https://sentry.io}/api/0"; auth="Authorization: Bearer $SENTRY_AUTH_TOKEN"; curl -sSf -H "$auth" "$api/projects/$SENTRY_ORG/$SENTRY_PROJECT/issues/?query=is:unresolved%20level:fatal&limit=25" | jq -c '.[]' | while read -r issue; do id=$(printf %s "$issue" | jq -r .id); { curl -sSf -H "$auth" "$api/organizations/$SENTRY_ORG/issues/$id/events/latest/" || echo '{}'; } | jq --argjson issue "$issue" '. as $event | {key: $issue.shortId, title: $issue.title, url: $issue.permalink, body: ([$issue.culprit, (($event.entries // []) | map(select(.type == "exception")) | map(.data.values // []) | (add // []) | map("\(.type): \(.value)\n" + ([.stacktrace.frames[]? | select(.inApp) | "  at \(.function) (\(.filename):\(.lineNo))"] | reverse | .[:30] | join("\n"))) | join("\n\n"))] | map(select(. != null and . != "")) | join("\n\n"))}'; done | jq -s ."##,
             every: "every 5 minutes",
-            needs: "Set SENTRY_AUTH_TOKEN, SENTRY_ORG and SENTRY_PROJECT in your shell, and have jq installed.",
+            needs: "Set SENTRY_AUTH_TOKEN, SENTRY_ORG and SENTRY_PROJECT in your shell, and have jq installed. For self-hosted Sentry, set SENTRY_URL too.",
         },
         SourceTemplate {
             id: "github",
             name: "GitHub issues",
             command: r##"gh issue list --state open --json number,title,body,url | jq '[.[] | {key: ("#" + (.number|tostring)), title, body, url}]'"##,
-            webhook: "github",
-            secret: "GITHUB_WEBHOOK_SECRET",
             every: "every 5 minutes",
             needs: "Sign in with gh auth login, and have jq installed.",
         },
@@ -110,8 +108,6 @@ pub fn source_templates() -> Vec<SourceTemplate> {
             id: "linear",
             name: "Linear",
             command: r#"curl -sf -H "Authorization: $LINEAR_API_KEY" -H "Content-Type: application/json" -d '{"query":"{ issues(filter:{state:{type:{eq:\"unstarted\"}}}, first:50){ nodes { identifier title description url } } }"}' https://api.linear.app/graphql | jq '[.data.issues.nodes[] | {key: .identifier, title, body: .description, url}]'"#,
-            webhook: "linear",
-            secret: "LINEAR_WEBHOOK_SECRET",
             every: "every 5 minutes",
             needs: "Set LINEAR_API_KEY in your shell, and have jq installed.",
         },
@@ -157,18 +153,19 @@ mod tests {
     }
 
     #[test]
-    fn a_review_never_moves_work_by_itself() {
+    fn a_review_can_only_send_clear_fixes_back() {
         let mut f = Factory::default();
         standard_line(&mut f, "claude", "codex", None, Level::Worktree);
         let review = f.line.iter().find(|s| s.id == "review").unwrap();
         assert_eq!(review.then, "handoff");
-        assert!(review.on_fail.is_empty());
+        // It can only send clear fixes back, a limited number of times. It never reaches past the person at handoff.
+        assert_eq!((review.on_fail.as_str(), review.max_loops, review.then.as_str()), ("build", 2, "handoff"));
     }
 
     #[test]
     fn every_source_template_has_what_it_needs() {
         for t in source_templates() {
-            assert!(!t.command.is_empty() && !t.webhook.is_empty() && !t.secret.is_empty() && !t.needs.is_empty(), "{}", t.id);
+            assert!(!t.command.is_empty() && !t.needs.is_empty(), "{}", t.id);
             assert!(crate::engine::parse_schedule(t.every).is_some(), "{}", t.id);
             assert!(t.command.contains("key"), "{}", t.id);
         }

@@ -32,7 +32,6 @@ const glyphOf: Record<Run['kind'], string> = {
   agent: '›',
   network: '×',
   source: '↓',
-  webhook: '↓',
   report: '↑',
 };
 

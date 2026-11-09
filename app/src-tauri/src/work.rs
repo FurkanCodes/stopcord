@@ -99,10 +99,9 @@ pub fn ticket_alert(key: &str) -> String {
 
 /// Files from before work items keep their tickets.
 pub fn migrate(f: &mut Factory) {
-    let mut used = next_id(f);
-    for w in f.work.iter_mut().filter(|w| w.id.is_empty()) {
-        w.id = format!("w_{used:04}");
-        used += 1;
+    let first = next_id(f);
+    for (n, w) in f.work.iter_mut().filter(|w| w.id.is_empty()).enumerate() {
+        w.id = format!("w_{:04}", first + n as u32);
     }
     if !f.work.is_empty() {
         return;

@@ -71,7 +71,6 @@ pub fn policy_for(
     daemon_socket: &Path,
     network: Network,
     report: Option<PathBuf>,
-    deny_ports: Vec<u16>,
 ) -> Policy {
     let mut p = Policy::new(cwd.to_path_buf(), home.to_path_buf(), program.to_path_buf());
     p.git_common_dir = crate::worktree::common_dir(cwd);
@@ -92,7 +91,6 @@ pub fn policy_for(
     p.masked_sockets = masked_sockets(home, store.home(), daemon_socket);
     p.report_socket = report;
     p.network = network;
-    p.deny_ports = deny_ports;
     p
 }
 
@@ -164,7 +162,6 @@ pub fn prepare(
     command: Option<&str>,
     cwd: &Path,
     program: &Path,
-    deny_ports: Vec<u16>,
 ) -> Result<Started, Failure> {
     let shell_path = shell::user_shell();
     let (harnesses, _) = harness::load(&store.home().join("harnesses"));
@@ -220,7 +217,6 @@ pub fn prepare(
                 &sawtooth_daemon::paths::socket(),
                 network,
                 report,
-                deny_ports,
             );
             let dir = store.home().join("run");
             let wrapped = wrap(&policy, &argv, &dir).map_err(|e| {
@@ -306,7 +302,6 @@ mod tests {
             Path::new("/Users/me/.sawtooth/sawtooth.sock"),
             Network::Off,
             Some(PathBuf::from("/r.sock")),
-            vec![38715],
         );
         assert!(p.deny_read.contains(&store.home().join("secrets")));
         assert!(p.deny_read.contains(&PathBuf::from("/Users/me/.config/mine")));
@@ -317,7 +312,6 @@ mod tests {
         assert!(p.write.contains(&store.knowledge_file("f")));
         assert!(p.read_only.contains(&PathBuf::from("/Users/me/.claude/settings.json")));
         assert_eq!(p.report_socket, Some(PathBuf::from("/r.sock")));
-        assert_eq!(p.deny_ports, [38715]);
     }
 
     #[test]

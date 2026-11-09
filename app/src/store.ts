@@ -12,7 +12,7 @@ export type View = 'canvas' | 'list';
 export type Route =
   | { screen: 'home' }
   | { screen: 'new' }
-  /** Settings that belong to this machine: webhooks, tunnels, Slack. */
+  /** Settings that belong to this machine: the sandbox, Slack, harnesses. */
   | { screen: 'settings' }
   /** The factory's ticket source: list tickets and feed some in. */
   | { screen: 'tickets'; id: string }
@@ -385,7 +385,7 @@ export interface Need {
   text: string;
   /** A terminal id, or a part id. */
   target: string;
-  kind: 'terminal' | 'knowledge' | 'alert' | 'work' | 'denied';
+  kind: 'terminal' | 'knowledge' | 'alert' | 'work' | 'denied' | 'proposal';
   /** An alert's terminal, when it has one. */
   terminal?: string | null;
   /** The work item's ticket key, for something on the line. */
@@ -412,6 +412,7 @@ export function allNeeds(s: Pick<State, 'terminals' | 'factories'>): FleetNeed[]
 /** Goes to what needs you: a terminal's question, the knowledge base to review, or what the engine gave up on. Opening an alert counts as seeing it. */
 export function openNeed(n: FleetNeed) {
   if (n.kind === 'terminal') openFactory(n.factoryId, 'terminals', n.target);
+  else if (n.kind === 'proposal') openFactory(n.factoryId, 'setup');
   else if (n.kind === 'knowledge') openFactory(n.factoryId, 'knowledge');
   else if (n.kind === 'work') go({ screen: 'factory', id: n.factoryId, tab: 'work', work: n.work });
   else if (n.kind === 'denied') go({ screen: 'factory', id: n.factoryId, tab: 'work' });
@@ -440,7 +441,9 @@ export function needsOf(f: Factory | undefined, terminals: Terminal[]): Need[] {
     out.push({ text: 'Review changes to the knowledge base', target: kb?.id ?? 'kb', kind: 'knowledge' });
   }
   for (const a of f?.alerts ?? []) {
-    if (a.kind === 'denied') {
+    if (a.kind === 'proposal') {
+      out.push({ text: a.text, target: a.key, kind: 'proposal' });
+    } else if (a.kind === 'denied') {
       out.push({ text: a.text, target: a.key, kind: 'denied', terminal: a.terminal });
     } else if (a.work) {
       const key = f?.work.find((w) => w.id === a.work)?.ticket.key;

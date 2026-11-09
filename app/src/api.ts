@@ -47,8 +47,6 @@ export interface Part {
   atOnce: number;
   network?: boolean;
   every?: string;
-  webhook?: string;
-  secret?: string;
   autoStart?: boolean;
 }
 
@@ -92,6 +90,7 @@ export interface LineStage {
   onFail?: string;
   maxLoops?: number;
   merge?: string;
+  landed?: string;
 }
 
 export interface Report {
@@ -107,7 +106,7 @@ export interface Defaults {
 }
 
 export type WorkStage = 'proposed' | 'queued' | 'starting' | 'running' | 'ended';
-export type Waiting = 'no' | 'approve' | 'handoff' | 'question' | 'failed';
+export type Waiting = 'no' | 'approve' | 'handoff' | 'question' | 'failed' | 'landing';
 
 export interface Finding {
   file: string;
@@ -115,6 +114,7 @@ export interface Finding {
   severity: string;
   text: string;
   stage: string;
+  kind: string;
 }
 
 export interface WorkItem {
@@ -161,6 +161,16 @@ export interface Alert {
   host?: string;
 }
 
+export interface Proposal {
+  id: string;
+  at: number;
+  agent: string;
+  before: string;
+  after: string;
+  why: string;
+  evidence: string[];
+}
+
 export interface BenchTask {
   key: string;
   title: string;
@@ -170,7 +180,11 @@ export interface BenchTask {
 
 export interface Suite {
   id: string;
+  name?: string;
   description: string;
+  agent?: string;
+  candidates?: string[];
+  repeats?: number;
   base: string;
   startAt: string;
   tasks: BenchTask[];
@@ -181,6 +195,8 @@ export interface BenchResult {
   suite: string;
   run: string;
   task: string;
+  candidate: string;
+  repeat: number;
   passed: boolean;
   seconds: number;
   loops: number;
@@ -198,6 +214,7 @@ export interface Factory {
   runners: Runner[];
   scorers: Agent[];
   benchmarks: Suite[];
+  proposals: Proposal[];
   line: LineStage[];
   defaults: Defaults;
   reports: Report[];
@@ -215,7 +232,7 @@ export interface Factory {
 
 export interface Run {
   at: number;
-  kind: 'check' | 'trigger' | 'ticket' | 'terminal' | 'knowledge' | 'factory' | 'line' | 'agent' | 'network' | 'source' | 'webhook' | 'report';
+  kind: 'check' | 'trigger' | 'ticket' | 'terminal' | 'knowledge' | 'factory' | 'line' | 'agent' | 'network' | 'source' | 'report';
   text: string;
   ok?: boolean;
   part?: string;
@@ -225,20 +242,13 @@ export interface Run {
   detail?: string;
 }
 
-export type TunnelKind = 'none' | 'cloudflaredQuick' | 'cloudflaredNamed' | 'tailscaleFunnel' | 'ngrok' | 'custom';
-
 export interface Settings {
-  webhooks: { enabled: boolean; port: number };
-  tunnel: { kind: TunnelKind; command: string; publicUrl: string; tokenSecret: string; autoStart: boolean };
   slack: { enabled: boolean; appTokenSecret: string; botTokenSecret: string; allowUsers: string[]; factory: string };
   keepAwake: boolean;
 }
 
 export interface Machine {
   settings: Settings;
-  tunnel: { running: boolean; url: string; error: string; output: string[] };
-  port: number;
-  problem: string;
   /** Why this machine can't sandbox. Missing means it can. */
   sandbox: string | null;
 }
@@ -247,8 +257,6 @@ export interface SourceTemplate {
   id: string;
   name: string;
   command: string;
-  webhook: string;
-  secret: string;
   every: string;
   needs: string;
 }
@@ -366,10 +374,11 @@ export const api = {
   folderFiles: (id: string, partId: string) => invoke<FileEntry[]>('folder_files', { id, partId }),
   listTickets: (id: string, source?: string) => invoke<Ticket[]>('list_tickets', { id, source }),
   feedTickets: (id: string, tickets: Ticket[], source?: string) => invoke<Factory>('feed_tickets', { id, tickets, source }),
-  workAction: (id: string, key: string, action: 'approve' | 'sendBack' | 'treatAsDone' | 'drop' | 'merge', note?: string) =>
+  workAction: (id: string, key: string, action: 'approve' | 'sendBack' | 'treatAsDone' | 'drop' | 'merge' | 'landed', note?: string) =>
     invoke<Factory>('work_action', { id, key, action, note }),
   runBenchmark: (id: string, suite: string) => invoke<string>('run_benchmark', { id, suite }),
   benchmarkResults: (id: string) => invoke<BenchResult[]>('benchmark_results', { id }),
+  answerProposal: (id: string, proposal: string, apply: boolean) => invoke<Factory>('answer_proposal', { id, proposal, apply }),
   suggestStart: (id: string, key: string) => invoke<string>('suggest_start', { id, key }),
   acceptProposal: (id: string, key: string, startAt: string) => invoke<Factory>('accept_proposal', { id, key, startAt }),
   rejectProposal: (id: string, key: string) => invoke<Factory>('reject_proposal', { id, key }),
@@ -378,11 +387,7 @@ export const api = {
   sourceTemplates: () => invoke<SourceTemplate[]>('source_templates'),
   machine: () => invoke<Machine>('machine'),
   saveMachine: (settings: Settings) => invoke<Machine>('save_machine', { settings }),
-  startTunnel: () => invoke<Machine>('start_tunnel'),
-  stopTunnel: () => invoke<Machine>('stop_tunnel'),
   setSecret: (name: string, value: string) => invoke<void>('set_secret', { name, value }),
-  hasSecrets: (names: string[]) => invoke<string[]>('has_secrets', { names }),
-  hookUrl: (id: string, part: string) => invoke<string>('hook_url', { id, part }),
   harnesses: () => invoke<HarnessProfile[]>('harnesses'),
   saveHarness: (harness: HarnessProfile) => invoke<void>('save_harness', { harness }),
   nearbyFolders: () => invoke<FolderSuggestion[]>('nearby_folders'),

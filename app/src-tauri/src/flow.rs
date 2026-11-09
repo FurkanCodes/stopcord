@@ -16,6 +16,7 @@ use crate::line::{self, Action, Step};
 use crate::runs::{self, Run};
 use crate::{gate, harness, hooks, shell, worktree};
 
+const LANDED_TIMEOUT: Duration = Duration::from_secs(30);
 pub(crate) const GATE_TIMEOUT: Duration = Duration::from_secs(30 * 60);
 /// A `st done` usually lands before the terminal looks idle, but not always.
 const REPORT_GRACE: Duration = Duration::from_secs(4);
@@ -112,11 +113,12 @@ impl Engine {
                 std::thread::spawn(move || me.finish_bench(&fid, &key, why == Waiting::Handoff, text));
             }
             Step::Person { stage, why, text } => {
+                self.flag_before_asking(factory, key, &stage, why, &w);
                 let (kind, event) = match why {
                     Waiting::Approve => ("approve", "approve"),
                     Waiting::Handoff => ("handoff", "handoff"),
                     Waiting::Question => ("question", "question"),
-                    Waiting::Failed | Waiting::No => ("failed", "failed"),
+                    Waiting::Failed | Waiting::No | Waiting::Landing => ("failed", "failed"),
                 };
                 let terminal = w.terminal.clone().or_else(|| w.agents.values().next_back().cloned());
                 let _ = self.store.update(factory, |fa| {
@@ -217,7 +219,9 @@ impl Engine {
             };
             (t, text)
         } else {
-            let command = self.harness_for(&f, agent.as_ref());
+            // A benchmark swaps only the agent under test. Everything else stays as a control.
+            let swapped = w.bench.as_ref().filter(|b| b.agent == agent_id && !b.candidate.is_empty()).map(|b| b.candidate.clone());
+            let command = swapped.unwrap_or_else(|| self.harness_for(&f, agent.as_ref()));
             if command.trim().is_empty() {
                 let text = format!("{key} needs a harness for {stage}. Set one on the agent or in the factory's defaults.");
                 self.fail_step(factory, key, text);
@@ -231,7 +235,7 @@ impl Engine {
                 runner: agent.as_ref().map(|a| a.runner.clone()),
                 ..StartRequest::default()
             };
-            let t = match crate::engine::start_terminal_with(&self.store, &self.bridge, &self.program, req, self.deny_ports()) {
+            let t = match crate::engine::start_terminal(&self.store, &self.bridge, &self.program, req) {
                 Ok(t) => t,
                 Err(e) => {
                     self.fail_step(factory, key, format!("{key} couldn't start {stage}: {}", e.message));
@@ -286,14 +290,8 @@ impl Engine {
         }
     }
 
-    fn deny_ports(&self) -> Vec<u16> {
-        crate::settings::load(self.store.home())
-            .map(|s| vec![s.webhooks.port])
-            .unwrap_or_default()
-    }
-
     /// Runs one gate's checks on a clean copy of the agent's commit.
-    fn gate_checks(&self, f: &Factory, w: &WorkItem, stage: &LineStage) -> (bool, String) {
+    fn gate_checks(self: &Arc<Self>, f: &Factory, w: &WorkItem, stage: &LineStage) -> (bool, String) {
         let project = PathBuf::from(&f.path);
         let dir = if w.worktree.is_empty() { project.clone() } else { PathBuf::from(&w.worktree) };
         let into = self.store.state_dir(&f.id).join("gates").join(&w.id);
@@ -330,6 +328,38 @@ impl Engine {
         (passed, all)
     }
 
+    /// What a person should know before answering, put on the work item itself.
+    fn flag_before_asking(&self, factory: &str, key: &str, stage: &str, why: Waiting, w: &WorkItem) {
+        let dir = Path::new(&w.worktree);
+        let files = match why {
+            Waiting::Handoff => gate::uncommitted(dir).unwrap_or_default(),
+            Waiting::Approve => gate::changed_since(dir, &w.base).unwrap_or_default().into_iter().filter(|f| f != "PLAN.md").collect(),
+            _ => Vec::new(),
+        };
+        if w.worktree.is_empty() || files.is_empty() {
+            return;
+        }
+        let lead = if why == Waiting::Approve {
+            "Already changed before anyone approved it"
+        } else {
+            "Left uncommitted, so merge will refuse it. Send it back, or clean up the worktree"
+        };
+        let text = format!("{lead}: {}", files.join(", "));
+        let _ = self.store.update(factory, |fa| {
+            line::add_finding(
+                fa,
+                key,
+                Finding {
+                    file: "worktree".into(),
+                    severity: "high".into(),
+                    text: text.clone(),
+                    stage: stage.to_string(),
+                    ..Finding::default()
+                },
+            );
+        });
+    }
+
     fn run_gate(self: &Arc<Self>, factory: &str, key: &str, stage_id: &str) {
         let guard = (factory.to_string(), key.to_string());
         if !self.state.lock().unwrap().stepping.insert(guard.clone()) {
@@ -345,24 +375,18 @@ impl Engine {
                 let _ = self.store.update(factory, |fa| {
                     for file in &changed {
                         let text = "This protected test was changed. The gate ran the base branch's copy.".to_string();
-                        let dup = fa
-                            .work
-                            .iter()
-                            .find(|i| i.ticket.key == key)
-                            .is_some_and(|i| i.findings.iter().any(|x| &x.file == file && x.text == text));
-                        if !dup {
-                            line::add_finding(
-                                fa,
-                                key,
-                                Finding {
-                                    file: file.clone(),
-                                    line: 0,
-                                    severity: "high".into(),
-                                    text,
-                                    stage: stage.id.clone(),
-                                },
-                            );
-                        }
+                        line::add_finding(
+                            fa,
+                            key,
+                            Finding {
+                                file: file.clone(),
+                                line: 0,
+                                severity: "high".into(),
+                                text,
+                                stage: stage.id.clone(),
+                                ..Finding::default()
+                            },
+                        );
                     }
                 });
             }
@@ -457,6 +481,7 @@ impl Engine {
                     severity: report["severity"].as_str().unwrap_or("medium").to_string(),
                     text: text.clone(),
                     stage: String::new(),
+                    kind: report["kind"].as_str().unwrap_or("judgment").to_string(),
                 };
                 self.store.update(&factory, |f| {
                     let stage = item_of(f, &key).map(|w| w.line_stage.clone()).unwrap_or_default();
@@ -468,6 +493,9 @@ impl Engine {
         };
         if let Ok(step) = step {
             self.step(&factory, &key, step);
+        }
+        if verb == "score" {
+            self.learn_from_scores(&factory);
         }
     }
 
@@ -491,10 +519,23 @@ impl Engine {
             me.collect_reports(&terminal);
             // Still on this terminal means it never said it was done.
             let still = me.item_on(&terminal).is_some_and(|(f, k)| f == factory && k == key);
+            if !still {
+                me.state.lock().unwrap().reminded.remove(&terminal);
+            }
             let idle = me.state.lock().unwrap().terminals.get(&terminal).is_some_and(|t| t["state"] == "idle");
             if still && idle {
                 let waiting = me.store.get(&factory).ok().and_then(|f| item_of(&f, &key).map(|w| w.waiting)).unwrap_or_default();
                 if waiting == Waiting::No {
+                    // Agents do forget the last step, and one reminder is cheaper than stopping the line.
+                    if me.state.lock().unwrap().reminded.insert(terminal.clone()) {
+                        let st = me.store.home().join("bin/st").display().to_string();
+                        let nudge = format!("You stopped without reporting. If you've finished, run: {st} done \"one line on what you did\". If you need a person, run: {st} ask \"your question\".");
+                        if me.type_engine_turn(&terminal, &nudge).is_ok() {
+                            me.log(&factory, Run::new("line", format!("{key} stopped without reporting, so it was reminded once")).by("engine"));
+                            return;
+                        }
+                    }
+                    me.state.lock().unwrap().reminded.remove(&terminal);
                     let text = format!("{key} went quiet without saying it was done. Look at it, then answer it or mark it done.");
                     let step = me.store.update(&factory, |f| line::agent_stopped(f, &key, &text)).unwrap_or(Step::Nothing);
                     me.step(&factory, &key, step);
@@ -525,7 +566,9 @@ impl Engine {
         let name = self.name_of(terminal);
         let agent = self.state.lock().unwrap().terminals.get(terminal).and_then(|t| t["agent"].as_str().map(String::from));
         let (all, _) = harness::load(&self.store.home().join("harnesses"));
-        if harness::is_quiet(all.iter().find(|h| Some(&h.id) == agent.as_ref()), host) {
+        // Harnesses phone home when they start and while they sit idle. Only a site wanted mid-task is worth stopping for.
+        let working = self.state.lock().unwrap().terminals.get(terminal).is_some_and(|t| t["state"] == "working");
+        if !working || harness::is_quiet(all.iter().find(|h| Some(&h.id) == agent.as_ref()), host) {
             self.log(&factory, Run::new("network", format!("{name} was blocked from {host}")).terminal(Some(terminal)).by("engine"));
             return;
         }
@@ -581,16 +624,33 @@ impl Engine {
     pub fn work_action(self: &Arc<Self>, factory: &str, key: &str, action: &str, note: &str) -> Result<(), String> {
         let f = self.store.get(factory).map_err(|e| format!("{e:#}"))?;
         let w = item_of(&f, key).cloned().ok_or_else(|| format!("there's no work item {key}"))?;
+        if w.stage == Stage::Ended {
+            return Err(format!("{key} has already ended"));
+        }
+        let guard = (factory.to_string(), key.to_string());
+        if action == "merge" {
+            if w.waiting != Waiting::Handoff {
+                return Err(format!("{key} isn't ready to merge"));
+            }
+            // A second press while the gates run is the same merge.
+            if !self.state.lock().unwrap().stepping.insert(guard.clone()) {
+                return Ok(());
+            }
+        }
         self.log(factory, Run::new("line", format!("{action} on {key}")).work(&w.id).by("person"));
         let act = match action {
             "approve" => Action::Approve,
             "sendBack" => Action::SendBack { note: note.to_string() },
             "treatAsDone" => Action::TreatAsDone,
             "drop" => Action::Drop,
+            "landed" => Action::Merged,
             "merge" => {
                 let me = Arc::clone(self);
                 let (fid, key) = (factory.to_string(), key.to_string());
-                std::thread::spawn(move || me.merge(&fid, &key));
+                std::thread::spawn(move || {
+                    me.merge(&fid, &key);
+                    me.state.lock().unwrap().stepping.remove(&guard);
+                });
                 return Ok(());
             }
             other => return Err(format!("unknown action {other}")),
@@ -604,7 +664,12 @@ impl Engine {
     fn merge(self: &Arc<Self>, factory: &str, key: &str) {
         let Ok(f) = self.store.get(factory) else { return };
         let Some(w) = item_of(&f, key).cloned() else { return };
+        // The gates take a while, and the work can be dropped while they run.
+        let still_open = || self.store.get(factory).ok().is_some_and(|f| item_of(&f, key).is_some_and(|w| w.stage != Stage::Ended));
         let say = |text: String| {
+            if !still_open() {
+                return;
+            }
             let _ = self.store.update(factory, |fa| {
                 crate::work::raise_kind(
                     fa,
@@ -628,6 +693,9 @@ impl Engine {
                 return;
             }
         }
+        if !still_open() {
+            return;
+        }
         let how = stage_of(&f, &w).map(|s| s.merge.clone()).unwrap_or_default();
         let project = Path::new(&f.path);
         if how.trim().is_empty() {
@@ -644,8 +712,51 @@ impl Engine {
                 return;
             }
         }
+        if !how.trim().is_empty() {
+            // A command might only open a pull request, so this isn't merged until it lands.
+            if self.store.update(factory, |fa| line::landing(fa, key)).unwrap_or(false) {
+                self.clear_alert(factory, &alert_key(&w.id));
+                let text = format!("{key} was handed over by the merge command. It finishes when the branch lands.");
+                self.log(factory, Run::new("line", text.clone()).work(&w.id).by("engine"));
+                self.report_back(&f, &w, "landing", &text);
+            }
+            return;
+        }
         let step = self.store.update(factory, |fa| line::person(fa, key, Action::Merged)).unwrap_or(Step::Nothing);
         self.step(factory, key, step);
+    }
+
+    /// Whether a branch at handoff, or handed over by a merge command, has really landed.
+    fn has_landed(&self, f: &Factory, w: &WorkItem) -> bool {
+        let project = Path::new(&f.path);
+        let contains = |target: &str| -> bool {
+            let Ok(tip) = worktree::git(project, &["rev-parse", "--verify", &w.branch]) else {
+                return false;
+            };
+            // A branch with nothing on it is "merged" everywhere, and that means nothing.
+            tip != w.base && worktree::git(project, &["merge-base", "--is-ancestor", &tip, target]).is_ok()
+        };
+        if w.waiting != Waiting::Landing {
+            return contains("HEAD");
+        }
+        let landed = stage_of(f, w).map(|s| s.landed.clone()).unwrap_or_default();
+        if landed.trim().is_empty() {
+            let _ = worktree::git(project, &["fetch", "-q", "origin"]);
+            return contains("origin/HEAD") || contains("HEAD");
+        }
+        let dir = if w.worktree.is_empty() { project.to_path_buf() } else { PathBuf::from(&w.worktree) };
+        hooks::run_command(&hooks::login_command(&shell::user_shell(), &landed), &dir, &mut std::io::sink(), Some(LANDED_TIMEOUT)).0
+    }
+
+    /// Finishes work that landed, including anything merged outside Sawtooth.
+    pub(crate) fn finish_landed(self: &Arc<Self>, f: &Factory) {
+        for w in f.work.iter().filter(|w| w.stage == Stage::Running && matches!(w.waiting, Waiting::Handoff | Waiting::Landing)) {
+            if w.bench.is_none() && self.has_landed(f, w) {
+                self.log(&f.id, Run::new("line", format!("{} landed", w.ticket.key)).ok(true).work(&w.id).by("engine"));
+                let step = self.store.update(&f.id, |fa| line::person(fa, &w.ticket.key, Action::Merged)).unwrap_or(Step::Nothing);
+                self.step(&f.id, &w.ticket.key, step);
+            }
+        }
     }
 
     /// Runs the factory's report commands for this event, with the details in the environment.

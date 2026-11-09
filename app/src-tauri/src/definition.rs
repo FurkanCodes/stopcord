@@ -89,10 +89,6 @@ struct SourceDoc {
     at_once: u32,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     every: String,
-    #[serde(default, skip_serializing_if = "String::is_empty")]
-    webhook: String,
-    #[serde(default, skip_serializing_if = "String::is_empty")]
-    secret: String,
     #[serde(default, skip_serializing_if = "is_false")]
     auto_start: bool,
 }
@@ -308,8 +304,6 @@ pub fn load(dir: &Path) -> Result<Factory> {
         harness: s.harness,
         at_once: s.at_once,
         every: s.every,
-        webhook: s.webhook,
-        secret: s.secret,
         auto_start: s.auto_start,
         ..Part::default()
     }));
@@ -458,6 +452,9 @@ pub fn validate(f: &Factory) -> Vec<String> {
         if s.tasks.iter().any(|t| t.key.trim().is_empty() || t.check.trim().is_empty()) {
             out.push(format!("benchmark {} has a task with no key or no check", s.id));
         }
+        if !s.candidates.is_empty() && !agents.contains(s.agent.as_str()) {
+            out.push(format!("benchmark {} compares candidates but names no agent to swap", s.id));
+        }
         if !s.start_at.is_empty() && !f.line.iter().any(|l| l.id == s.start_at && l.kind == StageKind::Agent) {
             out.push(format!("benchmark {} starts at {}, which isn't an agent stage", s.id, s.start_at));
         }
@@ -571,8 +568,6 @@ fn render(f: &Factory) -> Result<BTreeMap<PathBuf, String>> {
                 harness: p.harness.clone(),
                 at_once: p.at_once,
                 every: p.every.clone(),
-                webhook: p.webhook.clone(),
-                secret: p.secret.clone(),
                 auto_start: p.auto_start,
             })
             .collect(),

@@ -73,12 +73,6 @@ fn failure(e: anyhow::Error) -> Failure {
 /// the knowledge base linked in. With a command, it runs in the login shell and
 /// the shell stays after it ends.
 pub fn start_terminal(store: &Store, bridge: &Bridge, program: &Path, req: StartRequest) -> Result<Value, Failure> {
-    let deny = crate::settings::load(store.home()).map(|s| vec![s.webhooks.port]).unwrap_or_default();
-    start_terminal_with(store, bridge, program, req, deny)
-}
-
-/// `start_terminal`, with the local ports a confined agent must not reach.
-pub fn start_terminal_with(store: &Store, bridge: &Bridge, program: &Path, req: StartRequest, deny_ports: Vec<u16>) -> Result<Value, Failure> {
     let factory = match &req.factory_id {
         Some(id) => Some(store.get(id).map_err(failure)?),
         None => None,
@@ -114,7 +108,7 @@ pub fn start_terminal_with(store: &Store, bridge: &Bridge, program: &Path, req: 
     let mut params = json!({ "argv": shell::argv(&shell, command), "cwd": cwd, "name": name });
     if let Some(f) = &factory {
         let chosen = runner::pick(f, req.runner.as_deref());
-        let started = runner::prepare(store, bridge, f, chosen, command, Path::new(&cwd), program, deny_ports)?;
+        let started = runner::prepare(store, bridge, f, chosen, command, Path::new(&cwd), program)?;
         params["argv"] = json!(started.argv);
         params["confine"] = json!(started.confine);
         let env: serde_json::Map<String, Value> = started.env.into_iter().map(|(k, v)| (k, json!(v))).collect();
@@ -351,6 +345,8 @@ pub(crate) struct State {
     pub(crate) stepping: HashSet<(String, String)>,
     /// Terminals already told to trust their folder.
     pub(crate) trusted: HashSet<String>,
+    /// Terminals on the line that stopped without reporting and have had their one reminder.
+    pub(crate) reminded: HashSet<String>,
     ticks: u64,
 }
 
@@ -362,7 +358,6 @@ pub struct Engine {
     pub(crate) state: Mutex<State>,
     typist: Typist,
     pub(crate) intake: Mutex<crate::intake::Intake>,
-    pub tunnel: crate::tunnel::Tunnel,
 }
 
 impl Port for Bridge {
@@ -388,7 +383,6 @@ impl Engine {
             state: Mutex::new(State::default()),
             typist: Typist::new(READY_TIMEOUT, TURN_START, TYPING_POLL, STEADY_IDLE),
             intake: Mutex::default(),
-            tunnel: crate::tunnel::Tunnel::default(),
         })
     }
 
@@ -599,7 +593,13 @@ impl Engine {
             let _ = self.store.update(&factory.id, |f| work::clear_fixes(f, id));
         }
         // Work on a line has gates. The checks below are for terminals outside one.
-        if self.line_turn_finished(id, engine_turn) {
+        // A stage usually reports done before its terminal looks idle, so this one may already be off the line.
+        let was_on_line = engine_turn && factory.work.iter().any(|w| w.agents.values().any(|t| t == id));
+        if was_on_line {
+            // The engine decides what happens next, so there's nothing here for a person to look at.
+            let _ = self.bridge.call("terminal.seen", json!({ "id": id }));
+        }
+        if self.line_turn_finished(id, engine_turn) || was_on_line {
             return;
         }
         let checks: Vec<&Part> = factory
@@ -1059,6 +1059,7 @@ impl Engine {
             thread::spawn(move || {
                 for f in &factories {
                     me.sweep_worktrees(f);
+                    me.finish_landed(f);
                 }
             });
         }

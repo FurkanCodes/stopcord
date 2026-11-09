@@ -72,6 +72,7 @@ pub fn clean_report(raw: &str) -> Result<Value, String> {
                 "file": text("file"),
                 "line": v.get("line").and_then(Value::as_u64).unwrap_or(0),
                 "severity": severity,
+                "kind": if text("kind") == "clear" { "clear" } else { "judgment" },
             }))
         }
         other => Err(format!("st doesn't know {other:?}")),

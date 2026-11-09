@@ -90,11 +90,23 @@ impl Drop for Snapshot {
     }
 }
 
+/// What's been left uncommitted in a worktree, one `git status` line each.
+pub fn uncommitted(worktree: &Path) -> Result<Vec<String>> {
+    let dirty = git(worktree, &["status", "--porcelain", "--untracked-files=normal"])?;
+    Ok(dirty.lines().take(10).map(String::from).collect())
+}
+
+/// Every file a branch has changed since it started, committed or not.
+pub fn changed_since(worktree: &Path, base: &str) -> Result<Vec<String>> {
+    let tracked = git(worktree, &["diff", "--name-only", base])?;
+    let new = git(worktree, &["ls-files", "--others", "--exclude-standard"])?;
+    Ok(tracked.lines().chain(new.lines()).map(String::from).collect())
+}
+
 /// Builds the snapshot. Fails, with a sentence an agent can act on, when there's nothing to test.
 pub fn snapshot(project: &Path, worktree: &Path, base: &str, protect: &[String], into: &Path) -> Result<Snapshot> {
-    let dirty = git(worktree, &["status", "--porcelain", "--untracked-files=normal"])?;
-    if !dirty.trim().is_empty() {
-        let files: Vec<&str> = dirty.lines().take(10).collect();
+    let files = uncommitted(worktree)?;
+    if !files.is_empty() {
         bail!("There are uncommitted changes, and a gate only tests commits. Commit them:\n{}", files.join("\n"));
     }
     let head = git(worktree, &["rev-parse", "HEAD"])?;
@@ -209,6 +221,17 @@ mod tests {
     }
 
     #[test]
+    fn changed_since_sees_commits_and_new_files() {
+        let (r, out) = (repo(), tempfile::tempdir().unwrap());
+        let base = git(r.path(), &["rev-parse", "HEAD"]).unwrap();
+        let wt = agent(r.path(), out.path());
+        std::fs::write(wt.join("lib.txt"), "v2").unwrap();
+        commit(&wt);
+        std::fs::write(wt.join("brand-new.txt"), "x").unwrap();
+        assert_eq!(changed_since(&wt, &base).unwrap(), ["lib.txt", "brand-new.txt"]);
+    }
+
+    #[test]
     fn uncommitted_work_is_sent_back() {
         let (r, out) = (repo(), tempfile::tempdir().unwrap());
         let base = git(r.path(), &["rev-parse", "HEAD"]).unwrap();
@@ -218,6 +241,7 @@ mod tests {
         std::fs::write(wt.join("lib.txt"), "v3").unwrap();
         let e = snapshot(r.path(), &wt, &base, &[], &out.path().join("gate")).err().unwrap();
         assert!(e.to_string().contains("uncommitted"), "{e}");
+        assert!(uncommitted(&wt).unwrap()[0].contains("lib.txt"));
     }
 
     #[test]

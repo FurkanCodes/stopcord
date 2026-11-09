@@ -12,7 +12,7 @@ use std::time::Duration;
 
 use serde_json::{Value, json};
 
-const USAGE: &str = "usage: st done \"what you did\"\n       st ask \"your question\"\n       st note \"something worth keeping\"\n       st finding --file a.rs --line 9 --severity high \"what's wrong\"\n       st score 7 \"why\"";
+const USAGE: &str = "usage: st done \"what you did\"\n       st ask \"your question\"\n       st note \"something worth keeping\"\n       st finding --file a.rs --line 9 --severity high --kind clear \"what's wrong\"\n       st score 7 \"why\"";
 
 /// Writes the script that puts `st` on a terminal's PATH.
 pub fn install(home: &Path, program: &Path) -> std::io::Result<()> {
@@ -39,17 +39,18 @@ pub fn parse(args: &[String]) -> Result<Value, String> {
             Ok(json!({ "verb": "score", "score": score, "text": why.join(" ") }))
         }
         "finding" => {
-            let (mut file, mut line, mut severity, mut text) = (String::new(), 0u64, String::new(), Vec::new());
+            let (mut file, mut line, mut severity, mut kind, mut text) = (String::new(), 0u64, String::new(), String::new(), Vec::new());
             let mut it = rest.iter();
             while let Some(a) = it.next() {
                 match a.as_str() {
                     "--file" => file = it.next().cloned().ok_or(USAGE)?,
                     "--line" => line = it.next().and_then(|n| n.parse().ok()).ok_or(USAGE)?,
                     "--severity" => severity = it.next().cloned().ok_or(USAGE)?,
+                    "--kind" => kind = it.next().cloned().ok_or(USAGE)?,
                     other => text.push(other.to_string()),
                 }
             }
-            Ok(json!({ "verb": "finding", "file": file, "line": line, "severity": severity, "text": text.join(" ") }))
+            Ok(json!({ "verb": "finding", "file": file, "line": line, "severity": severity, "kind": kind, "text": text.join(" ") }))
         }
         _ => Err(USAGE.to_string()),
     }

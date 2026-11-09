@@ -13,55 +13,6 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 
-pub const DEFAULT_WEBHOOK_PORT: u16 = 38715;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub enum TunnelKind {
-    /// You run the tunnel yourself, or there isn't one.
-    #[default]
-    None,
-    /// A temporary address from Cloudflare. No account, and it changes each time.
-    CloudflaredQuick,
-    /// Your own Cloudflare tunnel, using a token.
-    CloudflaredNamed,
-    TailscaleFunnel,
-    Ngrok,
-    /// Any command. `{port}` is the listener's port.
-    Custom,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", default, deny_unknown_fields)]
-pub struct WebhookSettings {
-    /// Off by default: a tunnel puts a public address on the machine that holds your logins.
-    pub enabled: bool,
-    pub port: u16,
-}
-
-impl Default for WebhookSettings {
-    fn default() -> Self {
-        WebhookSettings {
-            enabled: false,
-            port: DEFAULT_WEBHOOK_PORT,
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", default, deny_unknown_fields)]
-pub struct TunnelSettings {
-    pub kind: TunnelKind,
-    /// `Custom`: the command to run.
-    pub command: String,
-    /// The public address, when the tunnel can't tell Sawtooth what it is.
-    pub public_url: String,
-    /// `CloudflaredNamed`: the name of the secret holding its token.
-    pub token_secret: String,
-    /// Start the tunnel when Sawtooth starts.
-    pub auto_start: bool,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default, deny_unknown_fields)]
 pub struct SlackSettings {
@@ -78,8 +29,6 @@ pub struct SlackSettings {
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default, deny_unknown_fields)]
 pub struct Settings {
-    pub webhooks: WebhookSettings,
-    pub tunnel: TunnelSettings,
     pub slack: SlackSettings,
     /// Keep the machine awake while work is running.
     pub keep_awake: bool,
@@ -146,10 +95,6 @@ pub fn get_secret(home: &Path, name: &str) -> Option<String> {
     (!text.is_empty()).then_some(text)
 }
 
-pub fn has_secret(home: &Path, name: &str) -> bool {
-    get_secret(home, name).is_some()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -158,8 +103,6 @@ mod tests {
     fn nothing_public_is_on_until_someone_turns_it_on() {
         let home = tempfile::tempdir().unwrap();
         let s = load(home.path()).unwrap();
-        assert!(!s.webhooks.enabled);
-        assert_eq!(s.tunnel.kind, TunnelKind::None);
         assert!(!s.slack.enabled);
         assert!(s.slack.allow_users.is_empty());
     }
@@ -167,9 +110,7 @@ mod tests {
     #[test]
     fn settings_come_back_the_same() {
         let home = tempfile::tempdir().unwrap();
-        let mut s = Settings::default();
-        s.webhooks.enabled = true;
-        s.tunnel.kind = TunnelKind::TailscaleFunnel;
+        let s = Settings::default();
         save(home.path(), &s).unwrap();
         assert_eq!(load(home.path()).unwrap(), s);
     }
@@ -190,13 +131,13 @@ mod tests {
         assert_eq!(std::fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600);
         assert_eq!(std::fs::metadata(path.parent().unwrap()).unwrap().permissions().mode() & 0o777, 0o700);
         set_secret(home.path(), "SENTRY_HOOK", "").unwrap();
-        assert!(!has_secret(home.path(), "SENTRY_HOOK"));
+        assert!(get_secret(home.path(), "SENTRY_HOOK").is_none());
     }
 
     #[test]
     fn a_secret_name_cant_climb_out_of_the_folder() {
         let home = tempfile::tempdir().unwrap();
         assert!(set_secret(home.path(), "../evil", "x").is_err());
-        assert!(!has_secret(home.path(), "../evil"));
+        assert!(get_secret(home.path(), "../evil").is_none());
     }
 }

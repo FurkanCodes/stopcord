@@ -75,6 +75,21 @@ export function Setup({ factory, onRemove }: { factory: Factory; onRemove: () =>
       hints={[['1-7', 'sections'], ['esc', 'every factory']]}
       status={{ mode: 'SETUP', path: factory.name, info: 'saved as you type · every change is a commit' }}
     >
+      {factory.proposals.map((p) => (
+        <Pane key={p.id} title={`proposed change · ${p.agent}`} style={paneStyle}>
+          <p style={{ whiteSpace: 'pre-wrap' }}>{p.why}</p>
+          <p className="t-dim" style={{ fontSize: 12 }}>from {p.evidence.join(', ')}</p>
+          <div className="grid" style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) minmax(0,1fr)', gap: 12 }}>
+            <div><h3 className="t-dim" style={{ fontSize: 12 }}>now</h3><pre style={{ whiteSpace: 'pre-wrap', margin: 0, fontSize: 12 }}>{p.before}</pre></div>
+            <div><h3 className="t-dim" style={{ fontSize: 12 }}>proposed</h3><pre style={{ whiteSpace: 'pre-wrap', margin: 0, fontSize: 12 }}>{p.after}</pre></div>
+          </div>
+          <span style={{ display: 'inline-flex', gap: 6 }}>
+            <button type="button" className="t-solid is-sm" onClick={() => void api.answerProposal(factory.id, p.id, true).then(refreshFactories, showProblem)}>apply</button>
+            <Key size="sm" onClick={() => void api.answerProposal(factory.id, p.id, false).then(refreshFactories, showProblem)}>skip</Key>
+          </span>
+        </Pane>
+      ))}
+
       <Pane title="defaults" heading={1} style={paneStyle}>
         <Text id="def-harness" label="harness" value={factory.defaults.harness ?? ''} placeholder="claude, codex, gemini, opencode, or any command" onChange={(harness) => set({ defaults: { ...factory.defaults, harness } })} />
         <Pick id="def-runner" label="runner" value={factory.defaults.runner ?? ''} options={[['', 'plain worktree'], ...factory.runners.map((r): [string, string] => [r.id, `${r.id} (${r.level})`])]} onChange={(r) => set({ defaults: { ...factory.defaults, runner: r } })} />
@@ -107,6 +122,7 @@ export function Setup({ factory, onRemove }: { factory: Factory; onRemove: () =>
             )}
             <Pick id={`st-then-${i}`} label="then" value={s.then ?? ''} options={[['', 'end of the line'], ...stageIds]} onChange={(then) => stage(i, { then })} />
             {s.kind !== 'human' || s.then ? null : <Text id={`st-mg-${i}`} label="merge with" value={s.merge ?? ''} placeholder="empty merges locally, or a command like gh pr create --fill" onChange={(merge) => stage(i, { merge })} />}
+            {s.kind === 'human' && !s.then && s.merge && <Text id={`st-ld-${i}`} label="landed when" value={s.landed ?? ''} placeholder="gh pr view --json state -q .state | grep -qx MERGED" onChange={(landed) => stage(i, { landed })} />}
             <Pick id={`st-fail-${i}`} label="if it fails" value={s.onFail ?? ''} options={[['', 'ask a person'], ...stageIds]} onChange={(onFail) => stage(i, { onFail })} />
             {s.onFail && (
               <FieldRow id={`st-loop-${i}`} label="max loops" width="14ch">
@@ -165,7 +181,7 @@ export function Setup({ factory, onRemove }: { factory: Factory; onRemove: () =>
         {factory.reports.map((r, i) => (
           <Fold key={i} title={r.id} hint={list(r.on)}>
             <Text id={`rp-id-${i}`} label="name" value={r.id} onChange={(id) => report(i, { id })} />
-            <Text id={`rp-on-${i}`} label="when" value={list(r.on)} placeholder="approve, question, handoff, failed, merged, dropped" onChange={(v) => report(i, { on: unlist(v) })} />
+            <Text id={`rp-on-${i}`} label="when" value={list(r.on)} placeholder="approve, question, handoff, failed, landing, merged, dropped" onChange={(v) => report(i, { on: unlist(v) })} />
             <Text id={`rp-c-${i}`} label="command" value={r.command} placeholder={'curl -d "{\\"text\\":\\"$ST_TEXT\\"}" "$SLACK_WEBHOOK"'} onChange={(command) => report(i, { command })} />
             <span className="t-muted" style={{ fontSize: 12 }}>it gets $ST_EVENT $ST_KEY $ST_TITLE $ST_URL $ST_STAGE $ST_BRANCH $ST_SOURCE $ST_TEXT</span>
             <span><Key size="xs" onClick={() => set({ reports: factory.reports.filter((_, j) => j !== i) })}>remove report</Key></span>
@@ -187,7 +203,7 @@ function Sources({ factory, sources, part, set }: { factory: Factory; sources: P
   }, []);
   function add(t?: SourceTemplate) {
     const id = uniq(t?.id ?? 'source', factory.parts.map((p) => p.id));
-    const blank: Part = { id, kind: 'tickets', name: t?.name ?? 'Source', readAs: [], folder: '', command: t?.command ?? '', runsOn: 'commit', when: 'quiet', schedule: '', runsIn: 'same', prompt: '', harness: '', atOnce: 0, every: t?.every ?? '', webhook: '', secret: t?.secret ?? '', autoStart: false };
+    const blank: Part = { id, kind: 'tickets', name: t?.name ?? 'Source', readAs: [], folder: '', command: t?.command ?? '', runsOn: 'commit', when: 'quiet', schedule: '', runsIn: 'same', prompt: '', harness: '', atOnce: 0, every: t?.every ?? '', autoStart: false };
     set({ parts: [...factory.parts, blank] });
   }
   return (
@@ -205,7 +221,7 @@ function Sources({ factory, sources, part, set }: { factory: Factory; sources: P
     >
       {sources.length === 0 && <Empty style={{ padding: 0 }}>no sources. work can still be fed by hand</Empty>}
       {sources.map((p) => (
-        <SourceCard key={p.id} factory={factory} p={p} part={part} needs={templates.find((t) => p.id.startsWith(t.id))?.needs} remove={() => set({ parts: factory.parts.filter((x) => x.id !== p.id) })} />
+        <SourceCard key={p.id} p={p} part={part} needs={templates.find((t) => p.id.startsWith(t.id))?.needs} remove={() => set({ parts: factory.parts.filter((x) => x.id !== p.id) })} />
       ))}
     </Pane>
   );
@@ -270,6 +286,15 @@ function BenchPane({ factory, set }: { factory: Factory; set: (patch: Partial<Fa
             <Text id={`su-d-${i}`} label="what it tests" value={s.description} onChange={(description) => edit(i, { description })} />
             <Text id={`su-b-${i}`} label="start commit" value={s.base} placeholder="keeps runs comparable. empty uses the current commit" onChange={(base) => edit(i, { base })} />
             <Pick id={`su-s-${i}`} label="start at" value={s.startAt} options={starts} onChange={(startAt) => edit(i, { startAt })} />
+            <Pick id={`su-a-${i}`} label="agent under test" value={s.agent ?? ''} options={[['', 'none: run as configured'], ...factory.agents.map((x): [string, string] => [x.id, x.id])]} onChange={(agent) => edit(i, { agent })} />
+            {s.agent && (
+              <FieldRow id={`su-c-${i}`} label="candidates" width="14ch" top>
+                <textarea id={`su-c-${i}`} className="t-field" rows={3} placeholder={'one harness command per line\nclaude --model haiku\ncodex'} value={(s.candidates ?? []).join('\n')} onChange={(e) => edit(i, { candidates: e.currentTarget.value.split('\n') })} />
+              </FieldRow>
+            )}
+            <FieldRow id={`su-r-${i}`} label="repeats" width="14ch">
+              <input id={`su-r-${i}`} type="number" min={1} className="t-field" style={{ width: '8ch' }} value={s.repeats || 1} onChange={(e) => edit(i, { repeats: Number(e.currentTarget.value) || 1 })} />
+            </FieldRow>
             {s.tasks.map((t, j) => (
               <div key={j} style={{ paddingLeft: 12, display: 'flex', flexDirection: 'column', gap: 4 }}>
                 <Text id={`su-k-${i}-${j}`} label="task" value={t.key} onChange={(key) => task(i, j, { key })} />
@@ -281,9 +306,12 @@ function BenchPane({ factory, set }: { factory: Factory; set: (patch: Partial<Fa
                 <span><Key size="xs" onClick={() => edit(i, { tasks: s.tasks.filter((_, x) => x !== j) })}>remove task</Key></span>
               </div>
             ))}
-            {last.length > 0 && (
-              <p className="t-muted">last run: {last.filter((r) => r.passed).length}/{last.length} passed · {last.reduce((n, r) => n + r.seconds, 0)}s · {last.reduce((n, r) => n + r.loops, 0)} loops</p>
-            )}
+            {[...new Set(last.map((r) => r.candidate))].map((c) => {
+              const rows = last.filter((r) => r.candidate === c);
+              return (
+                <p key={c} className="t-muted">{c || 'last run'}: {rows.filter((r) => r.passed).length}/{rows.length} passed · {Math.round(rows.reduce((n, r) => n + r.seconds, 0) / rows.length)}s each · {rows.reduce((n, r) => n + r.loops, 0)} loops</p>
+              );
+            })}
             {last.filter((r) => !r.passed).map((r) => (
               <p key={r.task} className="t-muted" style={{ fontSize: 12, overflowWrap: 'anywhere' }}>✗ {r.task}: {r.why}</p>
             ))}
@@ -299,50 +327,15 @@ function BenchPane({ factory, set }: { factory: Factory; set: (patch: Partial<Fa
   );
 }
 
-function SourceCard({ factory, p, part, needs, remove }: { factory: Factory; p: Part; part: (id: string, patch: Partial<Part>) => void; needs?: string; remove: () => void }) {
-  const [url, setUrl] = useState('');
-  const [secret, setSecret] = useState('');
-  const [has, setHas] = useState(false);
-  useEffect(() => {
-    if (p.webhook) api.hookUrl(factory.id, p.id).then(setUrl, () => setUrl(''));
-    if (p.secret) api.hasSecrets([p.secret]).then((n) => setHas(n.length > 0), () => setHas(false));
-  }, [factory.id, p.id, p.webhook, p.secret]);
-
-  async function saveSecret() {
-    if (!p.secret) return;
-    try {
-      await api.setSecret(p.secret, secret);
-      setSecret('');
-      setHas(secret.length > 0);
-    } catch (e) {
-      showProblem(e);
-    }
-  }
-
+function SourceCard({ p, part, needs, remove }: { p: Part; part: (id: string, patch: Partial<Part>) => void; needs?: string; remove: () => void }) {
   return (
-    <Fold title={p.name} hint={[p.every, p.webhook && `webhook (${p.webhook})`].filter(Boolean).join(' · ') || 'by hand'}>
+    <Fold title={p.name} hint={p.every || 'by hand'}>
       <Text id={`src-n-${p.id}`} label="name" value={p.name} onChange={(name) => part(p.id, { name })} />
       <FieldRow id={`src-c-${p.id}`} label="pull command" width="14ch" top>
         <textarea id={`src-c-${p.id}`} className="t-field" rows={2} value={p.command} onChange={(e) => part(p.id, { command: e.currentTarget.value })} />
       </FieldRow>
       {needs && <span className="t-muted" style={{ fontSize: 12 }}>{needs}</span>}
       <Text id={`src-e-${p.id}`} label="pull every" value={p.every ?? ''} placeholder="every 5 minutes. empty pulls by hand" onChange={(every) => part(p.id, { every })} />
-      <Pick id={`src-w-${p.id}`} label="webhook" value={p.webhook ?? ''} options={[['', 'none'], ['sentry', 'Sentry signature'], ['github', 'GitHub signature'], ['linear', 'Linear signature'], ['hmac', 'SHA-256 signature (x-signature-256)'], ['token', 'Bearer token']]} onChange={(webhook) => part(p.id, { webhook })} />
-      {p.webhook && (
-        <>
-          <FieldRow label="address" width="14ch">
-            <code style={{ overflowWrap: 'anywhere' }}>{url}</code>
-          </FieldRow>
-          <Text id={`src-sn-${p.id}`} label="secret name" value={p.secret ?? ''} onChange={(s) => part(p.id, { secret: s })} />
-          <FieldRow id={`src-sv-${p.id}`} label={has ? 'replace secret' : 'set secret'} width="14ch">
-            <div style={{ display: 'flex', gap: 6 }}>
-              <input id={`src-sv-${p.id}`} type="password" autoComplete="off" className="t-field" style={{ flexGrow: 1 }} value={secret} onChange={(e) => setSecret(e.currentTarget.value)} />
-              <Key size="sm" disabled={!p.secret || !secret} onClick={() => void saveSecret()}>save</Key>
-            </div>
-            <span className="t-muted" style={{ fontSize: 12 }}>{has ? 'a secret is saved. it is never shown again' : 'no secret saved. deliveries will be refused'}</span>
-          </FieldRow>
-        </>
-      )}
       <Check id={`src-as-${p.id}`} checked={!!p.autoStart} onChange={(autoStart) => part(p.id, { autoStart })}>
         start items by itself. outside text will reach an agent with no one looking
       </Check>

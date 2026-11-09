@@ -99,7 +99,6 @@ export function Inbox({ factory }: { factory: Factory }) {
               {p.name}
               <span className="t-muted" style={{ fontSize: 12 }}>
                 {' '}· {p.every || 'by hand'}
-                {p.webhook ? ` · webhook (${p.webhook})` : ''}
                 {p.autoStart ? ' · starts by itself' : ''}
               </span>
             </span>

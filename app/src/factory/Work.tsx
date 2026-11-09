@@ -9,7 +9,7 @@ import { LineStrip } from './LineStrip';
 const waitingWord: Record<WorkItem['waiting'], string> = {
   no: 'working',
   approve: 'waiting for your approval',
-  handoff: 'ready for you to merge',
+  landing: 'waiting for it to land', handoff: 'ready for you to merge',
   question: 'asking you something',
   failed: 'stopped, needs you',
 };
@@ -68,7 +68,7 @@ export function Work({ factory, runs, terminals, selected }: { factory: Factory;
               <li key={w.id}>
                 <button type="button" className="t-row" aria-selected={picked?.id === w.id} style={{ display: 'block', width: '100%', textAlign: 'left', padding: '3px 12px' }} onClick={() => pick(w.ticket.key)}>
                   <span style={{ color: 'var(--ink)' }}>{w.ticket.key}</span> <span className="t-muted">{w.ticket.title}</span>
-                  <div className={w.waiting !== 'no' ? 't-red' : 't-muted'} style={{ fontSize: 12 }}>{statusOf(w)}</div>
+                  <div className={w.waiting !== 'no' && w.waiting !== 'landing' ? 't-red' : 't-muted'} style={{ fontSize: 12 }}>{statusOf(w)}</div>
                 </button>
               </li>
             ))}
@@ -94,7 +94,7 @@ function Detail({ factory, item, runs, terminals }: { factory: Factory; item: Wo
   const open = item.stage !== 'ended';
   const w = item.waiting;
 
-  async function act(action: 'approve' | 'sendBack' | 'treatAsDone' | 'drop' | 'merge') {
+  async function act(action: 'approve' | 'sendBack' | 'treatAsDone' | 'drop' | 'merge' | 'landed') {
     setBusy(action);
     try {
       await api.workAction(factory.id, item.ticket.key, action, note);
@@ -125,6 +125,7 @@ function Detail({ factory, item, runs, terminals }: { factory: Factory; item: Wo
           <textarea className="t-field" rows={2} aria-label="Note for the agent" placeholder="note for the agent, if you send it back" value={note} onChange={(e) => setNote(e.currentTarget.value)} />
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
             {w === 'handoff' && <button type="button" className="t-solid is-sm" disabled={!!busy} onClick={() => void act('merge')}>{busy === 'merge' ? 'checking…' : 'merge'}</button>}
+            {w === 'landing' && <button type="button" className="t-solid is-sm" disabled={!!busy} onClick={() => void act('landed')}>it's merged</button>}
             {w === 'approve' && <button type="button" className="t-solid is-sm" disabled={!!busy} onClick={() => void act('approve')}>approve</button>}
             {w === 'failed' && item.lineStage && factory.line.find((s) => s.id === item.lineStage)?.kind === 'gate' && (
               <Key size="sm" disabled={!!busy} onClick={() => void act('approve')}>let it through</Key>
@@ -171,6 +172,7 @@ function Detail({ factory, item, runs, terminals }: { factory: Factory; item: Wo
             {item.findings.map((f, i) => (
               <li key={i}>
                 <span className={f.severity === 'high' ? 't-red' : 't-muted'}>{f.severity}</span>{' '}
+                {f.kind === 'clear' && <span className="t-dim">clear fix </span>}
                 {f.file && <span className="t-dim">{f.file}{f.line ? `:${f.line}` : ''} </span>}
                 {f.text}
               </li>

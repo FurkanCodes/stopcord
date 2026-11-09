@@ -1,5 +1,4 @@
-//! Work coming in from outside: sources pulled on a timer, webhook deliveries,
-//! the tunnel, and keeping the machine awake.
+//! Work coming in from outside, pulled on a timer, and keeping the machine awake.
 //!
 //! Outside text never starts an agent by itself. Whatever arrives becomes a
 //! proposal for a person, unless they turned that off for that one source.
@@ -8,162 +7,42 @@ use std::process::{Child, Command, Stdio};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use serde_json::Value;
-
 use crate::engine::{Due, Engine, due, parse_schedule};
 use crate::factories::{Factory, Kind, Part, Stage, Ticket, Waiting};
 use crate::runs::{self, Run};
-use crate::settings::{self, Settings, SlackSettings, TunnelKind};
+use crate::settings::{self, SlackSettings};
 use crate::tickets;
-use crate::webhook::{self, Listener, Request};
 use crate::work;
 
-/// A burst of deliveries becomes one pull.
+/// Two pulls of one source can't start closer together than this.
 const MIN_PULL_GAP: Duration = Duration::from_secs(5);
 
 /// What the engine keeps for intake.
 #[derive(Default)]
 pub struct Intake {
-    pub listener: Option<Listener>,
-    /// The port the listener is on, for anything that needs to keep agents away from it.
-    pub port: u16,
-    pub problem: String,
     awake: Option<Child>,
     pulls: std::collections::HashMap<(String, String), Instant>,
     pulling: std::collections::HashSet<(String, String)>,
     slack: Option<(SlackSettings, Arc<std::sync::atomic::AtomicBool>)>,
 }
 
-fn field<'a>(v: &'a Value, keys: &[&str]) -> Option<&'a str> {
-    keys.iter().find_map(|k| v.get(*k).and_then(Value::as_str)).filter(|s| !s.is_empty())
-}
-
-/// Reads a ticket straight out of a delivery, for a source with no pull command.
-pub fn ticket_from_payload(scheme: &str, body: &[u8]) -> Option<Ticket> {
-    let v: Value = serde_json::from_slice(body).ok()?;
-    let make = |key: String, title: &str, text: &str, url: &str| Ticket {
-        key,
-        title: title.to_string(),
-        body: text.to_string(),
-        url: url.to_string(),
-    };
-    match scheme {
-        "sentry" => {
-            let data = v.get("data")?;
-            let issue = data.get("issue").or_else(|| data.get("event"))?;
-            let key = field(issue, &["shortId", "short_id", "id", "event_id"]).map(String::from).or_else(|| {
-                issue.get("id").and_then(Value::as_u64).map(|n| n.to_string())
-            })?;
-            Some(make(
-                key,
-                field(issue, &["title", "message"]).unwrap_or("Sentry issue"),
-                field(issue, &["culprit"]).unwrap_or_default(),
-                field(issue, &["web_url", "permalink", "url"]).unwrap_or_default(),
-            ))
-        }
-        "github" => {
-            let item = v.get("issue").or_else(|| v.get("pull_request"))?;
-            let number = item.get("number").and_then(Value::as_u64)?;
-            Some(make(
-                format!("#{number}"),
-                field(item, &["title"]).unwrap_or_default(),
-                field(item, &["body"]).unwrap_or_default(),
-                field(item, &["html_url"]).unwrap_or_default(),
-            ))
-        }
-        "linear" => {
-            let data = v.get("data")?;
-            Some(make(
-                field(data, &["identifier", "id"])?.to_string(),
-                field(data, &["title"]).unwrap_or_default(),
-                field(data, &["description"]).unwrap_or_default(),
-                field(data, &["url"]).or(field(&v, &["url"])).unwrap_or_default(),
-            ))
-        }
-        _ => {
-            let key = field(&v, &["key", "id", "identifier"])?;
-            Some(make(
-                key.to_string(),
-                field(&v, &["title", "message", "summary"]).unwrap_or_default(),
-                field(&v, &["body", "description", "text"]).unwrap_or_default(),
-                field(&v, &["url", "link"]).unwrap_or_default(),
-            ))
-        }
-    }
-}
-
 impl Engine {
-    /// Applies the machine's settings: turns the listener on or off, and starts the tunnel if asked.
+    /// Applies the machine's settings: connects to Slack, or stops, as they say.
     pub fn apply_settings(self: &Arc<Self>) {
         let settings = settings::load(self.store.home()).unwrap_or_default();
         let mut intake = self.intake.lock().unwrap();
-        intake.problem.clear();
-        let wanted = settings.webhooks.enabled.then_some(settings.webhooks.port);
-        let current = intake.listener.as_ref().map(Listener::port);
-        if wanted != current {
-            intake.listener = None;
-            intake.port = 0;
-            if let Some(port) = wanted {
-                let me = Arc::clone(self);
-                match Listener::start(port, Arc::new(move |req: &Request| me.on_delivery(req))) {
-                    Ok(l) => {
-                        intake.port = l.port();
-                        intake.listener = Some(l);
-                    }
-                    Err(e) => intake.problem = format!("{e:#}"),
-                }
-            }
-        }
-        let wanted_slack = Some(settings.slack.clone()).filter(|s| s.enabled && !s.factory.is_empty());
-        if intake.slack.as_ref().map(|(s, _)| s) != wanted_slack.as_ref() {
+        let wanted = Some(settings.slack.clone()).filter(|s| s.enabled && !s.factory.is_empty());
+        if intake.slack.as_ref().map(|(s, _)| s) != wanted.as_ref() {
             if let Some((_, stop)) = intake.slack.take() {
                 stop.store(true, std::sync::atomic::Ordering::Relaxed);
             }
-            if let Some(s) = wanted_slack {
+            if let Some(s) = wanted {
                 let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
                 intake.slack = Some((s.clone(), Arc::clone(&stop)));
                 let me = Arc::clone(self);
                 std::thread::spawn(move || me.run_slack(s, stop));
             }
         }
-        let port = intake.port;
-        drop(intake);
-        if settings.tunnel.auto_start && settings.tunnel.kind != TunnelKind::None && port != 0 && !self.tunnel.status().running {
-            let _ = self.start_tunnel(&settings);
-        }
-    }
-
-    pub fn start_tunnel(self: &Arc<Self>, settings: &Settings) -> Result<(), String> {
-        let port = self.intake.lock().unwrap().port;
-        if port == 0 {
-            return Err("Turn webhooks on first, so the tunnel has something to reach.".to_string());
-        }
-        let command = crate::tunnel::command_for(&settings.tunnel, port, self.store.home()).map_err(|e| format!("{e:#}"))?;
-        self.tunnel.start(&command, &settings.tunnel.public_url).map_err(|e| format!("{e:#}"))
-    }
-
-    fn on_delivery(self: &Arc<Self>, req: &Request) -> u16 {
-        let Some((factory, source)) = webhook::route(&req.path) else {
-            return 404;
-        };
-        let Ok(f) = self.store.get(factory) else { return 404 };
-        let Some(part) = f.parts.iter().find(|p| p.kind == Kind::Tickets && p.id == source && !p.webhook.is_empty()).cloned() else {
-            return 404;
-        };
-        let secret = settings::get_secret(self.store.home(), &part.secret).unwrap_or_default();
-        if !webhook::verify(&part.webhook, &secret, req) {
-            self.log(&f.id, Run::new("webhook", format!("{} refused a delivery with a bad signature", part.name)).ok(false).part(&part.id));
-            return 401;
-        }
-        self.log(&f.id, Run::new("webhook", format!("{} got a delivery", part.name)).ok(true).part(&part.id));
-        if part.command.trim().is_empty() {
-            if let Some(ticket) = ticket_from_payload(&part.webhook, &req.body) {
-                self.propose(&f.id, &part, vec![ticket]);
-            }
-        } else {
-            self.pull_soon(&f.id, &part.id);
-        }
-        202
     }
 
     /// Asks for a pull, unless one is running or just ran.
@@ -274,59 +153,5 @@ impl Engine {
             }
             _ => {}
         }
-    }
-
-    pub fn hook_url(&self, factory: &str, part: &str) -> String {
-        let public = self.tunnel.status().url;
-        let settings = settings::load(self.store.home()).unwrap_or_default();
-        let base = if !public.is_empty() {
-            public
-        } else if !settings.tunnel.public_url.is_empty() {
-            settings.tunnel.public_url
-        } else {
-            format!("http://127.0.0.1:{}", settings.webhooks.port)
-        };
-        format!("{}/hook/{factory}/{part}", base.trim_end_matches('/'))
-    }
-
-    pub fn intake_problem(&self) -> String {
-        self.intake.lock().unwrap().problem.clone()
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn a_sentry_delivery_becomes_a_ticket() {
-        let body = br#"{"action":"created","data":{"issue":{"id":"7","shortId":"PAY-41","title":"TypeError","culprit":"pay.js","web_url":"https://sentry.io/x"}}}"#;
-        let t = ticket_from_payload("sentry", body).unwrap();
-        assert_eq!(t.key, "PAY-41");
-        assert_eq!(t.title, "TypeError");
-        assert_eq!(t.url, "https://sentry.io/x");
-    }
-
-    #[test]
-    fn a_github_issue_becomes_a_ticket() {
-        let body = br#"{"action":"opened","issue":{"number":12,"title":"Crash","body":"it broke","html_url":"https://github.com/a/b/issues/12"}}"#;
-        let t = ticket_from_payload("github", body).unwrap();
-        assert_eq!(t.key, "#12");
-        assert_eq!(t.body, "it broke");
-    }
-
-    #[test]
-    fn a_linear_issue_becomes_a_ticket() {
-        let body = br#"{"data":{"identifier":"LIN-9","title":"Bug","description":"d"},"url":"https://linear.app/x"}"#;
-        let t = ticket_from_payload("linear", body).unwrap();
-        assert_eq!(t.key, "LIN-9");
-        assert_eq!(t.url, "https://linear.app/x");
-    }
-
-    #[test]
-    fn anything_else_needs_an_id_or_is_ignored() {
-        assert_eq!(ticket_from_payload("hmac", br#"{"id":"a","title":"T"}"#).unwrap().key, "a");
-        assert!(ticket_from_payload("hmac", br#"{"title":"no id"}"#).is_none());
-        assert!(ticket_from_payload("sentry", b"not json").is_none());
     }
 }

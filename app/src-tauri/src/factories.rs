@@ -94,10 +94,6 @@ pub struct Part {
     pub network: bool,
     /// Ticket source: how often to pull, such as "every 5 minutes". Empty pulls only by hand.
     pub every: String,
-    /// Ticket source: how webhook deliveries are signed. Empty means it takes none.
-    pub webhook: String,
-    /// Ticket source: the name of the secret deliveries are signed with.
-    pub secret: String,
     /// Ticket source: start new items with no person. Off by default, since outside text reaches an agent.
     pub auto_start: bool,
 }
@@ -212,6 +208,9 @@ pub struct LineStage {
     /// The last stage: how to merge. Empty merges the branch locally; anything else is a shell command.
     #[serde(skip_serializing_if = "no_text")]
     pub merge: String,
+    /// The last stage: a command that passes once the merge has really landed, such as checking a pull request.
+    #[serde(skip_serializing_if = "no_text")]
+    pub landed: String,
 }
 
 /// A command run when work reaches an event, to tell the outside world.
@@ -279,6 +278,8 @@ pub enum Waiting {
     Question,
     /// It failed more times than the line allows, or lost its terminal.
     Failed,
+    /// A merge command ran, such as opening a pull request. Not finished until the branch lands.
+    Landing,
 }
 
 /// Something a reviewer reported.
@@ -290,6 +291,24 @@ pub struct Finding {
     pub severity: String,
     pub text: String,
     pub stage: String,
+    /// "clear" when the fix needs no decision and can go straight back to the builder.
+    /// Anything else waits for a person at handoff.
+    pub kind: String,
+}
+
+/// A change to an agent's prompt, proposed from failures that keep happening. Nothing changes until a person applies it.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct Proposal {
+    pub id: String,
+    pub at: u64,
+    pub agent: String,
+    pub before: String,
+    pub after: String,
+    /// What keeps going wrong, in one line.
+    pub why: String,
+    /// The work items behind it, by id.
+    pub evidence: Vec<String>,
 }
 
 /// One ticket and what has happened to it.
@@ -354,6 +373,10 @@ pub struct BenchRef {
     /// The command that says whether the task was solved.
     pub check: String,
     pub begun_at: u64,
+    /// The agent being compared, and the harness command it's trying. Empty means nothing is swapped.
+    pub agent: String,
+    pub candidate: String,
+    pub repeat: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -370,7 +393,14 @@ pub struct BenchTask {
 #[serde(rename_all = "camelCase", default, deny_unknown_fields)]
 pub struct Suite {
     pub id: String,
+    pub name: String,
     pub description: String,
+    /// The one agent under test. Every other agent keeps its own harness, as a control.
+    pub agent: String,
+    /// Harness commands to compare for that agent. Empty runs the factory as it's configured.
+    pub candidates: Vec<String>,
+    /// How many times each task runs per candidate. Zero means once.
+    pub repeats: u32,
     /// The commit every task starts from. Empty means the project's current commit.
     pub base: String,
     /// The agent stage to start at. Empty means the first stage.
@@ -423,6 +453,8 @@ pub struct Factory {
     pub alerts: Vec<Alert>,
     /// Outside items already proposed, so they don't come back. The engine owns this.
     pub seen: Vec<String>,
+    /// Prompt changes waiting for a person. The engine owns this.
+    pub proposals: Vec<Proposal>,
     /// When each schedule last fired, by part id, in milliseconds. The engine owns this.
     pub fired: BTreeMap<String, u64>,
     /// For the window: tickets waiting for a terminal. Always rebuilt from `work`.
@@ -476,6 +508,7 @@ struct State {
     fired: BTreeMap<String, u64>,
     layout: BTreeMap<String, Pos>,
     seen: Vec<String>,
+    proposals: Vec<Proposal>,
 }
 
 fn write_atomic(file: &Path, text: &str) -> Result<()> {
@@ -608,6 +641,7 @@ impl Store {
                 factory.fired = state.fired;
                 factory.layout = state.layout;
                 factory.seen = state.seen;
+                factory.proposals = state.proposals;
             }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
             Err(e) => return Err(e).with_context(|| format!("couldn't read {}", file.display())),
@@ -705,6 +739,7 @@ impl Store {
         next.fired = current.fired;
         next.alerts = current.alerts;
         next.seen = current.seen;
+        next.proposals = current.proposals;
         next.queue = current.queue;
         next.running = current.running;
         self.write_files(&next, "Change the factory")?;
@@ -750,6 +785,7 @@ impl Store {
             fired: factory.fired.clone(),
             layout: factory.layout.clone(),
             seen: factory.seen.clone(),
+            proposals: factory.proposals.clone(),
         };
         let file = self.state_file(&factory.id);
         let text = serde_json::to_string_pretty(&state)?;
