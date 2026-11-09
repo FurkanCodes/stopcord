@@ -8,6 +8,7 @@
   ],
   "scripts": {
     "app": "npm run tauri --workspace app -- dev",
-    "typecheck": "npm run typecheck --workspaces"
+    "typecheck": "npm run typecheck --workspaces",
+    "e2e": "python3 e2e/run.py"
   }
 }

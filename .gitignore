@@ -5,6 +5,9 @@
 node_modules/
 ui/check/out.css
 
+# Python
+__pycache__/
+
 # OS and editors
 .DS_Store
 *.swp
