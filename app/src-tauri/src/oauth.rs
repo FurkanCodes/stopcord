@@ -26,7 +26,7 @@ use crate::settings;
 /// app isn't registered yet, so the card only offers the pasted token. `SAWTOOTH_<NAME>_CLIENT_ID`
 /// overrides one, for testing against another app.
 const SENTRY_CLIENT_ID: &str = "840d30ca586830182349bce87ecd852480db198466cd1aead6fcffdf1a8d9943";
-const LINEAR_CLIENT_ID: &str = "";
+const LINEAR_CLIENT_ID: &str = "ee532b0420bea3bfbbe28434b8569c51";
 
 /// Where Linear sends the browser back. It has to match the app's registered redirect exactly,
 /// so the port is fixed.
