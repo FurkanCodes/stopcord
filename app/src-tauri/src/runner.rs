@@ -257,6 +257,7 @@ fn test_vm(store: &Store, bridge: &Bridge, factory: &Factory, runner: &Runner, a
     let docker = vm::available().map_err(fail)?;
     let tag = vm::ensure_image(&docker, store.home(), true).map_err(fail)?;
     vm::prune_old(&docker);
+    vm::remove_orphaned_volumes(&docker);
     let (harnesses, _) = harness::load(&store.home().join("harnesses"));
     let harness = harness::find(&harnesses, &factory.defaults.harness);
     let site = harness.and_then(|h| h.domains.first()).map(|d| format!("api.{d}")).unwrap_or_default();

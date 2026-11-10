@@ -395,6 +395,7 @@ impl Engine {
         let Some(spec) = crate::vm::spec_of(terminal) else { return };
         let Some(docker) = crate::vm::docker() else { return };
         crate::vm::cleanup(&docker, &spec);
+        crate::vm::remove_orphaned_volumes(&docker);
         let id = terminal["id"].as_str().unwrap_or_default();
         // The line collects its own work when an agent says it's done, and a new terminal takes back anything left.
         if self.item_on(id).is_some() {

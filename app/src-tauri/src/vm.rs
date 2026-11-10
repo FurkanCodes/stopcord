@@ -198,6 +198,32 @@ fn stale_tags(tags: &[String], current: &str) -> Vec<String> {
     tags.iter().filter(|t| t.as_str() != current && t.len() == 12 && t.chars().all(|c| c.is_ascii_hexdigit())).cloned().collect()
 }
 
+/// Makes a folder's volume, labelled with the folder, so it can go once the folder does.
+fn ensure_volume(docker: &Path, store: &Path, dir: &Path) -> Result<(), String> {
+    let name = volume(dir);
+    if run(docker, &["volume", "inspect", &name]).is_ok() {
+        return Ok(());
+    }
+    run(docker, &["volume", "create", "--label", &format!("sawtooth.dir={}", dir.display()), "--label", &home_label(store), &name]).map(|_| ())
+}
+
+/// The volumes whose folder on the Mac is gone, from `docker volume ls` lines of name and folder.
+fn orphaned(listing: &str, exists: impl Fn(&Path) -> bool) -> Vec<String> {
+    listing
+        .lines()
+        .filter_map(|l| l.split_once('\t'))
+        .filter(|(name, dir)| name.starts_with("sawtooth-work-") && !dir.is_empty() && !exists(Path::new(dir)))
+        .map(|(name, _)| name.to_string())
+        .collect()
+}
+
+/// Removes the VM copies of folders that no longer exist, such as a worktree that was cleaned
+/// up. One a container still uses stays, since nothing here forces. Returns what went.
+pub fn remove_orphaned_volumes(docker: &Path) -> Vec<String> {
+    let listing = run(docker, &["volume", "ls", "--filter", "label=sawtooth.dir", "--format", "{{.Name}}\t{{.Label \"sawtooth.dir\"}}"]).unwrap_or_default();
+    orphaned(&listing, |p| p.exists()).into_iter().filter(|v| run(docker, &["volume", "rm", v]).is_ok()).collect()
+}
+
 /// Removes Sawtooth's old images, which pile up as it changes. An image still in use stays,
 /// since nothing here forces. Returns the tags that went.
 pub fn prune_old(docker: &Path) -> Vec<String> {
@@ -245,6 +271,7 @@ pub fn ensure_image(docker: &Path, store_home: &Path, quiet: bool) -> Result<Str
         return Err("building the VM image failed. Docker's output is above.".to_string());
     }
     prune_old(docker);
+    remove_orphaned_volumes(docker);
     Ok(tag)
 }
 
@@ -565,6 +592,7 @@ fn branch_of(dir: &Path) -> String {
 
 /// Keeps a terminal's folder and its VM copy in step, whichever way that goes.
 pub fn sync(spec: &Spec, docker: &Path) -> Result<Synced, String> {
+    ensure_volume(docker, &spec.store, &spec.dir)?;
     let host = Local { dir: &spec.dir };
     let vm = Volume { docker: docker.to_path_buf(), image: image(), volume: volume(&spec.dir) };
     Mirror {
@@ -1071,6 +1099,13 @@ mod tests {
         git(p.vm.path(), &["add", "-f", "CLAUDE.md"]).unwrap();
         assert!(!knowledge_back(&Local { dir: p.vm.path() }, &kb, &given, &names).unwrap());
         assert_eq!(read(&kb), "# notes\n");
+    }
+
+    #[test]
+    fn a_volume_goes_once_its_folder_does() {
+        let listing = "sawtooth-work-aaa\t/still/here\nsawtooth-work-bbb\t/gone\nsawtooth-work-ccc\t\nsomeone-elses\t/gone\n";
+        let gone = orphaned(listing, |p| p == Path::new("/still/here"));
+        assert_eq!(gone, vec!["sawtooth-work-bbb".to_string()], "a volume with no folder named, or not sawtooth's, is left alone");
     }
 
     #[test]
