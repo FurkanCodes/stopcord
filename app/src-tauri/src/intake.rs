@@ -31,7 +31,8 @@ impl Engine {
     pub fn apply_settings(self: &Arc<Self>) {
         let settings = settings::load(self.store.home()).unwrap_or_default();
         let mut intake = self.intake.lock().unwrap();
-        let wanted = Some(settings.slack.clone()).filter(|s| s.enabled && !s.factory.is_empty());
+        // No default factory is fine: then each message names its own.
+        let wanted = Some(settings.slack.clone()).filter(|s| s.enabled);
         if intake.slack.as_ref().map(|(s, _)| s) != wanted.as_ref() {
             if let Some((_, stop)) = intake.slack.take() {
                 stop.store(true, std::sync::atomic::Ordering::Relaxed);

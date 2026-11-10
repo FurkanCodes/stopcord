@@ -88,13 +88,13 @@ export function MachineSettings() {
           </Pane>
 
           <Pane title={<span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, }}><Logo name="slack" size={12} />slack</span>} style={paneStyle}>
-            <p className="t-muted">an @mention becomes a proposal in a factory. needs your own slack app with socket mode on, and the scopes app_mentions:read, chat:write, channels:read, groups:read, channels:history and groups:history. only the people listed below can send work.</p>
+            <p className="t-muted">an @mention becomes a proposal in a factory. start the message with a factory's name to pick it, as in "@sawtooth web app: fix the login", or leave it off to use the default. the bot answers in the thread with where it went. needs your own slack app with socket mode on, and the scopes app_mentions:read, chat:write, channels:read, groups:read, channels:history and groups:history. only the people listed below can send work.</p>
             <Check id="sl-on" checked={s.slack.enabled} onChange={(enabled) => void change({ ...s, slack: { ...s.slack, enabled } })}>
               connect to slack
             </Check>
-            <FieldRow id="sl-f" label="sends work to" width="14ch">
+            <FieldRow id="sl-f" label="default factory" width="14ch">
               <select id="sl-f" className="t-field" value={s.slack.factory} onChange={(e) => void change({ ...s, slack: { ...s.slack, factory: e.currentTarget.value } })}>
-                <option value="">pick a factory</option>
+                <option value="">none: each message names one</option>
                 {factories.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}
               </select>
             </FieldRow>

@@ -63,7 +63,7 @@ pub fn ticket_from_event(event: &Value, allow: &[String]) -> Option<Ticket> {
     let (ts, channel) = (event["ts"].as_str()?, event["channel"].as_str()?);
     let thread = event["thread_ts"].as_str().unwrap_or(ts);
     let body = without_mentions(event["text"].as_str()?);
-    let title: String = body.lines().next().unwrap_or_default().chars().take(80).collect();
+    let title = title_of(&body);
     if title.is_empty() {
         return None;
     }
@@ -73,6 +73,74 @@ pub fn ticket_from_event(event: &Value, allow: &[String]) -> Option<Ticket> {
         body,
         url: format!("https://slack.com/archives/{channel}/p{}?thread_ts={thread}", ts.replace('.', "")),
     })
+}
+
+fn title_of(body: &str) -> String {
+    body.lines().next().unwrap_or_default().chars().take(80).collect()
+}
+
+/// Where a mention's work goes.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Route {
+    /// To this factory, with the factory's name taken off the front.
+    To { factory: String, body: String },
+    /// Nowhere yet: this goes back to the thread.
+    Ask(String),
+}
+
+/// What's left of `body` after `label` at its start, ignoring case, when the label is a whole word.
+fn after_label<'a>(body: &'a str, label: &str) -> Option<&'a str> {
+    let n = label.chars().count();
+    if n == 0 {
+        return None;
+    }
+    let end = match body.char_indices().nth(n) {
+        Some((i, _)) => i,
+        None if body.chars().count() == n => body.len(),
+        None => return None,
+    };
+    // Lowercase "İ" is "i" with a combining dot, so it's dropped: "istanbul" finds "İstanbul".
+    let fold = |s: &str| s.to_lowercase().replace('\u{307}', "");
+    if fold(&body[..end]) != fold(label) {
+        return None;
+    }
+    let rest = &body[end..];
+    let apart = |c: char| c.is_whitespace() || c == ':' || c == ',';
+    match rest.chars().next() {
+        None => Some(""),
+        Some(c) if apart(c) => Some(rest.trim_start_matches(apart)),
+        Some(_) => None,
+    }
+}
+
+/// A message that starts with a factory's name or id, as in "sawtooth: fix the login", goes to that
+/// factory. Anything else goes to `default`. Case doesn't matter, and the longest name that fits
+/// wins, so "web app: …" doesn't go to a factory called "web".
+pub fn route(body: &str, factories: &[(String, String)], default: &str) -> Route {
+    let mut best: Option<(&str, &str, &str, usize)> = None;
+    for (id, name) in factories {
+        for label in [id.trim(), name.trim()] {
+            if let Some(rest) = after_label(body, label)
+                && best.is_none_or(|(.., len)| label.chars().count() > len)
+            {
+                best = Some((id, name, rest, label.chars().count()));
+            }
+        }
+    }
+    if let Some((id, name, rest, _)) = best {
+        if rest.trim().is_empty() {
+            return Route::Ask(format!("What should {name} do? Write it after the factory's name."));
+        }
+        return Route::To { factory: id.to_string(), body: rest.trim().to_string() };
+    }
+    if !default.is_empty() && factories.iter().any(|(id, _)| id == default) {
+        return Route::To { factory: default.to_string(), body: body.trim().to_string() };
+    }
+    if factories.is_empty() {
+        return Route::Ask("There's no factory to send this to yet.".into());
+    }
+    let names: Vec<&str> = factories.iter().map(|(_, n)| n.as_str()).collect();
+    Route::Ask(format!("Which factory is this for? Start the message with its name, such as \"{}: {}\". The factories are {}.", names[0], title_of(body), names.join(", ")))
 }
 
 /// Where to reply, read back from a ticket's link.
@@ -107,10 +175,24 @@ fn serve<S: Read + Write>(ws: &mut WebSocket<S>, stop: &AtomicBool, on_event: &m
 }
 
 impl Engine {
-    fn slack_proposal(self: &Arc<Self>, s: &SlackSettings, event: &Value) {
-        if let Some(ticket) = ticket_from_event(event, &s.allow_users) {
-            let part = Part { id: SOURCE.to_string(), name: "Slack".to_string(), kind: Kind::Tickets, ..Part::default() };
-            self.propose(&s.factory, &part, vec![ticket]);
+    /// Proposes a mention's work in the factory it names, or the default, and says where in its
+    /// thread. A question only goes back for a mention heard live: catching up after a restart
+    /// would ask again about every one of them.
+    fn slack_proposal(self: &Arc<Self>, s: &SlackSettings, event: &Value, live: bool) {
+        let Some(ticket) = ticket_from_event(event, &s.allow_users) else { return };
+        let factories: Vec<(String, String)> = self.store.list().unwrap_or_default().into_iter().map(|f| (f.id, f.name)).collect();
+        match route(&ticket.body, &factories, &s.factory) {
+            Route::To { factory, body } => {
+                let ticket = Ticket { title: title_of(&body), body, ..ticket };
+                let part = Part { id: SOURCE.to_string(), name: "Slack".to_string(), kind: Kind::Tickets, ..Part::default() };
+                // Nothing added means it was proposed before, so it was answered before too.
+                if self.propose(&factory, &part, vec![ticket.clone()]) > 0 {
+                    let name = factories.iter().find(|(id, _)| *id == factory).map_or(factory.as_str(), |(_, n)| n.as_str());
+                    self.slack_reply(&ticket.url, &format!("Proposed in {name}. Accept it on its Work screen to start it."));
+                }
+            }
+            Route::Ask(question) if live => self.slack_reply(&ticket.url, &question),
+            Route::Ask(_) => {}
         }
     }
 
@@ -127,7 +209,7 @@ impl Engine {
                     let mut event = m.clone();
                     event["type"] = json!("app_mention");
                     event["channel"] = json!(channel);
-                    self.slack_proposal(s, &event);
+                    self.slack_proposal(s, &event, false);
                 }
             }
         }
@@ -148,9 +230,9 @@ impl Engine {
         }
         // A catch-up that fails, say for a missing scope, shouldn't cost the live connection.
         if let Err(e) = self.slack_catch_up(s, &bot) {
-            self.log(&s.factory, Run::new("source", format!("Slack couldn't catch up on missed mentions: {e:#}")).ok(false));
+            self.slack_log(s, Run::new("source", format!("Slack couldn't catch up on missed mentions: {e:#}")).ok(false));
         }
-        serve(&mut ws, stop, &mut |event| self.slack_proposal(s, event))
+        serve(&mut ws, stop, &mut |event| self.slack_proposal(s, event, true))
     }
 
     pub(crate) fn run_slack(self: Arc<Self>, s: SlackSettings, stop: Arc<AtomicBool>) {
@@ -164,7 +246,7 @@ impl Engine {
                 }
                 Err(e) => {
                     if !told {
-                        self.log(&s.factory, Run::new("source", format!("Slack isn't connected: {e:#}")).ok(false));
+                        self.slack_log(&s, Run::new("source", format!("Slack isn't connected: {e:#}")).ok(false));
                         told = true;
                     }
                     let mut slept = Duration::ZERO;
@@ -175,6 +257,15 @@ impl Engine {
                     wait = (wait * 2).min(MAX_BACKOFF);
                 }
             }
+        }
+    }
+
+    /// Slack's own trouble goes in the default factory's log, or every factory's when there's no
+    /// default, since a mention can go to any of them.
+    fn slack_log(&self, s: &SlackSettings, run: Run) {
+        let factories: Vec<String> = if s.factory.is_empty() { self.store.list().unwrap_or_default().into_iter().map(|f| f.id).collect() } else { vec![s.factory.clone()] };
+        for f in factories {
+            self.log(&f, run.clone());
         }
     }
 
@@ -229,5 +320,37 @@ mod tests {
         assert_eq!(tickets[0].title, "fix the login");
         assert_eq!(thread_of(&tickets[0].url), Some(("C1".to_string(), "1700.42".to_string())));
         assert!(ticket_from_event(&mention("UOK"), &[]).is_none(), "an empty list means nobody");
+    }
+
+    fn factories() -> Vec<(String, String)> {
+        [("sawtooth", "Sawtooth"), ("web", "Web"), ("web-app", "Web app"), ("turkish-stt", "İstanbul STT")].map(|(i, n)| (i.to_string(), n.to_string())).to_vec()
+    }
+
+    fn to(factory: &str, body: &str) -> Route {
+        Route::To { factory: factory.into(), body: body.into() }
+    }
+
+    #[test]
+    fn a_message_picks_its_factory_by_starting_with_its_name_or_id() {
+        let f = factories();
+        assert_eq!(route("sawtooth: fix the login", &f, ""), to("sawtooth", "fix the login"));
+        assert_eq!(route("Sawtooth fix the login", &f, "web"), to("sawtooth", "fix the login"), "case and the colon don't matter");
+        assert_eq!(route("web-app, add dark mode\nfor settings", &f, ""), to("web-app", "add dark mode\nfor settings"), "by id, keeping later lines");
+        assert_eq!(route("web app: add dark mode", &f, ""), to("web-app", "add dark mode"), "the longest name wins");
+        assert_eq!(route("web: add dark mode", &f, ""), to("web", "add dark mode"));
+        assert_eq!(route("istanbul stt: retrain", &f, ""), to("turkish-stt", "retrain"), "a name whose lowercase is longer still fits");
+        assert_eq!(route("website is down", &f, "sawtooth"), to("sawtooth", "website is down"), "a name has to be a whole word");
+    }
+
+    #[test]
+    fn a_message_with_no_factory_goes_to_the_default_or_asks() {
+        let f = factories();
+        assert_eq!(route("fix the login", &f, "web"), to("web", "fix the login"));
+        let Route::Ask(q) = route("fix the login", &f, "") else { panic!("it guessed") };
+        assert!(q.contains("Which factory") && q.contains("Sawtooth, Web, Web app") && q.contains("\"Sawtooth: fix the login\""), "{q}");
+        assert!(matches!(route("fix the login", &f, "gone"), Route::Ask(_)), "a default that no longer exists isn't used");
+        let Route::Ask(q) = route("sawtooth", &f, "web") else { panic!("an empty ticket was proposed") };
+        assert!(q.contains("What should Sawtooth do"), "{q}");
+        assert!(matches!(route("fix it", &[], ""), Route::Ask(q) if q.contains("no factory")));
     }
 }
