@@ -29,14 +29,14 @@ pub fn standard_line(f: &mut Factory, harness: &str, reviewer: &str, tests: Opti
     };
     f.runners.push(Runner {
         id: "default".into(),
-        description: "Where agents run unless they say otherwise".into(),
+        description: "where agents run unless they say otherwise".into(),
         level,
         ..Runner::default()
     });
     f.agents = vec![
-        agent("planner", "Writes the smallest plan that settles what's unclear", "", PLANNER),
-        agent("builder", "Makes the change", "", BUILDER),
-        agent("reviewer", "Reports problems, changes nothing", if reviewer == harness { "" } else { reviewer }, REVIEWER),
+        agent("planner", "writes the smallest plan that settles what's unclear", "", PLANNER),
+        agent("builder", "makes the change", "", BUILDER),
+        agent("reviewer", "reports problems, changes nothing", if reviewer == harness { "" } else { reviewer }, REVIEWER),
     ];
     let stage = |id: &str, kind: StageKind, then: &str| LineStage {
         id: id.into(),
