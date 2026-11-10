@@ -1,13 +1,14 @@
 import { useEffect, useState, type ReactNode } from 'react';
-import { api, failureText, REPORT_EVENTS, type Agent, type BenchResult, type BenchTask, type Factory, type LineStage, type Part, type PullStatus, type Report, type Skill, type SourceTemplate, type Suite } from '../api';
+import { api, failureText, REPORT_EVENTS, type Agent, type BenchResult, type BenchTask, type Connection, type Factory, type LineStage, type Part, type PullStatus, type Report, type Skill, type SourceTemplate, type Suite } from '../api';
 import { ConnectionState } from '../Connections';
-import { changeFactory, refreshFactories, showProblem } from '../store';
+import { changeFactory, go, refreshFactories, showProblem } from '../store';
 import { ArmedKey, Check, Empty, FieldRow, Key, ListInput, Pane, Screen } from '../tui/kit';
 import { Logo } from '../tui/Logo';
 import { Markdown } from '../tui/Markdown';
 import { FactoryHeader } from './FactoryHeader';
 import { LineStrip } from './LineStrip';
 import { SandboxPane, Secrets } from './Sandbox';
+import { sourceState, useSourceReady } from './sourceState';
 
 const uniq = (base: string, taken: string[]) => {
   let id = base;
@@ -45,7 +46,7 @@ function Pick({ id, label, value, options, onChange }: { id: string; label: stri
 }
 
 const paneStyle = { padding: '14px 12px 12px', maxWidth: 960, width: '100%', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 10 } as const;
-const sections = ['defaults', 'line', 'agents', 'scorers', 'benchmarks', 'sandbox', 'sources', 'skills', 'reporting back'];
+const sections = ['defaults', 'line', 'sources', 'reporting back', 'agents', 'scorers', 'benchmarks', 'sandbox', 'skills'];
 
 /** Stays at the top of a long page and jumps to a section. */
 function SectionIndex() {
@@ -167,30 +168,7 @@ export function Setup({ factory, onRemove }: { factory: Factory; onRemove: () =>
         ))}
       </Pane>
 
-      <RolePane title="agents" noun="agent" fallback={factory.defaults.harness} items={factory.agents} runners={runners} onChange={(next) => set({ agents: next })} />
-
-      <RolePane title="scorers" noun="scorer" note="an optional line stage that scores work from 0 to 10. the score shows at handoff and never passes or fails anything" fallback={factory.defaults.harness} items={factory.scorers} runners={runners} onChange={(next) => set({ scorers: next })} />
-
-      <BenchPane factory={factory} set={set} />
-
-      <SandboxPane factory={factory} set={set} style={paneStyle} />
-
       <Sources factory={factory} sources={sources} part={part} set={set} />
-
-      <Pane title="skills" right={<Key size="xs" onClick={() => set({ skills: [...factory.skills, { id: uniq('skill', factory.skills.map((s) => s.id)), agent: '', description: '', body: '' }] })}>add skill</Key>} style={paneStyle}>
-        {factory.skills.length === 0 && <Empty style={{ padding: 0 }}>no skills. agents are told where these are and read them when needed</Empty>}
-        {factory.skills.map((s, i) => (
-          <Fold key={i} title={s.id} hint={s.description}>
-            <Text id={`sk-id-${i}`} label="name" value={s.id} onChange={(id) => skill(i, { id })} />
-            <Pick id={`sk-a-${i}`} label="for" value={s.agent} options={[['', 'every agent'], ...agents]} onChange={(a) => skill(i, { agent: a })} />
-            <Text id={`sk-d-${i}`} label="when to use" value={s.description} onChange={(description) => skill(i, { description })} />
-            <FieldRow id={`sk-b-${i}`} label="instructions" width="14ch" top>
-              <textarea id={`sk-b-${i}`} className="t-field" spellCheck={false} rows={4} value={s.body} onChange={(e) => skill(i, { body: e.currentTarget.value })} />
-            </FieldRow>
-            <span><ArmedKey size="xs" onClick={() => set({ skills: factory.skills.filter((_, j) => j !== i) })}>remove skill</ArmedKey></span>
-          </Fold>
-        ))}
-      </Pane>
 
       <Pane title="reporting back" right={<Key size="xs" onClick={() => set({ reports: [...factory.reports, { id: uniq('report', factory.reports.map((r) => r.id)), on: ['handoff', 'failed', 'merged'], command: '', keys: [], slack: '' }] })}>add report</Key>} style={paneStyle}>
         {factory.reports.length === 0 && <Empty style={{ padding: 0 }}>nothing reports back yet</Empty>}
@@ -209,6 +187,29 @@ export function Setup({ factory, onRemove }: { factory: Factory; onRemove: () =>
         ))}
       </Pane>
 
+      <RolePane title="agents" noun="agent" fallback={factory.defaults.harness} items={factory.agents} runners={runners} onChange={(next) => set({ agents: next })} />
+
+      <RolePane title="scorers" noun="scorer" note="an optional line stage that scores work from 0 to 10. the score shows at handoff and never passes or fails anything" fallback={factory.defaults.harness} items={factory.scorers} runners={runners} onChange={(next) => set({ scorers: next })} />
+
+      <BenchPane factory={factory} set={set} />
+
+      <SandboxPane factory={factory} set={set} style={paneStyle} />
+
+      <Pane title="skills" right={<Key size="xs" onClick={() => set({ skills: [...factory.skills, { id: uniq('skill', factory.skills.map((s) => s.id)), agent: '', description: '', body: '' }] })}>add skill</Key>} style={paneStyle}>
+        {factory.skills.length === 0 && <Empty style={{ padding: 0 }}>no skills. agents are told where these are and read them when needed</Empty>}
+        {factory.skills.map((s, i) => (
+          <Fold key={i} title={s.id} hint={s.description}>
+            <Text id={`sk-id-${i}`} label="name" value={s.id} onChange={(id) => skill(i, { id })} />
+            <Pick id={`sk-a-${i}`} label="for" value={s.agent} options={[['', 'every agent'], ...agents]} onChange={(a) => skill(i, { agent: a })} />
+            <Text id={`sk-d-${i}`} label="when to use" value={s.description} onChange={(description) => skill(i, { description })} />
+            <FieldRow id={`sk-b-${i}`} label="instructions" width="14ch" top>
+              <textarea id={`sk-b-${i}`} className="t-field" spellCheck={false} rows={4} value={s.body} onChange={(e) => skill(i, { body: e.currentTarget.value })} />
+            </FieldRow>
+            <span><ArmedKey size="xs" onClick={() => set({ skills: factory.skills.filter((_, j) => j !== i) })}>remove skill</ArmedKey></span>
+          </Fold>
+        ))}
+      </Pane>
+
       <div style={{ maxWidth: 960, width: '100%', margin: '0 auto' }}>
         <Key size="sm" title="Take this factory out of Sawtooth. The project folder stays as it is" onClick={onRemove}>remove this factory</Key>
       </div>
@@ -218,8 +219,14 @@ export function Setup({ factory, onRemove }: { factory: Factory; onRemove: () =>
 
 function Sources({ factory, sources, part, set }: { factory: Factory; sources: Part[]; part: (id: string, patch: Partial<Part>) => void; set: (p: Partial<Factory>) => void }) {
   const [templates, setTemplates] = useState<SourceTemplate[]>([]);
+  const [connections, setConnections] = useState<Connection[]>([]);
   useEffect(() => {
     api.sourceTemplates().then(setTemplates, showProblem);
+    // Connections are set in settings, so look again whenever this window comes back.
+    const load = () => void api.connections().then(setConnections, () => undefined);
+    load();
+    window.addEventListener('focus', load);
+    return () => window.removeEventListener('focus', load);
   }, []);
   function add(t?: SourceTemplate) {
     const id = uniq(t?.id ?? 'source', factory.parts.map((p) => p.id));
@@ -239,13 +246,16 @@ function Sources({ factory, sources, part, set }: { factory: Factory; sources: P
       }
       style={paneStyle}
     >
-      {sources.length === 0 && <Empty style={{ padding: 0 }}>no sources. press w on [1] work to write a ticket by hand</Empty>}
+      {sources.length === 0 && (
+        <Empty style={{ padding: 0 }}>no sources. sentry, github issues and linear above bring tickets in by themselves. other runs any command that prints them. or press w on [1] work to write one by hand</Empty>
+      )}
       {sources.map((p) => (
         <SourceCard
           key={p.id}
           factory={factory.id}
           p={p}
           pull={factory.pulls?.[p.id]}
+          connection={connections.find((c) => c.id === p.connection)}
           part={part}
           template={templates.find((t) => p.id.startsWith(t.id))}
           remove={() => {
@@ -260,7 +270,7 @@ function Sources({ factory, sources, part, set }: { factory: Factory; sources: P
 }
 
 /** One line until it's opened, so a long setup page stays readable. */
-function Fold({ title, hint, logo, children }: { title: string; hint?: string; logo?: string; children: ReactNode }) {
+function Fold({ title, hint, logo, children }: { title: string; hint?: ReactNode; logo?: string; children: ReactNode }) {
   const [open, setOpen] = useState(false);
   return (
     <div style={open ? card : undefined}>
@@ -360,16 +370,6 @@ function BenchPane({ factory, set }: { factory: Factory; set: (patch: Partial<Fa
   );
 }
 
-/** When a pull happened, in words: "just now", "4 min ago". */
-function ago(at: number) {
-  const s = Math.max(0, Math.round(Date.now() / 1000 - (at > 1e12 ? at / 1000 : at)));
-  if (s < 60) return 'just now';
-  if (s < 3600) return `${Math.round(s / 60)} min ago`;
-  if (s < 86400) return `${Math.round(s / 3600)} h ago`;
-  return `${Math.round(s / 86400)} d ago`;
-}
-
-/** Whether a source can pull, and how its last pull went. Checked again whenever the source changes. */
 /** One report: where it goes, a Slack channel or a command or both, and a test that sends it for real. */
 function ReportCard({ i, factory, r, report, remove }: { i: number; factory: string; r: Report; report: (i: number, patch: Partial<Report>) => void; remove: () => void }) {
   const [tested, setTested] = useState<{ ok: boolean; said: string } | 'testing' | null>(null);
@@ -387,15 +387,17 @@ function ReportCard({ i, factory, r, report, remove }: { i: number; factory: str
     }
   };
   return (
-    <Fold title={r.id} hint={`${list(r.on)}${where ? ` → ${where}` : ' → nowhere yet'}`}>
+    <Fold title={r.id} hint={r.on.length === 0 ? 'never: tick when below' : `${list(r.on)}${where ? ` → ${where}` : ' → nowhere yet'}`}>
       {/* Its keys are kept under its name, so the name stays one a file can have. */}
       <Text id={`rp-id-${i}`} label="name" value={r.id} onChange={(id) => report(i, { id: id.replace(/[^A-Za-z0-9_.-]/g, '-') })} />
-      <FieldRow id={`rp-on-${i}`} label="when" width="14ch" top>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-          <ListInput id={`rp-on-${i}`} value={r.on} placeholder={REPORT_EVENTS.join(', ')} onChange={(on) => report(i, { on })} />
-          <span className={unknown.length > 0 ? 't-red' : 't-dim'} style={{ fontSize: 12 }}>
-            {unknown.length > 0 ? `${unknown.join(' and ')} ${unknown.length === 1 ? "isn't an event" : "aren't events"}. ` : ''}any of {REPORT_EVENTS.join(', ')}
-          </span>
+      <FieldRow id={`rp-on-${i}-handoff`} label="when" width="14ch" top>
+        <div style={{ display: 'flex', flexWrap: 'wrap', columnGap: 14 }}>
+          {[...REPORT_EVENTS, ...unknown].map((event) => (
+            <Check key={event} id={`rp-on-${i}-${event}`} checked={r.on.includes(event)} onChange={(on) => report(i, { on: on ? [...r.on, event] : r.on.filter((x) => x !== event) })}>
+              {event}
+              {unknown.includes(event) ? <span className="t-red"> · not an event</span> : null}
+            </Check>
+          ))}
         </div>
       </FieldRow>
       <FieldRow id={`rp-s-${i}`} label="slack channel" width="14ch" top>
@@ -437,65 +439,132 @@ function ReportCard({ i, factory, r, report, remove }: { i: number; factory: str
   );
 }
 
-function SourceState({ factory, p, pull }: { factory: string; p: Part; pull?: PullStatus }) {
-  const [ready, setReady] = useState<string | null | undefined>(undefined);
-  const shape = JSON.stringify([p.command, p.connection, p.vars, p.keys]);
-  useEffect(() => {
-    // Wait for the change to be saved before asking.
-    const timer = setTimeout(() => api.sourceReady(factory, p.id).then(setReady, (e) => setReady(failureText(e))), 400);
-    return () => clearTimeout(timer);
-  }, [factory, p.id, shape, pull?.at]);
-  if (ready === undefined) return null;
-  if (ready) return <ConnectionState ok={null}>waiting: {ready}</ConnectionState>;
-  if (!pull) return <ConnectionState ok={null}>ready · hasn't pulled yet</ConnectionState>;
-  if (!pull.ok) return <ConnectionState ok={false}>last pull failed {ago(pull.at)}: {pull.error}</ConnectionState>;
-  return <ConnectionState ok>pulled {ago(pull.at)} · {pull.tickets} open, {pull.new} new</ConnectionState>;
+/** A connection a source signs in with, and whether it's set up, with a way to the settings. */
+function ConnectionLine({ id, name, c }: { id: string; name: string; c?: Connection }) {
+  const missing = c ? c.fields.filter((f) => c.missing.includes(f.name)).map((f) => f.label) : [];
+  return (
+    <FieldRow id={id} label="signs in with" width="14ch">
+      <span id={id} style={{ display: 'flex', gap: 10, alignItems: 'baseline', flexWrap: 'wrap' }}>
+        <ConnectionState ok={missing.length > 0 ? false : null}>
+          {!c
+            ? `the ${name} connection`
+            : missing.length > 0
+              ? `your ${c.name} connection isn't set up: it needs its ${missing.join(' and ')}`
+              : c.fields.length === 0
+                ? `your ${c.name} connection: ${c.how}`
+                : `your ${c.name} connection, set once for every factory`}
+        </ConnectionState>
+        <Key size="xs" onClick={() => go({ screen: 'settings' })}>{missing.length > 0 ? 'set it up in settings' : 'settings'}</Key>
+      </span>
+    </FieldRow>
+  );
 }
 
-function SourceCard({ factory, p, pull, part, template, remove }: { factory: string; p: Part; pull?: PullStatus; part: (id: string, patch: Partial<Part>) => void; template?: SourceTemplate; remove: () => void }) {
-  const needs = template?.needs;
+function SourceCard({ factory, p, pull, connection, part, template, remove }: { factory: string; p: Part; pull?: PullStatus; connection?: Connection; part: (id: string, patch: Partial<Part>) => void; template?: SourceTemplate; remove: () => void }) {
+  const ready = useSourceReady(factory, p, pull);
+  const state = sourceState(p, ready, pull);
+  // Templates load after the card does, so until it's chosen, it follows whether there is one.
+  const [chosen, setShowCommand] = useState<boolean | null>(null);
+  const showCommand = chosen ?? !template;
+  const [ownKeys, setOwnKeys] = useState(false);
+  const [pulled, setPulled] = useState<'' | 'pulling' | { ok: boolean; text: string }>('');
   const vars = p.vars ?? {};
   const label = (name: string) => template?.vars.find((v) => v.name === name);
+  const keys = p.keys ?? [];
+  const pullNow = async () => {
+    setPulled('pulling');
+    try {
+      const added = await api.pullSource(factory, p.id);
+      setPulled({ ok: true, text: added === 0 ? 'pulled: nothing new' : `pulled: ${added} new, waiting in [1] work` });
+    } catch (e) {
+      setPulled({ ok: false, text: failureText(e) });
+    }
+    await refreshFactories();
+  };
+  // The whole error, selectable: from this pull now, or from the last one on the schedule.
+  const error = pulled && pulled !== 'pulling' ? (pulled.ok ? '' : pulled.text) : pull && !pull.ok ? pull.error : '';
   return (
-    <Fold title={p.name} logo={p.id} hint={pull && !pull.ok ? 'last pull failed' : p.every || 'by hand'}>
-      <span role="status" data-source-state={p.id} style={{ paddingLeft: 8 }}><SourceState factory={factory} p={p} pull={pull} /></span>
-      <Text id={`src-n-${p.id}`} label="name" value={p.name} onChange={(name) => part(p.id, { name })} />
-      {p.connection && (
-        <FieldRow id={`src-cn-${p.id}`} label="signs in with" width="14ch">
-          <span id={`src-cn-${p.id}`} className="t-muted">the {p.connection} connection, set once in machine settings for every factory</span>
-        </FieldRow>
+    <Fold title={p.name} logo={p.id} hint={<ConnectionState ok={state.ok}>{state.text}</ConnectionState>}>
+      <span role="status" data-source-state={p.id} style={{ display: 'flex', gap: 10, alignItems: 'baseline', flexWrap: 'wrap', paddingLeft: 8 }}>
+        {pulled === 'pulling' ? (
+          <ConnectionState ok={null}>pulling…</ConnectionState>
+        ) : pulled && pulled.ok ? (
+          <ConnectionState ok>{pulled.text}</ConnectionState>
+        ) : (
+          <ConnectionState ok={state.ok}>{state.text}</ConnectionState>
+        )}
+        <Key size="xs" disabled={pulled === 'pulling' || Boolean(ready)} title={ready ? `It can't pull yet: ${ready}` : 'Pull now, without waiting for the schedule'} onClick={() => void pullNow()}>
+          pull now
+        </Key>
+      </span>
+      {error && (
+        <pre role="alert" data-source-error={p.id} className="t-red" style={{ margin: '0 8px', fontSize: 12, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', userSelect: 'text', maxHeight: '12em', overflow: 'auto' }}>
+          {error}
+        </pre>
       )}
+      <Text id={`src-n-${p.id}`} label="name" value={p.name} onChange={(name) => part(p.id, { name })} />
+      {p.connection && <ConnectionLine id={`src-cn-${p.id}`} name={p.connection} c={connection} />}
       {Object.keys(vars).map((name) => {
         const v = label(name);
+        const set = Boolean(vars[name]?.trim());
         return (
           <FieldRow key={name} id={`src-v-${p.id}-${name}`} label={v?.label ?? name.toLowerCase()} width="14ch" top>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
               <input id={`src-v-${p.id}-${name}`} className="t-field" spellCheck={false} value={vars[name] ?? ''} placeholder={v?.placeholder} onChange={(e) => part(p.id, { vars: { ...vars, [name]: e.currentTarget.value } })} />
-              <span className={vars[name]?.trim() ? 't-dim' : 't-red'} style={{ fontSize: 12 }}>{vars[name]?.trim() ? '' : 'no value. '}{v?.hint ?? `the pull command gets it as $${name}`}</span>
+              <span className={set ? 't-dim' : 't-red'} style={{ fontSize: 12 }}>
+                {set ? '' : 'no value. '}
+                {v?.hint ?? `the pull command gets it as $${name}`}
+              </span>
             </div>
           </FieldRow>
         );
       })}
-      <FieldRow id={`src-c-${p.id}`} label="pull command" width="14ch" top>
-        <textarea id={`src-c-${p.id}`} className="t-field" spellCheck={false} rows={2} value={p.command} onChange={(e) => part(p.id, { command: e.currentTarget.value })} />
-      </FieldRow>
-      {needs && <span className="t-muted" style={{ fontSize: 12 }}>{needs}</span>}
-      <FieldRow id={`src-k-${p.id}-add`} label="keys" width="14ch" top>
-        <Secrets
-          id={`src-k-${p.id}`}
-          names={p.keys ?? []}
-          onChange={(keys) => part(p.id, { keys })}
-          load={(names) => api.sourceKeysSet(factory, p.id, names)}
-          store={(name, value) => api.setSourceKey(factory, p.id, name, value)}
-          suggest={template && template.keys.length > 0 ? [{ label: `${template.name.toLowerCase()} reads`, names: template.keys }] : []}
-          note={p.connection ? `only for anything the ${p.connection} connection doesn't cover. values stay in sawtooth's secrets, for this source only` : "the pull command gets these as environment variables. values stay in sawtooth's secrets, for this source only, and can't be shown again"}
-        />
-      </FieldRow>
       <Text id={`src-e-${p.id}`} label="pull every" value={p.every ?? ''} placeholder="every 5 minutes. empty pulls by hand" onChange={(every) => part(p.id, { every })} />
+      {template?.needs && (
+        <span className="t-muted" style={{ fontSize: 12, paddingLeft: 8 }}>
+          pulls {template.needs}
+        </span>
+      )}
+      {showCommand ? (
+        <FieldRow id={`src-c-${p.id}`} label="pull command" width="14ch" top>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+            <textarea id={`src-c-${p.id}`} className="t-field" spellCheck={false} rows={template ? 6 : 3} value={p.command} placeholder="a command that prints a JSON list of tickets, each with a key and a title" onChange={(e) => part(p.id, { command: e.currentTarget.value })} />
+            {template && (
+              <span>
+                <Key size="xs" aria-expanded onClick={() => setShowCommand(false)}>hide the pull command</Key>
+              </span>
+            )}
+          </div>
+        </FieldRow>
+      ) : (
+        <span style={{ paddingLeft: 8 }}>
+          <Key size="xs" aria-expanded={false} onClick={() => setShowCommand(true)}>show the pull command</Key>
+        </span>
+      )}
+      {!p.connection || keys.length > 0 || ownKeys ? (
+        <FieldRow id={`src-k-${p.id}-add`} label="keys" width="14ch" top>
+          <Secrets
+            id={`src-k-${p.id}`}
+            names={keys}
+            onChange={(next) => part(p.id, { keys: next })}
+            load={(names) => api.sourceKeysSet(factory, p.id, names)}
+            store={(name, value) => api.setSourceKey(factory, p.id, name, value)}
+            suggest={template && template.keys.length > 0 ? [{ label: `${template.name.toLowerCase()} reads`, names: template.keys }] : []}
+            placeholder="add a name, like API_TOKEN"
+            note={p.connection ? `only for what the ${p.connection} connection doesn't cover. values stay in sawtooth's secrets, for this source only` : "the pull command gets these as environment variables. values stay in sawtooth's secrets, for this source only, and can't be shown again"}
+          />
+        </FieldRow>
+      ) : (
+        <span style={{ paddingLeft: 8 }}>
+          <Key size="xs" onClick={() => setOwnKeys(true)}>add a key of its own</Key>
+        </span>
+      )}
       <Check id={`src-as-${p.id}`} checked={!!p.autoStart} onChange={(autoStart) => part(p.id, { autoStart })}>
         start items by itself. outside text will reach an agent with no one looking
       </Check>
-      <span><ArmedKey size="xs" onClick={remove}>remove source</ArmedKey></span>
+      <span>
+        <ArmedKey size="xs" onClick={remove}>{keys.length > 0 ? 'remove source and its keys' : 'remove source'}</ArmedKey>
+      </span>
     </Fold>
   );
 }

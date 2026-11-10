@@ -122,7 +122,7 @@ export interface Suggestion {
  * Secrets by name: the names live in the factory, the values in sawtooth's secrets, which the
  * window can set but never read. `load` says which names have a value and `store` sets one.
  */
-export function Secrets({ id, names, onChange, load, store, suggest = [], note }: {
+export function Secrets({ id, names, onChange, load, store, suggest = [], note, placeholder = 'add a name, like OPENAI_API_KEY' }: {
   id: string;
   names: string[];
   onChange: (names: string[]) => void;
@@ -130,6 +130,7 @@ export function Secrets({ id, names, onChange, load, store, suggest = [], note }
   store: (name: string, value: string) => Promise<void>;
   suggest?: Suggestion[];
   note: string;
+  placeholder?: string;
 }) {
   const [set, setSet] = useState<string[]>([]);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
@@ -191,9 +192,17 @@ export function Secrets({ id, names, onChange, load, store, suggest = [], note }
               }}
               onBlur={() => void save(name)}
             />
-            <Key size="xs" onClick={() => onChange(names.filter((n) => n !== name))}>
+            <ArmedKey
+              size="xs"
+              aria-label={`remove ${name} and its value`}
+              onClick={() => {
+                // Its value goes too, so nothing is left behind that no command reads.
+                void store(name, '').catch(() => {});
+                onChange(names.filter((n) => n !== name));
+              }}
+            >
               remove
-            </Key>
+            </ArmedKey>
           </div>
         );
       })}
@@ -202,7 +211,7 @@ export function Secrets({ id, names, onChange, load, store, suggest = [], note }
         className="t-field"
         spellCheck={false}
         value={adding}
-        placeholder="add a name, like OPENAI_API_KEY"
+        placeholder={placeholder}
         onChange={(e) => setAdding(e.currentTarget.value)}
         onKeyDown={(e) => {
           if (e.key === 'Enter') add(adding);
@@ -219,7 +228,11 @@ export function Secrets({ id, names, onChange, load, store, suggest = [], note }
           {o.hint && <span className="t-dim">{o.hint}</span>}
         </div>
       ))}
-      {problem && <span className="t-red" style={{ padding: '0 8px' }}>{problem}</span>}
+      {problem && (
+        <span className="t-red" role="alert" style={{ padding: '0 8px' }}>
+          {problem}
+        </span>
+      )}
       <Quiet>{note}</Quiet>
     </div>
   );

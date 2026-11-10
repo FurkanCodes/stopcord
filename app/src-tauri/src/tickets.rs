@@ -20,7 +20,7 @@ pub fn run(home: &Path, factory: &Factory, source: Option<&str>) -> Result<Vec<T
     let part = source
         .and_then(|id| factory.parts.iter().find(|p| p.kind == Kind::Tickets && p.id == id))
         .or_else(|| factory.tickets())
-        .ok_or_else(|| anyhow!("This factory has no ticket source. Add one from Add parts."))?;
+        .ok_or_else(|| anyhow!("this factory has no ticket source. add one under sources in setup"))?;
     run_part(home, factory, part)
 }
 
@@ -97,7 +97,7 @@ pub fn run_in_login_shell(command: &str, cwd: &Path, env: &[(String, String)], t
             let _ = child.kill();
             let _ = child.wait();
             bail!(
-                "The ticket command took longer than {} seconds, so it was stopped.",
+                "the pull command took longer than {} seconds, so it was stopped",
                 timeout.as_secs()
             );
         }
@@ -108,9 +108,9 @@ pub fn run_in_login_shell(command: &str, cwd: &Path, env: &[(String, String)], t
     if !status.success() {
         let why = stderr.trim();
         bail!(
-            "The ticket command failed{}",
+            "the pull command failed{}",
             if why.is_empty() {
-                ".".to_string()
+                String::new()
             } else {
                 format!(": {}", crate::runs::tail(why, 600))
             }
@@ -134,13 +134,13 @@ fn text(obj: &serde_json::Map<String, Value>, keys: &[&str]) -> String {
 pub fn parse(output: &str) -> Result<Vec<Ticket>> {
     let value: Value = serde_json::from_str(output.trim()).map_err(|_| {
         anyhow!(
-            "The ticket command has to print a JSON list of tickets, and it printed: {}",
+            "the pull command has to print a JSON list of tickets, and it printed: {}",
             crate::runs::tail(output.trim(), 200)
         )
     })?;
     let Value::Array(items) = value else {
         bail!(
-            "The ticket command has to print a JSON list, like [{{\"number\": 41, \"title\": \"…\"}}]."
+            "the pull command has to print a JSON list, like [{{\"number\": 41, \"title\": \"…\"}}]."
         );
     };
     let mut tickets = Vec::new();

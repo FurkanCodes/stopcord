@@ -1195,7 +1195,7 @@ pub(crate) fn send_report(home: &Path, f: &Factory, r: &crate::factories::Report
             Ok(out) => said.push(if out.trim().is_empty() { "the command ran".to_string() } else { format!("the command ran: {}", out.trim()) }),
             Err(e) => {
                 ok = false;
-                said.push(format!("{e:#}").replace("The ticket command failed", "the command failed"));
+                said.push(format!("{e:#}").replace("the pull command failed", "the command failed"));
             }
         }
     }

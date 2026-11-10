@@ -8,6 +8,7 @@ import { Logo } from '../tui/Logo';
 import { Markdown } from '../tui/Markdown';
 import { FactoryHeader } from './FactoryHeader';
 import { atStage, stageHarness } from './LineStrip';
+import { sourceState, useSourceReady } from './sourceState';
 
 const waitingWord: Record<WorkItem['waiting'], string> = {
   no: 'working',
@@ -97,19 +98,25 @@ export function Work({ factory, runs, terminals, selected }: { factory: Factory;
   }, [picked?.id]);
 
   async function pullAll() {
-    const ready = sources.filter((s) => s.command);
-    if (ready.length === 0) {
-      setMessage('no sources to pull. add one in setup');
+    if (sources.length === 0) {
+      setMessage('no sources to pull. add one in [6] setup');
       return;
     }
     setMessage('pulling…');
-    try {
-      const counts = await Promise.all(ready.map((s) => api.pullSource(factory.id, s.id)));
-      setMessage(`${counts.reduce((a, b) => a + b, 0)} new from ${ready.length} source${ready.length === 1 ? '' : 's'}`);
-      await refreshFactories();
-    } catch (e) {
-      setMessage(failureText(e));
+    // Each source on its own, so one that isn't set up, or fails, doesn't stop the others.
+    const results = await Promise.allSettled(sources.map((s) => api.pullSource(factory.id, s.id)));
+    const added = results.reduce((n, r) => n + (r.status === 'fulfilled' ? r.value : 0), 0);
+    const failed = sources.filter((_, i) => results[i]!.status === 'rejected');
+    const pulled = sources.length - failed.length;
+    const words = [pulled > 0 ? `${added} new from ${pulled} source${pulled === 1 ? '' : 's'}` : ''];
+    if (failed.length === 1) {
+      const r = results[sources.indexOf(failed[0]!)] as PromiseRejectedResult;
+      words.push(failureText(r.reason).split('\n')[0]!);
+    } else if (failed.length > 1) {
+      words.push(`${failed.map((s) => s.name).join(' and ')} didn't pull. see [6] setup`);
     }
+    setMessage(words.filter(Boolean).join(' · '));
+    await refreshFactories();
   }
 
   async function start(keys: string[]) {
@@ -195,7 +202,13 @@ export function Work({ factory, runs, terminals, selected }: { factory: Factory;
         <Pane title="work" right={canWrite ? <Key k="w" size="xs" pressed={composing} onClick={() => setComposing(true)}>write a ticket</Key> : undefined} scroll style={{ padding: '10px 0 8px', height: '100%', minHeight: 0 }}>
           {flat.length === 0 && (
             <Empty>
-              {!canWrite ? 'nothing yet. add a line in [6] setup first' : sources.length > 0 ? 'nothing yet. press p to pull your sources, or w to write a ticket' : 'nothing yet. press w to write a ticket, or add a source in [6] setup'}
+              {!canWrite
+                ? 'nothing yet. add a line in [6] setup first'
+                : sources.some((s) => factory.pulls?.[s.id]?.ok === false)
+                  ? "nothing yet, and a source's last pull failed. it's below, and the whole error is in [6] setup"
+                  : sources.length > 0
+                    ? 'nothing yet. press p to pull your sources, or w to write a ticket'
+                    : 'nothing yet. press w to write a ticket, or add a source in [6] setup'}
             </Empty>
           )}
           {group('needs you', groups.needs)}
@@ -203,8 +216,10 @@ export function Work({ factory, runs, terminals, selected }: { factory: Factory;
           {group('waiting to start', groups.incoming)}
           {group('finished', groups.done)}
           {sources.length > 0 && (
-            <div className="t-dim" style={{ fontSize: 12, padding: '10px 12px 2px' }}>
-              {sources.map((s) => `${s.name} · ${s.every || 'by hand'}`).join('   ')}
+            <div data-sources style={{ fontSize: 12, padding: '10px 12px 2px', display: 'flex', flexWrap: 'wrap', columnGap: 24, rowGap: 2 }}>
+              {sources.map((s) => (
+                <SourceLine key={s.id} factory={factory} p={s} />
+              ))}
             </div>
           )}
         </Pane>
@@ -893,5 +908,19 @@ function Changes({ files, findings, truncated, heading }: { files: Evidence['fil
       ))}
       {truncated && <Empty style={{ padding: 0 }}>this diff is too long to show whole. open the terminal to see the rest</Empty>}
     </section>
+  );
+}
+
+/** One source under the work list: what it's doing, in the words its setup card uses. */
+function SourceLine({ factory, p }: { factory: Factory; p: Factory['parts'][number] }) {
+  const pull = factory.pulls?.[p.id];
+  const state = sourceState(p, useSourceReady(factory.id, p, pull), pull);
+  return (
+    <span className={state.ok === false ? 't-red' : 't-dim'} style={{ display: 'inline-flex', gap: 6 }}>
+      <span aria-hidden="true">{state.ok === true ? '●' : state.ok === false ? '✕' : '○'}</span>
+      <span>
+        {p.name} · {state.text}
+      </span>
+    </span>
   );
 }

@@ -1,5 +1,6 @@
-"""A ticket source signs in with its connection, takes its own settings and keys in setup, says
-whether it can pull yet, and gives all of them to its pull command. A report sends a test."""
+"""A ticket source signs in with its connection, set once in settings, takes its own settings and
+keys in setup, says whether it can pull and how its last pull went, and pulls now on request. A
+report sends a test, and keeps its keys when it's renamed."""
 from harness import *
 try:
     shutil.rmtree(ROOT, ignore_errors=True); os.makedirs(H); os.makedirs(R)
@@ -9,29 +10,54 @@ try:
     inv('create_factory', path=os.path.realpath(R), name='keys', template='line', readAs=['AGENTS.md'], harness='claude', reviewer='claude', level='worktree')
     fid = inv('factories')[0]['id']
     stop(); launch(); time.sleep(1.5)
-    bridge("[...document.querySelectorAll('[data-card]')][0].click();return 1"); time.sleep(1); press('6'); time.sleep(1)
+    to_setup = lambda: (bridge("[...document.querySelectorAll('[data-card]')][0].click();return 1"), time.sleep(1), press('6'), time.sleep(1))
+    to_setup()
+    order = bridge("return [...document.querySelectorAll('.t-body .t-pane-title')].map(e=>e.textContent.trim())")
+    check('sources and reporting back come right after the line', order[1:4] == ['line', 'sources', 'reporting back'], order)
 
     bridge("[...document.querySelectorAll('button')].find(b=>b.innerText.trim()==='sentry').click();return 1"); time.sleep(1.2)
     fac = lambda: next(f for f in inv('factories') if f['id'] == fid)
     part = lambda: next(p for p in fac()['parts'] if p['id'] == 'sentry')
     check('the sentry button signs in with the sentry connection', part().get('connection') == 'sentry' and not part().get('keys'), part())
     check('and asks for its own organization and project', sorted(part().get('vars', {})) == ['SENTRY_ORG', 'SENTRY_PROJECT'], part().get('vars'))
-    bridge("[...document.querySelectorAll('button[aria-expanded]')].find(b=>b.innerText.includes('Sentry')).click();return 1"); time.sleep(0.6)
+    fold = "[...document.querySelectorAll('button[aria-expanded]')].find(b=>b.innerText.includes('Sentry'))"
+    wait('folded, it says it needs setup', lambda: 'needs setup' in bridge(f"return {fold}.innerText"))
+    bridge(f"{fold}.click();return 1"); time.sleep(0.6)
     status = lambda: bridge("return document.querySelector('[data-source-state=\"sentry\"]')?.innerText||''")
-    wait('it waits for the connection first', lambda: "isn't connected" in status())
+    wait('open, it waits for the connection first', lambda: "isn't connected" in status())
+    check('pull now waits until it can pull', bridge("return [...document.querySelectorAll('[data-source-state=\"sentry\"] button')].find(b=>b.innerText.includes('pull now')).disabled"))
+    check('the long pull command is put away', not bridge("return !!document.querySelector('#src-c-sentry')"))
+    check("and so are keys its connection covers", not bridge("return !!document.querySelector('[data-secrets=\"src-k-sentry\"]')"))
+    cline = lambda: bridge("return document.querySelector('#src-cn-sentry')?.innerText||''")
+    check('it says the connection needs its token', "isn't set up" in cline() and 'auth token' in cline(), cline())
 
+    # The token goes in once, in settings, through the connection line's own button.
+    bridge("[...document.querySelectorAll('#src-cn-sentry button')][0].click();return 1"); time.sleep(1)
+    sentry = lambda: bridge("return document.querySelector('[data-connection=\"sentry\"]')?.innerText||''")
+    check('settings shows the sentry connection as not set up', 'not set up' in sentry() and 'auth token' in sentry(), sentry()[:300])
+    check('an optional field says optional', 'optional' in sentry(), sentry()[:300])
     TOKEN = 'sntryu_e2e-token'
-    inv('set_connection_field', connection='sentry', name='SENTRY_AUTH_TOKEN', value=TOKEN)
+    fill('#cn-sentry-SENTRY_AUTH_TOKEN', TOKEN)
+    bridge("document.querySelector('#cn-sentry-SENTRY_AUTH_TOKEN').dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true}));return 1")
+    wait('once the token is in, it says set', lambda: 'set · press test' in sentry())
+    stored = f'{H}/secrets/connection.sentry.SENTRY_AUTH_TOKEN'
+    check('the token is kept once, for every factory', os.path.exists(stored) and open(stored).read().strip() == TOKEN)
+    check('and never shown', TOKEN not in text())
+    shot('connections')
+    press('Escape'); time.sleep(0.6); to_setup()
+    bridge(f"{fold}.click();return 1"); time.sleep(0.6)
+    wait('back in setup, the connection is set up', lambda: 'set once for every factory' in cline())
+
+    bridge("[...document.querySelectorAll('button')].find(b=>b.innerText.trim()==='show the pull command').click();return 1"); time.sleep(0.4)
     fill('#src-c-sentry', 'printf \'[{"key":"%s|%s|%s|%s","title":"t"}]\' "${SENTRY_AUTH_TOKEN:-none}" "${SENTRY_ORG:-none}" "${SENTRY_PROJECT:-none}" "${EXTRA:-none}"')
     wait('then it waits for its own settings', lambda: 'SENTRY_ORG and SENTRY_PROJECT' in status())
     fill('#src-v-sentry-SENTRY_ORG', 'shop'); fill('#src-v-sentry-SENTRY_PROJECT', 'web')
     wait('with them set it can pull', lambda: 'ready' in status())
     check('the settings are kept on the source', part().get('vars') == {'SENTRY_ORG': 'shop', 'SENTRY_PROJECT': 'web'}, part().get('vars'))
 
-    f = fac()
-    for p in f['parts']:
-        if p['id'] == 'sentry': p['keys'] = ['EXTRA']
-    inv('save_factory', factory=f); time.sleep(1)
+    bridge("[...document.querySelectorAll('button')].find(b=>b.innerText.trim()==='add a key of its own').click();return 1"); time.sleep(0.4)
+    fill('#src-k-sentry-add', 'EXTRA')
+    bridge("document.querySelector('#src-k-sentry-add').dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true}));return 1"); time.sleep(1)
     wait('a key of its own with no value holds it back', lambda: 'EXTRA has no value' in status())
     SECRET = 'extra-e2e-value'
     fill('#src-k-sentry-EXTRA', SECRET)
@@ -41,12 +67,26 @@ try:
     check('the window never shows a secret', SECRET not in text() and TOKEN not in text())
     fill('#src-c-sentry', part()['command'] + ' ')  # any change asks again
     wait('and with it set the source is ready again', lambda: 'ready' in status())
-    shot('source-keys')
 
     got = inv('list_tickets', id=fid, source='sentry')
     check('the pull command gets the connection, the settings and the key', got and got[0]['key'] == f'{TOKEN}|shop|web|{SECRET}', got)
     yaml = open(f'{H}/factories/{fid}/definition/factory.yaml').read()
     check('the factory file has names and settings and never a secret', 'EXTRA' in yaml and 'shop' in yaml and SECRET not in yaml and TOKEN not in yaml, yaml[-400:])
+
+    bridge("[...document.querySelectorAll('[data-source-state=\"sentry\"] button')].find(b=>b.innerText.includes('pull now')).click();return 1")
+    wait('pull now says what it brought in', lambda: 'pulled: 1 new' in status())
+    wait('folded, it says how the last pull went', lambda: '1 open, 1 new' in bridge(f"return {fold}.innerText"))
+    fill('#src-c-sentry', 'echo "sentry said no: 401" >&2; exit 3')
+    time.sleep(0.6)
+    bridge("[...document.querySelectorAll('[data-source-state=\"sentry\"] button')].find(b=>b.innerText.includes('pull now')).click();return 1")
+    err = lambda: bridge("return document.querySelector('[data-source-error=\"sentry\"]')?.innerText||''")
+    wait('a failed pull shows its whole error, there on the source', lambda: 'sentry said no: 401' in err())
+    wait('and the folded title says it failed', lambda: 'last pull failed' in bridge(f"return {fold}.innerText"))
+    shot('source-keys')
+    press('1'); time.sleep(1)
+    line = lambda: bridge("return document.querySelector('[data-sources]')?.innerText||''")
+    wait('work says the source failed, in the same words', lambda: 'Sentry · last pull failed' in line())
+    press('6'); time.sleep(1)
 
     # A report: a command with a key of its own, sent once as a test.
     out = ROOT + '/report.txt'
@@ -54,9 +94,12 @@ try:
     f['reports'] = [{'id': 'notify', 'on': ['handoff'], 'command': f'printf "%s|%s|%s" "$ST_EVENT" "$ST_KEY" "${{HOOK:-none}}" > {out}', 'keys': ['HOOK'], 'slack': ''}]
     inv('save_factory', factory=f); time.sleep(1)
     inv('set_report_key', factory=fid, report='notify', name='HOOK', value='hook-e2e')
-    fold = "[...document.querySelectorAll('button[aria-expanded]')].find(b=>b.innerText.includes('notify'))"
-    wait('the report shows in setup', lambda: bridge(f"return !!{fold}"))
-    bridge(f"{fold}.click();return 1"); time.sleep(0.6)
+    rfold = "[...document.querySelectorAll('button[aria-expanded]')].find(b=>b.innerText.includes('notify'))"
+    wait('the report shows in setup', lambda: bridge(f"return !!{rfold}"))
+    bridge(f"{rfold}.click();return 1"); time.sleep(0.6)
+    check('its events are boxes to tick', bridge("return document.querySelector('#rp-on-0-handoff')?.checked===true && document.querySelector('#rp-on-0-merged')?.checked===false"))
+    bridge("document.querySelector('#rp-on-0-merged').click();return 1"); time.sleep(0.8)
+    check('ticking one adds it', fac()['reports'][0]['on'] == ['handoff', 'merged'], fac()['reports'][0]['on'])
     bridge("[...document.querySelectorAll('button')].find(b=>b.innerText.trim()==='send a test').click();return 1")
     said = lambda: bridge("return document.querySelector('[data-report-test=\"notify\"]')?.innerText||''")
     wait('a test report says how it went', lambda: said() and 'sending' not in said())

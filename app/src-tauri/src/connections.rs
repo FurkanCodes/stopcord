@@ -203,8 +203,11 @@ fn http_error(service: &str, e: ureq::Error) -> String {
 
 /// Tries the connection for real and says what it found: who it signs in as, or why it can't.
 pub fn test(home: &Path, connection: &str) -> Result<String, String> {
-    if let Some(why) = not_ready(home, connection) {
-        return Err(why);
+    // Said on the settings screen itself, so it names the fields and not where they are.
+    let gone = missing(home, connection);
+    if !gone.is_empty() {
+        let names: Vec<&str> = gone.iter().map(|f| f.label).collect();
+        return Err(format!("not set up yet: paste its {} first", names.join(" and ")));
     }
     let get = |name: &str| env(home, connection).into_iter().find(|(k, _)| k == name).map(|(_, v)| v).unwrap_or_default();
     let timeout = Duration::from_secs(15);
@@ -243,7 +246,7 @@ pub fn test(home: &Path, connection: &str) -> Result<String, String> {
             }
         }
         "github" => {
-            let out = crate::tickets::run_in_login_shell("gh api user --jq .login", home, &[], Duration::from_secs(20)).map_err(|e| format!("{e:#}").replace("The ticket command failed", "gh failed"))?;
+            let out = crate::tickets::run_in_login_shell("gh api user --jq .login", home, &[], Duration::from_secs(20)).map_err(|e| format!("{e:#}").replace("the pull command failed", "gh failed"))?;
             Ok(format!("signed in to gh as {}", out.trim()))
         }
         _ => Err(format!("there's no connection called {connection}")),

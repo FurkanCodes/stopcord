@@ -347,7 +347,11 @@ function FactoryPane({ card: c, runs, onOpen }: { card: Card; runs: Run[] | unde
             <span className="t-dim" style={{ width: '12ch', flexShrink: 0 }}>
               {alert.kind || 'stopped'}
             </span>
-            <span style={{ flexGrow: 1, minWidth: 0, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>{firstLine(alert.text)}</span>
+            <span style={{ flexGrow: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
+              <span style={{ display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>{firstLine(alert.text)}</span>
+              {/* A pull's error is cut short here, and kept whole on its source. */}
+              {alert.key.startsWith('pull:') && <span className="t-dim">the whole error is on the source, in [6] setup</span>}
+            </span>
           </span>
         ))}
       </span>
