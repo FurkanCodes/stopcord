@@ -25,7 +25,7 @@ use crate::settings;
 /// Sawtooth's registered OAuth apps. Public clients: an id isn't a secret. An empty id means the
 /// app isn't registered yet, so the card only offers the pasted token. `SAWTOOTH_<NAME>_CLIENT_ID`
 /// overrides one, for testing against another app.
-const SENTRY_CLIENT_ID: &str = "";
+const SENTRY_CLIENT_ID: &str = "840d30ca586830182349bce87ecd852480db198466cd1aead6fcffdf1a8d9943";
 const LINEAR_CLIENT_ID: &str = "";
 
 /// Where Linear sends the browser back. It has to match the app's registered redirect exactly,
