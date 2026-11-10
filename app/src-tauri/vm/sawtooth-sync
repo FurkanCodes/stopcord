@@ -191,9 +191,14 @@ knowledge() {
 read_knowledge() {
     name=$1
     if [ -L "$name" ] || [ ! -f "$name" ] || [ -n "$(g ls-files -- "$name")" ]; then echo none; return; fi
-    if [ "$(wc -c < "$name")" -gt 1048576 ]; then echo none; return; fi
+    # Read once, and only up to one byte past the limit: an agent can change the file between a
+    # check and a read, so what's measured has to be what's sent.
+    copy=$(mktemp "${TMPDIR:-/tmp}/sawtooth-kb.XXXXXX")
+    head -c 1048577 < "$name" > "$copy"
+    if [ "$(wc -c < "$copy")" -gt 1048576 ]; then rm -f "$copy"; echo none; return; fi
     echo copy
-    cat "$name"
+    cat "$copy"
+    rm -f "$copy"
 }
 
 cmd=${1-}

@@ -11,10 +11,11 @@
 //! the folder's own, and the rest as a tree git checks out. Git on the Mac never runs inside
 //! anything the container wrote.
 
-use std::io::Write;
+use std::io::{Read, Write};
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -285,10 +286,20 @@ pub trait Side {
     fn sync(&self, args: &[String], input: Option<&[u8]>) -> Result<Vec<u8>, String>;
 }
 
-fn output(mut cmd: Command, input: Option<&[u8]>) -> Result<Vec<u8>, String> {
+/// How long one step of a sync may take. Long enough to copy a big repo; a VM that stalls one,
+/// such as with a named pipe where its knowledge file was, mustn't hold the folder's lock for good.
+const SYNC_LIMIT: Duration = Duration::from_secs(600);
+
+/// The most a knowledge base read back from a VM may be, as `sawtooth-sync read-knowledge` caps it.
+const KNOWLEDGE_LIMIT: usize = 1 << 20;
+
+/// Runs one step of a sync. Past `limit` the step's whole process group is killed, so no git it
+/// started keeps going, and `stopped` cleans up what's outside the group, such as a container.
+fn output(mut cmd: Command, input: Option<&[u8]>, limit: Duration, stopped: &dyn Fn()) -> Result<Vec<u8>, String> {
     cmd.stdin(if input.is_some() { Stdio::piped() } else { Stdio::null() }).stdout(Stdio::piped()).stderr(Stdio::piped());
+    cmd.process_group(0);
     let mut child = cmd.spawn().map_err(|e| format!("couldn't start the sync: {e}"))?;
-    // Written from another thread, so a big bundle can't fill a pipe both ways.
+    // Written and read on other threads, so a big bundle can't fill a pipe both ways.
     let writer = input.map(|data| {
         let mut stdin = child.stdin.take();
         let data = data.to_vec();
@@ -298,10 +309,37 @@ fn output(mut cmd: Command, input: Option<&[u8]>) -> Result<Vec<u8>, String> {
             }
         })
     });
-    let out = child.wait_with_output().map_err(|e| format!("the sync didn't finish: {e}"))?;
+    let drain = |pipe: Option<Box<dyn Read + Send>>| {
+        std::thread::spawn(move || {
+            let mut all = Vec::new();
+            if let Some(mut p) = pipe {
+                let _ = p.read_to_end(&mut all);
+            }
+            all
+        })
+    };
+    let stdout = drain(child.stdout.take().map(|p| Box::new(p) as Box<dyn Read + Send>));
+    let stderr = drain(child.stderr.take().map(|p| Box::new(p) as Box<dyn Read + Send>));
+    let started = Instant::now();
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) if started.elapsed() >= limit => {
+                // SAFETY: killpg only sends a signal, to the group this child leads.
+                unsafe { libc::killpg(child.id() as libc::pid_t, libc::SIGKILL) };
+                let _ = child.wait();
+                stopped();
+                // The pipes' threads end when the last process holding them does; nothing waits for them.
+                return Err(format!("it took over {} seconds, so it was stopped", limit.as_secs()));
+            }
+            Ok(None) => std::thread::sleep(Duration::from_millis(10)),
+            Err(e) => return Err(format!("the sync didn't finish: {e}")),
+        }
+    };
     if let Some(w) = writer {
         let _ = w.join();
     }
+    let out = std::process::Output { status, stdout: stdout.join().unwrap_or_default(), stderr: stderr.join().unwrap_or_default() };
     if out.status.success() {
         Ok(out.stdout)
     } else {
@@ -322,7 +360,7 @@ impl Side for Local<'_> {
     fn sync(&self, args: &[String], input: Option<&[u8]>) -> Result<Vec<u8>, String> {
         let mut cmd = Command::new("/bin/sh");
         cmd.arg("-c").arg(SYNC).arg("sawtooth-sync").args(args).current_dir(self.dir).env("GIT_TERMINAL_PROMPT", "0").env("LC_ALL", "C");
-        output(cmd, input)
+        output(cmd, input, SYNC_LIMIT, &|| {})
     }
 }
 
@@ -335,10 +373,16 @@ pub struct Volume {
 
 impl Side for Volume {
     fn sync(&self, args: &[String], input: Option<&[u8]>) -> Result<Vec<u8>, String> {
+        // Named, because killing `docker run` doesn't stop its container.
+        let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
+        let name = format!("{}-sync-{}-{nanos}", self.volume, std::process::id());
         let mut cmd = Command::new(&self.docker);
-        cmd.args(["run", "--rm", "-i", "--network", "none", "--cap-drop", "ALL", "--security-opt", "no-new-privileges"]);
+        cmd.args(["run", "--rm", "-i", "--name", &name, "--network", "none", "--cap-drop", "ALL", "--security-opt", "no-new-privileges"]);
         cmd.args(["-v", &format!("{}:/work", self.volume), "-w", "/work", &self.image, "sawtooth-sync"]).args(args);
-        output(cmd, input)
+        let docker = self.docker.clone();
+        output(cmd, input, SYNC_LIMIT, &move || {
+            let _ = run(&docker, &["rm", "-f", &name]);
+        })
     }
 }
 
@@ -570,7 +614,9 @@ pub fn knowledge_back(vm: &dyn Side, kb: &Path, given: &Path, names: &[String]) 
     for name in names {
         let out = vm.sync(&["read-knowledge".to_string(), name.clone()], None)?;
         let out = String::from_utf8_lossy(&out);
+        // The script sends nothing bigger, but that's the VM's copy of it saying so.
         if let Some(copy) = out.strip_prefix("copy\n")
+            && copy.len() <= KNOWLEDGE_LIMIT
             && copy != base
             && !versions.iter().any(|v| v == copy)
         {
@@ -1099,6 +1145,32 @@ mod tests {
         assert_eq!(p.sync().unwrap(), Synced::Took);
         assert_eq!(read(&p.h("b.txt")), "from the vm\n");
         assert!(p.h("AGENTS.md").is_symlink());
+    }
+
+    #[test]
+    fn a_sync_step_that_stalls_is_stopped_with_everything_it_started() {
+        let dir = tempfile::tempdir().unwrap();
+        let late = dir.path().join("late");
+        let stopped = std::sync::atomic::AtomicBool::new(false);
+        let mut cmd = Command::new("/bin/sh");
+        // A child of the step, as git is of the script, that would write after the limit.
+        cmd.arg("-c").arg(format!("(sleep 1; touch '{}') & sleep 30", late.display()));
+        let started = Instant::now();
+        let why = output(cmd, Some(b"input"), Duration::from_millis(300), &|| stopped.store(true, std::sync::atomic::Ordering::SeqCst)).unwrap_err();
+        assert!(why.contains("stopped"), "{why}");
+        assert!(started.elapsed() < Duration::from_secs(1), "it waited {:?}", started.elapsed());
+        assert!(stopped.load(std::sync::atomic::Ordering::SeqCst), "nothing cleaned up after it");
+        std::thread::sleep(Duration::from_millis(1500));
+        assert!(!late.exists(), "a process it started kept going");
+    }
+
+    #[test]
+    fn a_knowledge_base_past_the_limit_is_not_read_back() {
+        let (p, kb, given, names) = given_knowledge("notes\n");
+        std::fs::write(p.v("AGENTS.md"), "x".repeat(KNOWLEDGE_LIMIT + 1)).unwrap();
+        assert!(!knowledge_back(&Local { dir: p.vm.path() }, &kb, &given, &names).unwrap());
+        std::fs::write(p.v("AGENTS.md"), format!("notes\n{}", "y".repeat(KNOWLEDGE_LIMIT - 6))).unwrap();
+        assert!(knowledge_back(&Local { dir: p.vm.path() }, &kb, &given, &names).unwrap(), "exactly the limit still comes back");
     }
 
     #[test]

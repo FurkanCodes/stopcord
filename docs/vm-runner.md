@@ -57,5 +57,5 @@ The image is built on first use and named by a hash of its files. After a build,
 - The image installs Claude Code, Codex, opencode and Gemini CLI from npm. A real harness has only been started with `--version`. Logging in and working inside the VM have been tested only with a stand-in agent.
 - Codex's browser login listens on localhost inside the container, which the Mac's browser can't reach. Use its device login or an API key.
 - A sync isn't a snapshot. The agent keeps running after it says it's done, so it can write while its copy is read, and that sync then fails as "didn't come out the same". The Mac's edits made during a sync's few seconds are overwritten.
-- The knowledge base's 1 MB limit is checked before the file is read, so a VM can grow it between the two. A sync has no timeout, so a VM can stall one, for example with a named pipe as its knowledge file.
+- A step of a sync that takes over 10 minutes is stopped: its process group is killed and its container removed. So a VM that stalls one, such as with a named pipe where its knowledge file was, holds its folder up to 10 minutes, not forever. The size of a bundle coming back isn't capped, and it's held in memory, so a VM can make the app use a lot of it.
 - The setup marker is in the Mac's folder, so a VM copy made again, such as after its volume was removed, starts without its setup.
