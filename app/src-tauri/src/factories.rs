@@ -99,6 +99,11 @@ pub struct Part {
     /// Ticket source: environment variables its command gets from Sawtooth's secrets, such as
     /// SENTRY_AUTH_TOKEN. Names only: the values are kept per factory and source, never here.
     pub keys: Vec<String>,
+    /// Ticket source: the connection in Settings whose credentials its command gets, such as sentry.
+    pub connection: String,
+    /// Ticket source: plain settings its command gets as environment variables, such as SENTRY_ORG.
+    /// Kept in the factory, so never a secret.
+    pub vars: BTreeMap<String, String>,
 }
 
 /// How much an agent is confined.
@@ -276,9 +281,31 @@ pub struct LineStage {
 #[serde(rename_all = "camelCase", default, deny_unknown_fields)]
 pub struct Report {
     pub id: String,
-    /// handoff, approve, question, failed, merged or dropped.
+    /// approve, question, handoff, failed, landing, merged or dropped.
     pub on: Vec<String>,
+    /// A shell command, with the details in `ST_*`. Empty when it only posts to Slack.
+    #[serde(skip_serializing_if = "no_text")]
     pub command: String,
+    /// Environment variables the command gets from Sawtooth's secrets, for this report only. Names only.
+    #[serde(skip_serializing_if = "none")]
+    pub keys: Vec<String>,
+    /// A Slack channel, such as #eng, that the connected bot posts the event to.
+    #[serde(skip_serializing_if = "no_text")]
+    pub slack: String,
+}
+
+/// How a source's last pull went. The engine owns this.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct PullStatus {
+    /// When it ended, in milliseconds.
+    pub at: u64,
+    pub ok: bool,
+    /// How many tickets the source gave, and how many of them were new.
+    pub tickets: usize,
+    pub new: usize,
+    /// Why it failed, in full.
+    pub error: String,
 }
 
 /// `agentDefaults` in `factory.yaml`.
@@ -519,6 +546,8 @@ pub struct Factory {
     pub proposals: Vec<Proposal>,
     /// When each schedule last fired, by part id, in milliseconds. The engine owns this.
     pub fired: BTreeMap<String, u64>,
+    /// How each source's last pull went, by part id. The engine owns this.
+    pub pulls: BTreeMap<String, PullStatus>,
     /// For the window: tickets waiting for a terminal. Always rebuilt from `work`.
     pub queue: Vec<Ticket>,
     /// For the window: tickets with a terminal, by key. Always rebuilt from `work`.
@@ -568,6 +597,7 @@ struct State {
     work: Vec<WorkItem>,
     alerts: Vec<Alert>,
     fired: BTreeMap<String, u64>,
+    pulls: BTreeMap<String, PullStatus>,
     layout: BTreeMap<String, Pos>,
     seen: Vec<String>,
     proposals: Vec<Proposal>,
@@ -701,6 +731,7 @@ impl Store {
                 factory.work = state.work;
                 factory.alerts = state.alerts;
                 factory.fired = state.fired;
+                factory.pulls = state.pulls;
                 factory.layout = state.layout;
                 factory.seen = state.seen;
                 factory.proposals = state.proposals;
@@ -799,6 +830,7 @@ impl Store {
         next.path = current.path;
         next.work = current.work;
         next.fired = current.fired;
+        next.pulls = current.pulls;
         next.alerts = current.alerts;
         next.seen = current.seen;
         next.proposals = current.proposals;
@@ -845,6 +877,7 @@ impl Store {
             work: factory.work.clone(),
             alerts: factory.alerts.clone(),
             fired: factory.fired.clone(),
+            pulls: factory.pulls.clone(),
             layout: factory.layout.clone(),
             seen: factory.seen.clone(),
             proposals: factory.proposals.clone(),

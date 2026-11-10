@@ -8,7 +8,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crate::engine::{Due, Engine, due, parse_schedule};
-use crate::factories::{Factory, Kind, Part, Stage, Ticket, Waiting};
+use crate::factories::{Factory, Kind, Part, PullStatus, Stage, Ticket, Waiting};
 use crate::runs::{self, Run};
 use crate::settings::{self, SlackSettings};
 use crate::tickets;
@@ -24,6 +24,8 @@ pub struct Intake {
     pulls: std::collections::HashMap<(String, String), Instant>,
     pulling: std::collections::HashSet<(String, String)>,
     slack: Option<(SlackSettings, Arc<std::sync::atomic::AtomicBool>)>,
+    /// Whether the Slack connection is up, and what it last said. Nothing while it's off.
+    pub slack_state: Option<(bool, String)>,
 }
 
 impl Engine {
@@ -37,6 +39,7 @@ impl Engine {
             if let Some((_, stop)) = intake.slack.take() {
                 stop.store(true, std::sync::atomic::Ordering::Relaxed);
             }
+            intake.slack_state = wanted.as_ref().map(|_| (false, "connecting".to_string()));
             if let Some(s) = wanted {
                 let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
                 intake.slack = Some((s.clone(), Arc::clone(&stop)));
@@ -44,6 +47,18 @@ impl Engine {
                 std::thread::spawn(move || me.run_slack(s, stop));
             }
         }
+    }
+
+    /// Starts the Slack connection again, as after its tokens change, so its state is fresh at once.
+    pub fn restart_slack(self: &Arc<Self>) {
+        if let Some((_, stop)) = self.intake.lock().unwrap().slack.take() {
+            stop.store(true, std::sync::atomic::Ordering::Relaxed);
+        }
+        self.apply_settings();
+    }
+
+    pub fn slack_state(&self) -> Option<(bool, String)> {
+        self.intake.lock().unwrap().slack_state.clone()
     }
 
     /// Asks for a pull, unless one is running or just ran.
@@ -73,18 +88,34 @@ impl Engine {
             .find(|p| p.kind == Kind::Tickets && p.id == part_id)
             .cloned()
             .ok_or_else(|| format!("there's no source {part_id}"))?;
+        // Not set up yet isn't a failure: nothing ran, so nothing is raised or recorded.
+        if let Some(why) = tickets::not_ready(self.store.home(), &f, &part) {
+            return Err(format!("{} can't pull yet: {why}", part.name));
+        }
+        let record = |status: PullStatus| {
+            let _ = self.store.update(factory, |fa| {
+                fa.pulls.insert(part.id.clone(), status.clone());
+            });
+        };
         match tickets::run_part(self.store.home(), &f, &part) {
             Ok(tickets) => {
                 self.clear_alert(factory, &format!("pull:{}", part.id));
-                Ok(self.propose(factory, &part, tickets))
+                let count = tickets.len();
+                let added = self.propose(factory, &part, tickets);
+                record(PullStatus { at: runs::now_ms(), ok: true, tickets: count, new: added, error: String::new() });
+                Ok(added)
             }
             Err(e) => {
-                let text = format!("{} couldn't pull: {e:#}", part.name);
+                let full = format!("{e:#}");
+                // The alert is a line on a card; the whole error stays on the source, in setup.
+                let first = full.lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or("it failed");
+                let text = format!("{} couldn't pull: {first}", part.name);
                 self.store
                     .update(factory, |fa| work::raise(fa, &format!("pull:{}", part.id), &text, None, runs::now_ms()))
                     .ok();
-                self.log(factory, Run::new("source", text.clone()).ok(false).part(&part.id));
-                Err(text)
+                self.log(factory, Run::new("source", format!("{} couldn't pull: {full}", part.name)).ok(false).part(&part.id));
+                record(PullStatus { at: runs::now_ms(), ok: false, tickets: 0, new: 0, error: full.clone() });
+                Err(full)
             }
         }
     }
@@ -118,6 +149,10 @@ impl Engine {
                 continue;
             };
             if due(schedule, crate::engine::local(last), crate::engine::local(now_ms)) == Due::No {
+                continue;
+            }
+            // A source waiting for its keys is skipped, and pulls as soon as it has them.
+            if tickets::not_ready(self.store.home(), f, part).is_some() {
                 continue;
             }
             if self.store.update(&f.id, |fa| fa.fired.insert(key.clone(), now_ms)).is_ok() {

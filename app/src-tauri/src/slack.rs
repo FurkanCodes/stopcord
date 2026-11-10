@@ -16,7 +16,8 @@ use tungstenite::{Message, WebSocket};
 use crate::engine::Engine;
 use crate::factories::{Kind, Part, Ticket};
 use crate::runs::{self, Run};
-use crate::settings::{self, SlackSettings};
+use crate::connections;
+use crate::settings::SlackSettings;
 
 const API: &str = "https://slack.com/api";
 /// How far back to look for mentions missed while asleep. Ones already seen are left out.
@@ -25,7 +26,7 @@ const READ_TICK: Duration = Duration::from_secs(2);
 const MAX_BACKOFF: Duration = Duration::from_secs(60);
 pub const SOURCE: &str = "slack";
 
-fn call(method: &str, token: &str, form: &[(&str, &str)]) -> Result<Value> {
+pub(crate) fn call(method: &str, token: &str, form: &[(&str, &str)]) -> Result<Value> {
     let v: Value = ureq::post(&format!("{API}/{method}"))
         .set("Authorization", &format!("Bearer {token}"))
         .timeout(Duration::from_secs(20))
@@ -218,9 +219,11 @@ impl Engine {
 
     fn slack_connection(self: &Arc<Self>, s: &SlackSettings, stop: &AtomicBool) -> Result<()> {
         let home = self.store.home();
-        let app = settings::get_secret(home, &s.app_token_secret).ok_or_else(|| anyhow!("the Slack app token isn't set"))?;
-        let bot = settings::get_secret(home, &s.bot_token_secret).ok_or_else(|| anyhow!("the Slack bot token isn't set"))?;
-        let opened = call("apps.connections.open", &app, &[])?;
+        let token = |name: &str| connections::env(home, connections::SLACK).into_iter().find(|(k, _)| k == name).map(|(_, v)| v);
+        let app = token("SLACK_APP_TOKEN").ok_or_else(|| anyhow!("the app token isn't set"))?;
+        let bot = token("SLACK_BOT_TOKEN").ok_or_else(|| anyhow!("the bot token isn't set"))?;
+        let me = call("auth.test", &bot, &[]).map_err(|e| anyhow!("the bot token didn't work: {e:#}"))?;
+        let opened = call("apps.connections.open", &app, &[]).map_err(|e| anyhow!("the app token didn't work: {e:#}"))?;
         let url = opened["url"].as_str().ok_or_else(|| anyhow!("Slack didn't give a socket address"))?;
         let (mut ws, _) = tungstenite::connect(url)?;
         match ws.get_mut() {
@@ -228,6 +231,7 @@ impl Engine {
             MaybeTlsStream::Rustls(t) => t.get_mut().set_read_timeout(Some(READ_TICK))?,
             _ => {}
         }
+        self.set_slack_state(true, format!("listening as @{} in {}", me["user"].as_str().unwrap_or("?"), me["team"].as_str().unwrap_or("your workspace")));
         // A catch-up that fails, say for a missing scope, shouldn't cost the live connection.
         if let Err(e) = self.slack_catch_up(s, &bot) {
             self.slack_log(s, Run::new("source", format!("Slack couldn't catch up on missed mentions: {e:#}")).ok(false));
@@ -245,6 +249,7 @@ impl Engine {
                     told = false;
                 }
                 Err(e) => {
+                    self.set_slack_state(false, format!("{e:#}"));
                     if !told {
                         self.slack_log(&s, Run::new("source", format!("Slack isn't connected: {e:#}")).ok(false));
                         told = true;
@@ -260,6 +265,11 @@ impl Engine {
         }
     }
 
+    /// What the window shows about the live connection.
+    fn set_slack_state(&self, ok: bool, text: String) {
+        self.intake.lock().unwrap().slack_state = Some((ok, text));
+    }
+
     /// Slack's own trouble goes in the default factory's log, or every factory's when there's no
     /// default, since a mention can go to any of them.
     fn slack_log(&self, s: &SlackSettings, run: Run) {
@@ -273,7 +283,7 @@ impl Engine {
     pub(crate) fn slack_reply(&self, url: &str, text: &str) {
         let Some((channel, thread)) = thread_of(url) else { return };
         let home = self.store.home();
-        let Some(bot) = settings::load(home).ok().and_then(|s| settings::get_secret(home, &s.slack.bot_token_secret)) else {
+        let Some((_, bot)) = connections::env(home, connections::SLACK).into_iter().find(|(k, _)| k == "SLACK_BOT_TOKEN") else {
             return;
         };
         let text = text.to_string();
@@ -281,6 +291,23 @@ impl Engine {
             let _ = call("chat.postMessage", &bot, &[("channel", &channel), ("thread_ts", &thread), ("text", &text)]);
         });
     }
+}
+
+/// Posts to a channel, such as #eng, as the connected bot. Says how to fix the usual mistakes.
+pub(crate) fn post(home: &std::path::Path, channel: &str, text: &str) -> std::result::Result<(), String> {
+    let Some((_, bot)) = connections::env(home, connections::SLACK).into_iter().find(|(k, _)| k == "SLACK_BOT_TOKEN") else {
+        return Err("Slack isn't connected: set its bot token in settings → connections".into());
+    };
+    call("chat.postMessage", &bot, &[("channel", channel), ("text", text)]).map(|_| ()).map_err(|e| {
+        let e = format!("{e:#}");
+        if e.contains("not_in_channel") {
+            format!("the bot isn't in {channel}. invite it there with /invite @sawtooth")
+        } else if e.contains("channel_not_found") {
+            format!("Slack has no channel {channel} the bot can see")
+        } else {
+            e
+        }
+    })
 }
 
 #[cfg(test)]

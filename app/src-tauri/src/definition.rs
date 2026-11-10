@@ -93,6 +93,10 @@ struct SourceDoc {
     auto_start: bool,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     keys: Vec<String>,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    connection: String,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    vars: BTreeMap<String, String>,
 }
 
 /// `factory.yaml`.
@@ -308,6 +312,8 @@ pub fn load(dir: &Path) -> Result<Factory> {
         every: s.every,
         auto_start: s.auto_start,
         keys: s.keys,
+        connection: s.connection,
+        vars: s.vars,
         ..Part::default()
     }));
     let autos = dir.join("automations");
@@ -584,6 +590,8 @@ fn render(f: &Factory) -> Result<BTreeMap<PathBuf, String>> {
                 every: p.every.clone(),
                 auto_start: p.auto_start,
                 keys: p.keys.clone(),
+                connection: p.connection.clone(),
+                vars: p.vars.clone(),
             })
             .collect(),
         line: f.line.clone(),

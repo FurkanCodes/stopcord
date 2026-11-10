@@ -24,13 +24,44 @@ pub fn run(home: &Path, factory: &Factory, source: Option<&str>) -> Result<Vec<T
     run_part(home, factory, part)
 }
 
-/// Runs one source's command, with its keys from Sawtooth's secrets, and reads the tickets it prints.
-pub fn run_part(home: &Path, factory: &Factory, part: &Part) -> Result<Vec<Ticket>> {
+/// Why a source can't pull yet, said so a person knows what to fill in, or nothing when it's ready.
+/// Checked before every pull, so a half-set-up source waits quietly instead of failing every few minutes.
+pub fn not_ready(home: &Path, factory: &Factory, part: &Part) -> Option<String> {
     if part.command.trim().is_empty() {
-        bail!("The ticket source has no command yet. Give it one that prints tickets as JSON.");
+        return Some("it has no pull command yet".into());
     }
-    let env = crate::settings::source_env(home, &factory.id, &part.id, &part.keys);
-    let output = run_in_login_shell(&part.command, Path::new(&factory.path), &env, TIMEOUT)?;
+    if !part.connection.is_empty() {
+        if let Some(why) = crate::connections::not_ready(home, &part.connection) {
+            return Some(why);
+        }
+    }
+    let unset: Vec<&str> = part.vars.iter().filter(|(_, v)| v.trim().is_empty()).map(|(k, _)| k.as_str()).collect();
+    if !unset.is_empty() {
+        return Some(format!("set {} on this source", unset.join(" and ")));
+    }
+    let set: Vec<String> = crate::settings::source_env(home, &factory.id, &part.id, &part.keys).into_iter().map(|(k, _)| k).collect();
+    let empty: Vec<&str> = part.keys.iter().filter(|k| !set.contains(k)).map(String::as_str).collect();
+    if !empty.is_empty() {
+        return Some(format!("{} {} no value", empty.join(" and "), if empty.len() == 1 { "has" } else { "have" }));
+    }
+    None
+}
+
+/// What a source's command gets in its environment: its connection's credentials, its own plain
+/// settings, then its own keys, each later one winning.
+pub fn env_for(home: &Path, factory: &Factory, part: &Part) -> Vec<(String, String)> {
+    let mut env = crate::connections::env(home, &part.connection);
+    env.extend(part.vars.iter().filter(|(k, v)| !v.trim().is_empty() && crate::vm::secret_name(k).is_ok()).map(|(k, v)| (k.clone(), v.trim().to_string())));
+    env.extend(crate::settings::source_env(home, &factory.id, &part.id, &part.keys));
+    env
+}
+
+/// Runs one source's command, with its connection, settings and keys, and reads the tickets it prints.
+pub fn run_part(home: &Path, factory: &Factory, part: &Part) -> Result<Vec<Ticket>> {
+    if let Some(why) = not_ready(home, factory, part) {
+        bail!("{} can't pull yet: {why}", part.name);
+    }
+    let output = run_in_login_shell(&part.command, Path::new(&factory.path), &env_for(home, factory, part), TIMEOUT)?;
     parse(&output)
 }
 
@@ -202,6 +233,33 @@ mod tests {
     }
 
     #[test]
+    fn a_source_says_what_it_still_needs_and_waits_for_it() {
+        let home = tempfile::tempdir().unwrap();
+        let h = home.path();
+        let dir = tempfile::tempdir().unwrap();
+        let f = Factory { id: "web".into(), path: dir.path().display().to_string(), ..Factory::default() };
+        let mut part = Part {
+            id: "sentry".into(),
+            name: "Sentry".into(),
+            kind: Kind::Tickets,
+            connection: "sentry".into(),
+            vars: [("SENTRY_ORG".to_string(), String::new()), ("SENTRY_PROJECT".to_string(), "web".to_string())].into(),
+            command: r#"printf '[{"key":"%s-%s-%s","title":"t"}]' "$SENTRY_AUTH_TOKEN" "$SENTRY_ORG" "$SENTRY_PROJECT""#.into(),
+            ..Part::default()
+        };
+        assert!(not_ready(h, &f, &part).unwrap().contains("Sentry isn't connected"), "the connection comes first");
+        let why = run_part(h, &f, &part).unwrap_err().to_string();
+        assert!(why.contains("can't pull yet") && why.contains("auth token"), "nothing runs: {why}");
+        crate::connections::set(h, "sentry", "SENTRY_AUTH_TOKEN", "tok").unwrap();
+        assert_eq!(not_ready(h, &f, &part).as_deref(), Some("set SENTRY_ORG on this source"));
+        part.vars.insert("SENTRY_ORG".into(), " shop ".into());
+        assert_eq!(not_ready(h, &f, &part), None);
+        assert_eq!(run_part(h, &f, &part).unwrap()[0].key, "tok-shop-web", "the connection's token and the source's own settings");
+        part.keys = vec!["EXTRA".into()];
+        assert_eq!(not_ready(h, &f, &part).as_deref(), Some("EXTRA has no value"));
+    }
+
+    #[test]
     fn a_source_gets_its_keys_in_its_environment() {
         let home = tempfile::tempdir().unwrap();
         let dir = tempfile::tempdir().unwrap();
@@ -213,10 +271,10 @@ mod tests {
             command: r#"printf '[{"key":"%s","title":"t"}]' "${LINEAR_API_KEY:-none}""#.into(),
             ..Part::default()
         };
-        assert_eq!(run_part(home.path(), &f, &part).unwrap()[0].key, "none", "nothing set yet");
+        assert!(run_part(home.path(), &f, &part).unwrap_err().to_string().contains("LINEAR_API_KEY has no value"), "nothing set yet, so nothing runs");
         crate::settings::set_secret(home.path(), &crate::settings::source_key("web", "linear", "LINEAR_API_KEY"), "lin_123").unwrap();
         assert_eq!(run_part(home.path(), &f, &part).unwrap()[0].key, "lin_123");
         let other = Factory { id: "api".into(), ..f.clone() };
-        assert_eq!(run_part(home.path(), &other, &part).unwrap()[0].key, "none", "another factory's source has its own keys");
+        assert!(run_part(home.path(), &other, &part).is_err(), "another factory's source has its own keys");
     }
 }

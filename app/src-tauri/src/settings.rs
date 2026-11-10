@@ -32,6 +32,9 @@ pub struct Settings {
     pub slack: SlackSettings,
     /// Keep the machine awake while work is running.
     pub keep_awake: bool,
+    /// Each connection's plain fields, such as a self-hosted Sentry's address. Secrets are never here.
+    #[serde(skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub connections: std::collections::BTreeMap<String, std::collections::BTreeMap<String, String>>,
 }
 
 pub fn file(home: &Path) -> PathBuf {
@@ -100,6 +103,16 @@ pub fn source_key(factory: &str, source: &str, name: &str) -> String {
 /// sandbox could ask for those by name.
 pub fn vm_key(factory: &str, runner: &str, name: &str) -> String {
     format!("vm.{factory}.{runner}.{name}")
+}
+
+/// Where a report's key is kept: per factory and report.
+pub fn report_key(factory: &str, report: &str, name: &str) -> String {
+    format!("report.{factory}.{report}.{name}")
+}
+
+/// What a report's command gets in its environment: each of its keys that has a value.
+pub fn report_env(home: &Path, factory: &str, report: &str, names: &[String]) -> Vec<(String, String)> {
+    names.iter().filter_map(|n| get_secret(home, &report_key(factory, report, n)).map(|v| (n.clone(), v))).collect()
 }
 
 /// What a source's command gets in its environment: each of its keys that has a value.

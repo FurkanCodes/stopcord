@@ -87,8 +87,23 @@ pub struct SourceTemplate {
     pub every: &'static str,
     /// What the person has to do first.
     pub needs: &'static str,
-    /// The keys its command reads, which the person sets on the source.
+    /// Secret keys its command reads that belong to this source alone. Sources that use a
+    /// connection have none: their credentials come from it.
     pub keys: &'static [&'static str],
+    /// The connection its credentials come from, such as sentry. Empty for none.
+    pub connection: &'static str,
+    /// Plain settings of its own, such as which project.
+    pub vars: &'static [Var],
+}
+
+/// A plain setting a source needs, shown as a labelled field.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Var {
+    pub name: &'static str,
+    pub label: &'static str,
+    pub placeholder: &'static str,
+    pub hint: &'static str,
 }
 
 pub fn source_templates() -> Vec<SourceTemplate> {
@@ -100,24 +115,33 @@ pub fn source_templates() -> Vec<SourceTemplate> {
             // The event goes through stdin because a whole event can be too long for one argument on Linux.
             command: r##"set -o pipefail; api="${SENTRY_URL:-https://sentry.io}/api/0"; auth="Authorization: Bearer $SENTRY_AUTH_TOKEN"; curl -sSf -H "$auth" "$api/projects/$SENTRY_ORG/$SENTRY_PROJECT/issues/?query=is:unresolved%20level:fatal&limit=25" | jq -c '.[]' | while read -r issue; do id=$(printf %s "$issue" | jq -r .id); { curl -sSf -H "$auth" "$api/organizations/$SENTRY_ORG/issues/$id/events/latest/" || echo '{}'; } | jq --argjson issue "$issue" '. as $event | {key: $issue.shortId, title: $issue.title, url: $issue.permalink, body: ([$issue.culprit, (($event.entries // []) | map(select(.type == "exception")) | map(.data.values // []) | (add // []) | map("\(.type): \(.value)\n" + ([.stacktrace.frames[]? | select(.inApp) | "  at \(.function) (\(.filename):\(.lineNo))"] | reverse | .[:30] | join("\n"))) | join("\n\n"))] | map(select(. != null and . != "")) | join("\n\n"))}'; done | jq -s ."##,
             every: "every 5 minutes",
-            needs: "Set the keys below, and have jq installed. SENTRY_URL is only for self-hosted Sentry.",
-            keys: &["SENTRY_AUTH_TOKEN", "SENTRY_ORG", "SENTRY_PROJECT", "SENTRY_URL"],
+            needs: "fatal, unresolved issues, each with its stack trace. needs jq",
+            keys: &[],
+            connection: "sentry",
+            vars: &[
+                Var { name: "SENTRY_ORG", label: "organization", placeholder: "my-org", hint: "the slug in sentry.io/organizations/my-org" },
+                Var { name: "SENTRY_PROJECT", label: "project", placeholder: "web", hint: "the project's slug, as in its settings" },
+            ],
         },
         SourceTemplate {
             id: "github",
             name: "GitHub issues",
             command: r##"gh issue list --state open --json number,title,body,url | jq '[.[] | {key: ("#" + (.number|tostring)), title, body, url}]'"##,
             every: "every 5 minutes",
-            needs: "Sign in with gh auth login, and have jq installed.",
+            needs: "open issues in this project's repo. needs jq",
             keys: &[],
+            connection: "github",
+            vars: &[],
         },
         SourceTemplate {
             id: "linear",
             name: "Linear",
             command: r#"curl -sf -H "Authorization: $LINEAR_API_KEY" -H "Content-Type: application/json" -d '{"query":"{ issues(filter:{state:{type:{eq:\"unstarted\"}}}, first:50){ nodes { identifier title description url } } }"}' https://api.linear.app/graphql | jq '[.data.issues.nodes[] | {key: .identifier, title, body: .description, url}]'"#,
             every: "every 5 minutes",
-            needs: "Set the key below, and have jq installed.",
-            keys: &["LINEAR_API_KEY"],
+            needs: "issues that aren't started yet. needs jq",
+            keys: &[],
+            connection: "linear",
+            vars: &[],
         },
     ]
 }
@@ -176,9 +200,11 @@ mod tests {
             assert!(!t.command.is_empty() && !t.needs.is_empty(), "{}", t.id);
             assert!(crate::engine::parse_schedule(t.every).is_some(), "{}", t.id);
             assert!(t.command.contains("key"), "{}", t.id);
-            for k in t.keys {
+            let conn: Vec<&str> = crate::connections::find(t.connection).map(|c| c.fields.iter().map(|f| f.name).collect()).unwrap_or_default();
+            assert!(t.connection.is_empty() || crate::connections::find(t.connection).is_some(), "{}: no connection {}", t.id, t.connection);
+            for k in t.keys.iter().copied().chain(t.vars.iter().map(|v| v.name)).chain(conn) {
                 assert!(crate::vm::secret_name(k).is_ok(), "{}: {k} isn't a name a key can have", t.id);
-                assert!(t.command.contains(&format!("${k}")) || t.command.contains(&format!("${{{k}")), "{} never reads {k}", t.id);
+                assert!(t.command.contains(&format!("${k}")) || t.command.contains(&format!("${{{k}")) || t.connection == "github", "{} never reads {k}", t.id);
             }
         }
     }

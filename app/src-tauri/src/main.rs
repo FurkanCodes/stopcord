@@ -10,6 +10,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod bridge;
+mod connections;
 mod definition;
 mod engine;
 mod factories;
@@ -824,6 +825,69 @@ fn vm_secrets_set(app: State<'_, App>, factory: String, runner: String, names: V
     names.into_iter().filter(|n| settings::get_secret(app.store.home(), &settings::vm_key(&factory, &runner, n)).is_some()).collect()
 }
 
+/// Every connection, its plain values and which secrets are set. Never a secret's value.
+#[tauri::command(async)]
+fn connections(app: State<'_, App>) -> Vec<connections::View> {
+    connections::views(app.store.home())
+}
+
+/// Stores one of a connection's fields. An empty value clears it.
+#[tauri::command(async)]
+fn set_connection_field(app: State<'_, App>, engine: State<'_, Arc<Engine>>, connection: String, name: String, value: String) -> Result<(), Failure> {
+    connections::set(app.store.home(), &connection, &name, &value).map_err(|why| Failure::new("connection", why))?;
+    if connection == connections::SLACK {
+        engine.restart_slack();
+    }
+    Ok(())
+}
+
+/// Tries a connection for real: who it signs in as, or why it can't.
+#[tauri::command(async)]
+fn test_connection(app: State<'_, App>, connection: String) -> Result<String, Failure> {
+    connections::test(app.store.home(), &connection).map_err(|why| Failure::new("connection", why))
+}
+
+#[tauri::command(async)]
+fn slack_manifest() -> String {
+    connections::slack_manifest()
+}
+
+/// Whether the Slack connection is up, and what it last said. Nothing while it's off.
+#[tauri::command(async)]
+fn slack_state(engine: State<'_, Arc<Engine>>) -> Option<serde_json::Value> {
+    engine.slack_state().map(|(ok, text)| json!({ "ok": ok, "text": text }))
+}
+
+/// Why a source can't pull yet, or nothing when it can.
+#[tauri::command(async)]
+fn source_ready(app: State<'_, App>, id: String, part: String) -> Result<Option<String>, Failure> {
+    let f = app.store.get(&id).map_err(fail)?;
+    let p = f.parts.iter().find(|p| p.id == part).ok_or_else(|| Failure::new("source", format!("there's no source {part}")))?;
+    Ok(tickets::not_ready(app.store.home(), &f, p))
+}
+
+/// Sends a report with made-up details and says what happened.
+#[tauri::command(async)]
+fn test_report(app: State<'_, App>, id: String, report: String) -> Result<serde_json::Value, Failure> {
+    let f = app.store.get(&id).map_err(fail)?;
+    let r = f.reports.iter().find(|r| r.id == report).ok_or_else(|| Failure::new("report", format!("there's no report {report}")))?;
+    let (ok, said) = flow::test_report(app.store.home(), &f, r);
+    Ok(json!({ "ok": ok, "said": said }))
+}
+
+/// Stores one of a report's keys, for that report only. An empty value removes it.
+#[tauri::command(async)]
+fn set_report_key(app: State<'_, App>, factory: String, report: String, name: String, value: String) -> Result<(), Failure> {
+    vm::secret_name(&name).map_err(|why| Failure::new("secret", why))?;
+    settings::set_secret(app.store.home(), &settings::report_key(&factory, &report, &name), value.trim()).map_err(fail)
+}
+
+/// Which of a report's keys have a value. Never the values themselves.
+#[tauri::command(async)]
+fn report_keys_set(app: State<'_, App>, factory: String, report: String, names: Vec<String>) -> Vec<String> {
+    names.into_iter().filter(|n| settings::get_secret(app.store.home(), &settings::report_key(&factory, &report, n)).is_some()).collect()
+}
+
 /// Stores one of a ticket source's keys. An empty value removes it.
 #[tauri::command(async)]
 fn set_source_key(app: State<'_, App>, factory: String, source: String, name: String, value: String) -> Result<(), Failure> {
@@ -988,6 +1052,15 @@ fn main() {
             set_vm_secret,
             vm_secrets_set,
             set_source_key,
+            connections,
+            set_connection_field,
+            test_connection,
+            slack_manifest,
+            slack_state,
+            source_ready,
+            test_report,
+            set_report_key,
+            report_keys_set,
             source_keys_set,
             open_docker_page,
             start_docker,

@@ -1049,7 +1049,8 @@ impl Engine {
         }
     }
 
-    /// Runs the factory's report commands for this event, with the details in the environment.
+    /// Sends the factory's reports for this event: a post to each one's Slack channel, and each
+    /// one's command, with the details and its keys in the environment.
     fn report_back(&self, f: &Factory, w: &WorkItem, event: &str, text: &str) {
         if w.source == crate::slack::SOURCE {
             self.slack_reply(&w.ticket.url, text);
@@ -1058,32 +1059,24 @@ impl Engine {
         if mine.is_empty() {
             return;
         }
-        let (fid, project, env) = (
-            f.id.clone(),
-            f.path.clone(),
-            vec![
-                ("ST_EVENT", event.to_string()),
-                ("ST_KEY", w.ticket.key.clone()),
-                ("ST_TITLE", w.ticket.title.clone()),
-                ("ST_URL", w.ticket.url.clone()),
-                ("ST_STAGE", w.line_stage.clone()),
-                ("ST_BRANCH", w.branch.clone()),
-                ("ST_SOURCE", w.source.clone()),
-                ("ST_TEXT", text.to_string()),
-            ],
-        );
-        let store = Arc::clone(&self.store);
-        let work = w.id.clone();
+        let env = vec![
+            ("ST_EVENT".to_string(), event.to_string()),
+            ("ST_KEY".to_string(), w.ticket.key.clone()),
+            ("ST_TITLE".to_string(), w.ticket.title.clone()),
+            ("ST_URL".to_string(), w.ticket.url.clone()),
+            ("ST_STAGE".to_string(), w.line_stage.clone()),
+            ("ST_BRANCH".to_string(), w.branch.clone()),
+            ("ST_SOURCE".to_string(), w.source.clone()),
+            ("ST_TEXT".to_string(), text.to_string()),
+        ];
+        let (store, f, work) = (Arc::clone(&self.store), f.clone(), w.id.clone());
         std::thread::spawn(move || {
-            let prefix: String = env.iter().map(|(k, v)| format!("{k}={} ", shell::quote(v))).collect();
             for r in mine {
-                // Details travel as environment values, never as part of the command text.
-                let line = format!("{prefix}{}", hooks::login_command(&shell::user_shell(), &r.command));
-                let (ok, output) = hooks::run_command(&line, Path::new(&project), &mut std::io::sink(), Some(Duration::from_secs(60)));
+                let (ok, said) = send_report(store.home(), &f, &r, &env);
                 let _ = runs::append(
                     &store,
-                    &fid,
-                    &Run::new("report", format!("report {} {}", r.id, if ok { "sent" } else { "failed" })).ok(ok).work(&work).by("engine").detail(&output),
+                    &f.id,
+                    &Run::new("report", format!("report {} {}", r.id, if ok { "sent" } else { "failed" })).ok(ok).work(&work).by("engine").detail(&said),
                 );
             }
         });
@@ -1130,10 +1123,99 @@ impl Engine {
 mod tests {
     use super::*;
 
+    fn report(command: &str) -> crate::factories::Report {
+        crate::factories::Report { id: "notify".into(), on: vec!["handoff".into()], command: command.into(), keys: vec!["HOOK".into()], slack: String::new() }
+    }
+
+    #[test]
+    fn a_report_gets_its_keys_in_the_environment_and_a_test_says_what_happened() {
+        let home = tempfile::tempdir().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let f = Factory { id: "web".into(), path: dir.path().display().to_string(), ..Factory::default() };
+        crate::settings::set_secret(home.path(), &crate::settings::report_key("web", "notify", "HOOK"), "https://hooks.example/abc").unwrap();
+        let (ok, said) = test_report(home.path(), &f, &report(r#"echo "$ST_EVENT $ST_KEY ${HOOK#https://}""#));
+        assert!(ok, "{said}");
+        assert_eq!(said, "the command ran: handoff TEST-1 hooks.example/abc");
+        let (ok, said) = test_report(home.path(), &f, &report("echo nope >&2; exit 4"));
+        assert!(!ok && said.contains("nope"), "{said}");
+        let (ok, said) = send_report(home.path(), &f, &crate::factories::Report { slack: "#eng".into(), ..report("") }, &[]);
+        assert!(!ok && said.contains("Slack isn't connected"), "{said}");
+        let (ok, said) = send_report(home.path(), &f, &report(""), &[]);
+        assert!(!ok && said.contains("nothing to send"), "{said}");
+    }
+
+    #[test]
+    fn a_slack_report_names_the_ticket_and_links_it() {
+        let env: Vec<(String, String)> = [("ST_KEY", "SEN-4"), ("ST_EVENT", "merged"), ("ST_TITLE", "Null user"), ("ST_URL", "https://s/4"), ("ST_TEXT", "SEN-4 merged")].iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
+        assert_eq!(report_text(&env), "*SEN-4* merged: Null user <https://s/4|open>");
+    }
+
     #[test]
     fn a_command_line_quotes_every_word_and_keeps_its_environment() {
         let line = command_line(&["a b".to_string(), "c'd".to_string()], &[("X".to_string(), "1 2".to_string())]);
         assert_eq!(line, r#"env X='1 2' 'a b' 'c'\''d'"#);
         assert_eq!(command_line(&["x".to_string()], &[]), "'x'");
     }
+}
+
+/// The Slack message for a report: the ticket, what happened, and its link.
+fn report_text(env: &[(String, String)]) -> String {
+    let get = |k: &str| env.iter().find(|(n, _)| n == k).map(|(_, v)| v.as_str()).unwrap_or("");
+    let url = get("ST_URL");
+    let mut line = format!("*{}* {}: {}", get("ST_KEY"), get("ST_EVENT"), get("ST_TITLE"));
+    if !url.is_empty() {
+        line.push_str(&format!(" <{url}|open>"));
+    }
+    let text = get("ST_TEXT");
+    if !text.is_empty() && !text.starts_with(get("ST_KEY")) {
+        line.push_str(&format!("\n{text}"));
+    }
+    line
+}
+
+/// Sends one report: posts to its Slack channel through the connected bot, and runs its command
+/// in a login shell with `env` and its own keys in the environment, never on the command line.
+/// Says whether everything went, and what each part said.
+pub(crate) fn send_report(home: &Path, f: &Factory, r: &crate::factories::Report, env: &[(String, String)]) -> (bool, String) {
+    let (mut ok, mut said) = (true, Vec::new());
+    let channel = r.slack.trim();
+    if !channel.is_empty() {
+        match crate::slack::post(home, channel, &report_text(env)) {
+            Ok(()) => said.push(format!("posted to {channel}")),
+            Err(why) => {
+                ok = false;
+                said.push(format!("couldn't post to {channel}: {why}"));
+            }
+        }
+    }
+    if !r.command.trim().is_empty() {
+        let mut all = env.to_vec();
+        all.extend(crate::settings::report_env(home, &f.id, &r.id, &r.keys));
+        match crate::tickets::run_in_login_shell(&r.command, Path::new(&f.path), &all, Duration::from_secs(60)) {
+            Ok(out) => said.push(if out.trim().is_empty() { "the command ran".to_string() } else { format!("the command ran: {}", out.trim()) }),
+            Err(e) => {
+                ok = false;
+                said.push(format!("{e:#}").replace("The ticket command failed", "the command failed"));
+            }
+        }
+    }
+    if said.is_empty() {
+        return (false, "it has no channel and no command, so there's nothing to send".to_string());
+    }
+    (ok, said.join("\n"))
+}
+
+/// A report sent with made-up details, so a person can see it work before real work does.
+pub(crate) fn test_report(home: &Path, f: &Factory, r: &crate::factories::Report) -> (bool, String) {
+    let env = vec![
+        ("ST_EVENT".to_string(), r.on.first().cloned().unwrap_or_else(|| "handoff".to_string())),
+        ("ST_KEY".to_string(), "TEST-1".to_string()),
+        ("ST_TITLE".to_string(), format!("a test of the {} report", r.id)),
+        ("ST_URL".to_string(), String::new()),
+        ("ST_STAGE".to_string(), "review".to_string()),
+        ("ST_BRANCH".to_string(), "st/test-1".to_string()),
+        ("ST_SOURCE".to_string(), "test".to_string()),
+        ("ST_TEXT".to_string(), "This is a test from Sawtooth. Nothing happened to any real work.".to_string()),
+    ];
+    send_report(home, f, r, &env)
 }
