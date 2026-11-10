@@ -40,6 +40,18 @@ try:
     bridge(f"document.querySelector('#st-id-{target}').dispatchEvent(new KeyboardEvent('keydown',{{key:'Enter',bubbles:true}}));return 1"); time.sleep(1)
     check('and renaming it back puts it all back', next(f for f in inv('factories') if f['id'] == fid)['line'] == line0, next(f for f in inv('factories') if f['id'] == fid)['line'])
 
+    # So does renaming an agent: the stages it does go with it.
+    agents0 = next(f for f in inv('factories') if f['id'] == fid)['agents']
+    ai, name = next((i, a['id']) for i, a in enumerate(agents0) if any(s.get('agent') == a['id'] for s in line0))
+    bridge(f"[...document.querySelectorAll('#tuning-agents button[aria-expanded]')][{ai}].click();return 1"); time.sleep(0.4)
+    fill(f'#agent-id-{ai}', 'maker')
+    bridge(f"document.querySelector('#agent-id-{ai}').dispatchEvent(new KeyboardEvent('keydown',{{key:'Enter',bubbles:true}}));return 1"); time.sleep(1)
+    f1 = next(f for f in inv('factories') if f['id'] == fid)
+    check('a renamed agent keeps the stages it does', f1['agents'][ai]['id'] == 'maker' and any(s.get('agent') == 'maker' for s in f1['line']) and not any(s.get('agent') == name for s in f1['line']), [s.get('agent') for s in f1['line']])
+    fill(f'#agent-id-{ai}', name)
+    bridge(f"document.querySelector('#agent-id-{ai}').dispatchEvent(new KeyboardEvent('keydown',{{key:'Enter',bubbles:true}}));return 1"); time.sleep(1)
+    bridge(f"[...document.querySelectorAll('#tuning-agents button[aria-expanded]')][{ai}].click();return 1"); time.sleep(0.3)
+
     bridge("[...document.querySelectorAll('button')].find(b=>b.innerText.trim()==='sentry').click();return 1"); time.sleep(1.2)
     fac = lambda: next(f for f in inv('factories') if f['id'] == fid)
     part = lambda: next(p for p in fac()['parts'] if p['id'] == 'sentry')

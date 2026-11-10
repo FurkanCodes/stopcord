@@ -145,6 +145,17 @@ export function Setup({ factory, onRemove }: { factory: Factory; onRemove: () =>
   const part = (id: string, patch: Partial<Part>) => set({ parts: factory.parts.map((p) => (p.id === id ? { ...p, ...patch } : p)) });
   const agents = [...factory.agents, ...factory.scorers].map((a): [string, string] => [a.id, a.id]);
   const sources = factory.parts.filter((p) => p.kind === 'tickets');
+  // A stage, skill or benchmark names its agent or scorer, so a rename takes them along.
+  const renameRole = (key: 'agents' | 'scorers', i: number, id: string) => {
+    const old = factory[key][i]!.id;
+    set({
+      [key]: factory[key].map((a, j) => (j === i ? { ...a, id } : a)),
+      line: factory.line.map((s) => (s.agent === old ? { ...s, agent: id } : s)),
+      skills: factory.skills.map((s) => (s.agent === old ? { ...s, agent: id } : s)),
+      benchmarks: factory.benchmarks.map((b) => (b.agent === old ? { ...b, agent: id } : b)),
+    });
+  };
+  const roleIds = [...factory.agents, ...factory.scorers].map((a) => a.id);
 
   const tuned = [
     count(factory.agents.length, 'agent'),
@@ -167,8 +178,8 @@ export function Setup({ factory, onRemove }: { factory: Factory; onRemove: () =>
           <Markdown text={p.why} breaks />
           <p className="t-dim" style={{ fontSize: 12 }}>from {p.evidence.join(', ')}</p>
           <div className="grid" style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) minmax(0,1fr)', gap: 12 }}>
-            <div><h3 className="t-dim" style={{ fontSize: 12 }}>now</h3><pre style={{ whiteSpace: 'pre-wrap', margin: 0, fontSize: 12 }}>{p.before}</pre></div>
-            <div><h3 className="t-dim" style={{ fontSize: 12 }}>proposed</h3><pre style={{ whiteSpace: 'pre-wrap', margin: 0, fontSize: 12 }}>{p.after}</pre></div>
+            <div><p className="t-dim" style={{ fontSize: 12 }}>now</p><pre style={{ whiteSpace: 'pre-wrap', margin: 0, fontSize: 12 }}>{p.before}</pre></div>
+            <div><p className="t-dim" style={{ fontSize: 12 }}>proposed</p><pre style={{ whiteSpace: 'pre-wrap', margin: 0, fontSize: 12 }}>{p.after}</pre></div>
           </div>
           <span style={{ display: 'inline-flex', gap: 6 }}>
             <button type="button" className="t-solid is-sm" onClick={() => void api.answerProposal(factory.id, p.id, true).then(refreshFactories, showProblem)}>apply</button>
@@ -202,10 +213,10 @@ export function Setup({ factory, onRemove }: { factory: Factory; onRemove: () =>
         </h2>
         {tuning && (
           <>
-            <RolePane id="tuning-agents" title="agents" noun="agent" empty="none yet. a stage done by an agent needs one" fallback={factory.defaults.harness} items={factory.agents} runners={runners} onChange={(next) => set({ agents: next })} />
+            <RolePane id="tuning-agents" title="agents" noun="agent" empty="none yet. a stage done by an agent needs one" fallback={factory.defaults.harness} items={factory.agents} taken={roleIds} runners={runners} onRename={(i, id) => renameRole('agents', i, id)} onChange={(next) => set({ agents: next })} />
             <SandboxPane id="tuning-sandboxes" factory={factory} set={set} style={paneStyle} />
             <Sources factory={factory} sources={sources} part={part} set={set} />
-            <RolePane id="tuning-scorers" title="scorers" noun="scorer" empty="none. a scorer is an optional line stage that scores work from 0 to 10. the score shows at handoff and never passes or fails anything" fallback={factory.defaults.harness} items={factory.scorers} runners={runners} onChange={(next) => set({ scorers: next })} />
+            <RolePane id="tuning-scorers" title="scorers" noun="scorer" empty="none. a scorer is an optional line stage that scores work from 0 to 10. the score shows at handoff and never passes or fails anything" fallback={factory.defaults.harness} items={factory.scorers} taken={roleIds} runners={runners} onRename={(i, id) => renameRole('scorers', i, id)} onChange={(next) => set({ scorers: next })} />
             <Pane id="tuning-skills" title="skills" heading={3} right={<Key size="xs" onClick={() => set({ skills: [...factory.skills, { id: uniq('skill', factory.skills.map((s) => s.id)), agent: '', description: '', body: '' }] })}>add skill</Key>} style={paneStyle}>
               {factory.skills.length === 0 && <p className="t-dim">none yet. agents are told where skills are, and read one when its "when to use" fits</p>}
               {factory.skills.map((s, i) => (
@@ -273,11 +284,13 @@ function RunsWith({ factory, set }: { factory: Factory; set: (patch: Partial<Fac
     >
       {(open || !harness) && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-          <Text id="def-harness" label="harness" value={factory.defaults.harness ?? ''} list="def-harness-installed" placeholder="claude, codex, gemini, opencode, or any command" onChange={(h) => set({ defaults: { ...factory.defaults, harness: h } })} />
-          <datalist id="def-harness-installed">
-            {installed.map((h) => <option key={h} value={h} />)}
-          </datalist>
-          {installed.length > 0 && <span className="t-dim" style={{ fontSize: 12, paddingLeft: 'calc(14ch + 12px)' }}>on this machine: {installed.join(', ')}. agents with no harness of their own use this one</span>}
+          <FieldRow id="def-harness" label="harness" width="14ch">
+            <input id="def-harness" className="t-field" spellCheck={false} list="def-harness-installed" value={factory.defaults.harness ?? ''} placeholder="claude, codex, gemini, opencode, or any command" onChange={(e) => set({ defaults: { ...factory.defaults, harness: e.currentTarget.value } })} />
+            <datalist id="def-harness-installed">
+              {installed.map((h) => <option key={h} value={h} />)}
+            </datalist>
+            <span className="t-dim" style={{ fontSize: 12 }}>{installed.length > 0 ? `on this machine: ${installed.join(', ')}. ` : ''}agents with no harness of their own use this one</span>
+          </FieldRow>
           <FieldRow id="def-once" label="at once" width="14ch">
             <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               <input id="def-once" type="number" min={1} className="t-field" style={{ width: '8ch' }} value={atOnce} onChange={(e) => set({ defaults: { ...factory.defaults, atOnce: Number(e.currentTarget.value) || 1 } })} />
@@ -316,10 +329,12 @@ function WorksIn({ factory, set, onEdit }: { factory: Factory; set: (patch: Part
             options={[['', 'no sandbox: its own folder and branch only'], ...factory.runners.map((r): [string, string] => [r.id, `${r.id} · ${levelName(r.level)}`])]}
             onChange={(r) => set({ defaults: { ...factory.defaults, runner: r } })}
           />
-          <span style={{ display: 'flex', gap: 8, alignItems: 'baseline', flexWrap: 'wrap', paddingLeft: 'calc(14ch + 12px)' }}>
-            <Key size="xs" onClick={onEdit}>edit sandboxes ›</Key>
-            <span className="t-dim" style={{ fontSize: 12 }}>what each can read, write and reach, and a test</span>
-          </span>
+          <FieldRow label="" width="14ch">
+            <span style={{ display: 'flex', gap: 8, alignItems: 'baseline', flexWrap: 'wrap', marginLeft: -6 }}>
+              <Key size="xs" onClick={onEdit}>edit sandboxes ›</Key>
+              <span className="t-dim" style={{ fontSize: 12 }}>what each can read, write and reach, and a test</span>
+            </span>
+          </FieldRow>
         </div>
       )}
     </Need>
@@ -345,13 +360,23 @@ function Line({ factory, set }: { factory: Factory; set: (patch: Partial<Factory
     });
     set(renamed ? { line, benchmarks: factory.benchmarks.map((b) => (b.startAt === old ? { ...b, startAt: renamed } : b)) } : { line });
   };
+  /** A new stage goes just before the last one, so the line still ends where it did. */
   function addStage() {
     const id = uniq('stage', factory.line.map((s) => s.id));
-    const last = factory.line[factory.line.length - 1];
     const firstAgent = factory.agents[0]?.id ?? '';
     const added: LineStage = firstAgent ? { id, kind: 'agent', agent: firstAgent } : { id, kind: 'human' };
-    set({ line: [...factory.line.map((s) => (s === last ? { ...s, then: id } : s)), added] });
-    setAt(factory.line.length);
+    const n = factory.line.length;
+    if (n < 2) {
+      const last = factory.line[n - 1];
+      set({ line: [...factory.line.map((s) => (s === last ? { ...s, then: id } : s)), added] });
+      setAt(n);
+      return;
+    }
+    const end = factory.line[n - 1]!;
+    // Whatever led to the end now leads to the new stage, which leads to the end.
+    const line = factory.line.map((s) => (s !== end && s.then === end.id ? { ...s, then: id } : s));
+    set({ line: [...line.slice(0, n - 1), { ...added, then: end.id }, end] });
+    setAt(n - 1);
   }
   function removeStage(i: number) {
     const id = factory.line[i]!.id;
@@ -366,7 +391,7 @@ function Line({ factory, set }: { factory: Factory; set: (patch: Partial<Factory
     <Need
       id="line"
       label="line"
-      value={factory.line.length === 0 ? <span className="t-muted">no stages yet. work goes through them in order, from the first</span> : <span className="t-dim" style={{ fontSize: 12 }}>{s ? `changing ${s.id}. click it again to close` : 'click a stage to change it'}</span>}
+      value={factory.line.length === 0 ? <span className="t-muted">no stages yet. work goes through them in order, from the first</span> : <span className="t-dim" style={{ fontSize: 12 }}>{s ? `changing ${s.id}` : 'click a stage to change it'}</span>}
       action={<Key size="xs" onClick={addStage}>add stage</Key>}
     >
       {factory.line.length > 0 && (
@@ -404,7 +429,10 @@ function Line({ factory, set }: { factory: Factory; set: (patch: Partial<Factory
               <input id={`st-loop-${i}`} type="number" min={1} className="t-field" style={{ width: '8ch' }} value={s.maxLoops ?? 1} onChange={(e) => stage(i, { maxLoops: Number(e.currentTarget.value) || 1 })} />
             </FieldRow>
           )}
-          <span><ArmedKey size="xs" onClick={() => removeStage(i)}>remove stage</ArmedKey></span>
+          <span style={{ display: 'flex', gap: 6 }}>
+            <Key size="xs" onClick={() => setAt(null)}>done</Key>
+            <ArmedKey size="xs" style={{ marginLeft: 'auto' }} onClick={() => removeStage(i)}>remove stage</ArmedKey>
+          </span>
         </div>
       )}
     </Need>
@@ -429,16 +457,16 @@ function TellsYou({ factory, set }: { factory: Factory; set: (patch: Partial<Fac
     <Need
       id="reports"
       label="tells you"
-      value={factory.reports.length === 0 ? <span className="t-muted">only here. add a channel or a command to hear about work elsewhere</span> : undefined}
+      value={<span className="t-muted">{factory.reports.length === 0 ? 'only inside sawtooth. add a channel or a command to hear about work elsewhere' : `${factory.reports.length} report${factory.reports.length === 1 ? '' : 's'}. open one to change when it fires and where it goes`}</span>}
       action={
         <>
-          <Key size="xs" onClick={() => add('slack')}>+ a slack channel</Key>
+          {channels ? <Key size="xs" onClick={() => add('slack')}>+ a slack channel</Key> : <Key size="xs" title="Slack is set up once, for every factory" onClick={() => go({ screen: 'integrations' })}>set up slack in integrations ›</Key>}
           <Key size="xs" onClick={() => add('command')}>+ a command</Key>
         </>
       }
     >
       {factory.reports.length > 0 && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 2, margin: '0 -8px' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
           {factory.reports.map((r, i) => (
             <ReportCard
               key={i}
@@ -523,14 +551,14 @@ function Fold({ title, hint, logo, startOpen = false, children }: { title: strin
   );
 }
 
-function RolePane({ id, title, noun, empty, fallback, items, runners, onChange }: { id: string; title: string; noun: string; empty: string; fallback?: string; items: Agent[]; runners: [string, string][]; onChange: (next: Agent[]) => void }) {
+function RolePane({ id, title, noun, empty, fallback, items, taken, runners, onRename, onChange }: { id: string; title: string; noun: string; empty: string; fallback?: string; items: Agent[]; taken: string[]; runners: [string, string][]; onRename: (i: number, id: string) => void; onChange: (next: Agent[]) => void }) {
   const edit = (i: number, patch: Partial<Agent>) => onChange(items.map((a, j) => (j === i ? { ...a, ...patch } : a)));
   return (
-    <Pane id={id} title={title} heading={3} right={<Key size="xs" onClick={() => onChange([...items, { id: uniq(noun, items.map((a) => a.id)), description: '', harness: '', runner: '', prompt: '' }])}>add {noun}</Key>} style={paneStyle}>
+    <Pane id={id} title={title} heading={3} right={<Key size="xs" onClick={() => onChange([...items, { id: uniq(noun, taken), description: '', harness: '', runner: '', prompt: '' }])}>add {noun}</Key>} style={paneStyle}>
       {items.length === 0 && <p className="t-dim">{empty}</p>}
       {items.map((a, i) => (
         <Fold key={i} title={a.id} logo={a.harness || fallback} hint={a.description}>
-          <Text id={`${noun}-id-${i}`} label="name" value={a.id} onChange={(id) => edit(i, { id })} />
+          <NameField id={`${noun}-id-${i}`} label="name" value={a.id} taken={taken} onCommit={(id) => onRename(i, id)} />
           <Text id={`${noun}-d-${i}`} label="what it does" value={a.description} onChange={(description) => edit(i, { description })} />
           <Text id={`${noun}-h-${i}`} label="harness" value={a.harness} placeholder="empty uses the default" onChange={(harness) => edit(i, { harness })} />
           <Pick id={`${noun}-r-${i}`} label="sandbox" value={a.runner} options={runners} onChange={(r) => edit(i, { runner: r })} />
@@ -627,7 +655,7 @@ function ReportCard({ i, factory, r, channels, startOpen, report, remove }: { i:
     <Fold title={r.id} startOpen={startOpen} hint={r.on.length === 0 ? 'never: tick when below' : `${list(r.on)}${where ? ` → ${where}` : ' → nowhere yet'}`}>
       {/* Its keys are kept under its name, so the name stays one a file can have. */}
       <Text id={`rp-id-${i}`} label="name" value={r.id} onChange={(id) => report(i, { id: id.replace(/[^A-Za-z0-9_.-]/g, '-') })} />
-      <FieldRow id={`rp-on-${i}-handoff`} label="when" width="14ch" top>
+      <FieldRow label="when" width="14ch" top>
         <div style={{ display: 'flex', flexWrap: 'wrap', columnGap: 14 }}>
           {[...REPORT_EVENTS, ...unknown].map((event) => (
             <Check key={event} id={`rp-on-${i}-${event}`} checked={r.on.includes(event)} onChange={(on) => report(i, { on: on ? [...r.on, event] : r.on.filter((x) => x !== event) })}>
@@ -675,6 +703,7 @@ function ReportCard({ i, factory, r, channels, startOpen, report, remove }: { i:
         <Key size="xs" disabled={tested === 'testing' || !where} title={where ? 'Sends a made-up event, so you can see it arrive' : 'Give it a channel or a command first'} onClick={() => void test()}>
           {tested === 'testing' ? 'sending…' : 'send a test'}
         </Key>
+        {!where && <span className="t-dim" style={{ fontSize: 12 }}>give it a channel or a command first</span>}
         {tested && tested !== 'testing' && (
           <span role="status" data-report-test={r.id} style={{ flex: '1 1 240px', minWidth: 0, whiteSpace: 'pre-wrap', fontSize: 12 }}>
             <ConnectionState ok={tested.ok}>{tested.said}</ConnectionState>
@@ -690,7 +719,7 @@ function ReportCard({ i, factory, r, channels, startOpen, report, remove }: { i:
 function ConnectionLine({ id, name, c }: { id: string; name: string; c?: Connection }) {
   const missing = c ? c.fields.filter((f) => c.missing.includes(f.name)).map((f) => f.label) : [];
   return (
-    <FieldRow id={id} label="signs in with" width="14ch">
+    <FieldRow label="signs in with" width="14ch">
       <span id={id} style={{ display: 'flex', gap: 10, alignItems: 'baseline', flexWrap: 'wrap' }}>
         <ConnectionState ok={missing.length > 0 ? false : null}>
           {!c

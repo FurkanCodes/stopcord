@@ -189,7 +189,7 @@ function Card({ id, name, state, rows, action, open, onOpen, children }: { id: s
           <span role="status" data-integration-state={id} style={{ flex: '1 1 220px', minWidth: 0, overflowWrap: 'anywhere' }}>{state}</span>
           {action && <span style={{ display: 'inline-flex', gap: 8, alignItems: 'baseline', flexWrap: 'wrap' }}>{action}</span>}
           {onOpen && (
-            <Key size="xs" aria-expanded={Boolean(open)} title={open ? 'Hide the steps' : 'Every step, to change one'} onClick={() => onOpen(!open)}>
+            <Key size="xs" aria-expanded={Boolean(open)} aria-label={`${name.toLowerCase()} steps`} title={open ? 'Hide the steps' : 'Every step, to change one'} onClick={() => onOpen(!open)}>
               <span aria-hidden="true">{open ? '▾' : '▸'}</span> steps
             </Key>
           )}
@@ -250,7 +250,7 @@ function SecretField({ c, f, onSaved }: { c: Connection; f: ConnectionField; onS
           }}
           onBlur={() => void save()}
         />
-        <span className={isSet ? 't-muted' : f.required ? 't-red' : 't-dim'} style={{ width: '8ch', flexShrink: 0 }}>{isSet ? 'set' : f.required ? 'needed' : 'optional'}</span>
+        <span className={isSet ? 't-muted' : f.required && !c.oauth ? 't-red' : 't-dim'} style={{ width: '8ch', flexShrink: 0 }}>{isSet ? 'set' : f.required ? (c.oauth ? 'not set' : 'needed') : 'optional'}</span>
       </span>
       {problem && <span className="t-red" role="alert">{problem}</span>}
     </label>
@@ -389,7 +389,8 @@ function GitHubCard({ ctx }: { ctx: Ctx }) {
         </>
       ) : typeof repo === 'object' ? (
         <>
-          <CopyKey text="git remote add origin git@github.com:OWNER/REPO.git">copy git remote add origin …</CopyKey>
+          <CopyKey text="gh repo create --source=. --private --push">copy gh repo create</CopyKey>
+          <CopyKey text="git remote add origin ">or git remote add origin</CopyKey>
           <Key size="xs" onClick={() => setLook((n) => n + 1)}>check again</Key>
         </>
       ) : typeof repo === 'string' && here ? (
@@ -433,7 +434,7 @@ function GitHubCard({ ctx }: { ctx: Ctx }) {
  * Signing in in the browser: one press, then approve it there. Sentry shows a code to check against
  * the browser's. Polls until it's done, then tells the card.
  */
-function BrowserSignIn({ c, onDone, other, note }: { c: Connection; onDone: () => void; other?: ReactNode; note?: string }) {
+function BrowserSignIn({ c, onDone, other, note, quiet = false }: { c: Connection; onDone: () => void; other?: ReactNode; note?: string; quiet?: boolean }) {
   const [s, setS] = useState<Signing | null>(null);
   const [problem, setProblem] = useState('');
   useEffect(() => {
@@ -476,7 +477,11 @@ function BrowserSignIn({ c, onDone, other, note }: { c: Connection; onDone: () =
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
       <span style={{ display: 'flex', gap: 10, alignItems: 'baseline', flexWrap: 'wrap' }}>
-        <button type="button" className="t-solid is-xs" onClick={() => void start()}>sign in with {c.name.toLowerCase()} ↗</button>
+        {quiet ? (
+          <Key size="xs" className="is-action" onClick={() => void start()}>sign in with {c.name.toLowerCase()} ↗</Key>
+        ) : (
+          <button type="button" className="t-solid is-xs" onClick={() => void start()}>sign in with {c.name.toLowerCase()} ↗</button>
+        )}
         {other}
       </span>
       {note && <span className="t-dim">{note}</span>}
@@ -556,12 +561,12 @@ function TrackerCard({ ctx, c }: { ctx: Ctx; c: Connection }) {
   );
   const rowAction = !here ? null : !signed ? (
     tested === 'testing' ? null : c.oauth ? (
-      <BrowserSignIn c={c} onDone={saved} other={open ? undefined : <Key size="xs" onClick={() => setOpen(true)}>or paste {keyWord}</Key>} />
-    ) : open ? null : (
-      <button type="button" className="t-solid is-xs" onClick={() => setOpen(true)}>paste {keyWord}</button>
+      <BrowserSignIn c={c} quiet onDone={saved} other={<Key size="xs" onClick={() => setOpen(true)}>or paste {keyWord}</Key>} />
+    ) : (
+      <Key size="xs" onClick={() => setOpen(true)}>paste {keyWord}</Key>
     )
   ) : !picked ? (
-    open ? null : <button type="button" className="t-solid is-xs" onClick={() => setOpen(true)}>{pickWord}</button>
+    <Key size="xs" onClick={() => setOpen(true)}>{pickWord}</Key>
   ) : (
     <Check id={`ig-f-${t.id}-${here.id}`} checked={Boolean(part)} onChange={(on) => void setSource(here, t, on ? wanted : null)}>
       {bringWord}
@@ -580,7 +585,7 @@ function TrackerCard({ ctx, c }: { ctx: Ctx; c: Connection }) {
         ctx.rows ? rowState : !signed ? testLine(tested, c.missing.length > 0 ? 'not set up yet' : 'checking…') : using.length > 0 ? <ConnectionState ok>{`${what} · issues go to ${using.map((f) => f.name).join(', ')}`}</ConnectionState> : <ConnectionState ok={null}>signed in · pick where its issues go below</ConnectionState>
       }
     >
-      <Step n={1} done={signed} current={!signed} title={`sign in to ${c.name}`} summary={signed ? (c.signedIn ? `signed in as ${c.signedIn}` : said(tested)) : undefined}>
+      <Step n={1} done={signed} current={!signed} title={`sign in to ${c.name.toLowerCase()}`} summary={signed ? (c.signedIn ? `signed in as ${c.signedIn}` : said(tested)) : undefined}>
         {c.signedIn ? (
           <span style={{ display: 'flex', gap: 8, alignItems: 'baseline', flexWrap: 'wrap' }}>
             <span className="t-muted">signed in as {c.signedIn}, in the browser</span>
@@ -655,7 +660,7 @@ function TrackerCard({ ctx, c }: { ctx: Ctx; c: Connection }) {
       </Step>
       {ctx.rows ? (
         // The row has the tick for this factory, so there's no third step here.
-        <span className="t-dim" style={{ fontSize: 12 }}>once ticked, it pulls every 5 minutes, and each issue waits for you to start it. change that under tuning, in sources by hand.</span>
+        <span className="t-dim" style={{ fontSize: 12 }}>ticking it in the row above pulls every 5 minutes, and each issue waits for you to start it. change that under tuning, in sources by hand.</span>
       ) : (
         <Step n={3} done={signed && picked && using.length > 0} current={signed && picked} title={c.id === 'sentry' ? 'bring its fatal, unresolved issues into' : "bring its issues that aren't started into"}>
           {ctx.factories.map((f) => (
