@@ -326,7 +326,10 @@ textarea::placeholder {
   color: var(--ink-2);
   white-space: nowrap;
 }
+/* A pane's name is the most important word in it: body size, full ink. */
 .t-pane-title {
+  font-size: 13px;
+  color: var(--ink);
   left: 10px;
   max-width: calc(100% - 20px);
   overflow: hidden;
@@ -380,31 +383,35 @@ textarea::placeholder {
   background-color: oklch(1 0 0 / 0.08);
 }
 .t-key[aria-pressed='true'],
-.t-key[aria-current='page'],
-.t-key[aria-expanded='true'] {
+.t-key[aria-current='page'] {
   background: oklch(0.93 0.004 260);
   color: oklch(0.15 0.006 260);
 }
 .t-key[aria-pressed='true']:hover,
-.t-key[aria-current='page']:hover,
-.t-key[aria-expanded='true']:hover {
+.t-key[aria-current='page']:hover {
   background-color: oklch(0.85 0.004 260);
 }
 .t-key[aria-pressed='true'] .t-dim,
 .t-key[aria-current='page'] .t-dim,
-.t-key[aria-expanded='true'] .t-dim,
 .t-key[aria-pressed='true'] .t-muted,
-.t-key[aria-current='page'] .t-muted,
-.t-key[aria-expanded='true'] .t-muted {
+.t-key[aria-current='page'] .t-muted {
   color: oklch(0.35 0.006 260);
+}
+/* Something opened stays quiet: full ink on a faint bar, and its ▾ says the rest. Inverting
+   it made an open fold the loudest thing on the page. */
+.t-key[aria-expanded='true'] {
+  background: var(--bar);
+  color: var(--ink);
+}
+.t-key[aria-expanded='true']:hover {
+  background-color: var(--bar-2);
 }
 /* The bright part of a key's label, such as a fold's name. Follows the key when it inverts. */
 .t-key .t-name {
   color: var(--ink);
 }
 .t-key[aria-pressed='true'] .t-name,
-.t-key[aria-current='page'] .t-name,
-.t-key[aria-expanded='true'] .t-name {
+.t-key[aria-current='page'] .t-name {
   color: inherit;
 }
 .t-key:disabled {
