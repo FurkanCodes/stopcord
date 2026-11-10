@@ -334,7 +334,7 @@ function SandboxCard({ index: i, factory, runner: r, info, onInfo, startOpen, on
                 <Secrets index={i} names={r.secrets ?? []} harnesses={harnesses} onChange={(secrets) => onChange({ secrets })} />
               </Row>
               <Row label="logins">
-                <Quiet>a harness with no secret asks you to log in, once, in its first vm terminal. those logins are kept in the docker volume sawtooth-home, which every vm agent shares</Quiet>
+                <Quiet>a harness with no secret asks you to log in, once, in its first vm terminal. those logins are kept in a docker volume of this sandbox's own, so agents in another sandbox can't reach them</Quiet>
               </Row>
               <Quiet>on linux, docker shares your kernel, so the wall is thinner than a real vm.</Quiet>
             </Group>

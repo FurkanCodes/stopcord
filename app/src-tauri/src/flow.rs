@@ -397,8 +397,13 @@ impl Engine {
         crate::vm::cleanup(&docker, &spec);
         crate::vm::remove_orphaned_volumes(&docker);
         let id = terminal["id"].as_str().unwrap_or_default();
-        // The line collects its own work when an agent says it's done, and a new terminal takes back anything left.
-        if self.item_on(id).is_some() {
+        // The line collects its own work when an agent says it's done, and a new terminal takes back
+        // anything left. That's any terminal a work item ever had: once the work ends its terminal is
+        // gone from the item, and a sync then would write into ended work and make its volume again.
+        let on_line = self.store.list().unwrap_or_default().iter().any(|f| {
+            f.work.iter().any(|w| w.terminal.as_deref() == Some(id) || w.agents.values().any(|t| t == id))
+        });
+        if on_line {
             return;
         }
         let Some(factory) = self.factory_of(terminal).map(|f| f.id) else { return };

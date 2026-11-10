@@ -11,7 +11,8 @@ The `vm` level runs each terminal in a fresh Linux container in Docker. It's for
 | Reports | `st`, a Python script, sends reports with the terminal's key. The key travels in the environment, never on a command line, because `ps` shows those to anything on the Mac |
 | Privileges | User `agent` (uid 1000), `--cap-drop ALL`, `no-new-privileges`, a process limit |
 | Secrets | A sandbox lists environment variable names, and each container gets the secrets of those names from `~/.sawtooth/secrets`. `vm-run` reads them on the Mac and passes `-e NAME` with no value, so no value is ever on a command line, in the spec or in a log. Names Sawtooth sets itself, such as the proxy variables or `SAWTOOTH_*`, are refused, so a secret can't send traffic around the filter |
-| Logins | Through a secret: each harness profile suggests the names it can log in with, such as `CLAUDE_CODE_OAUTH_TOKEN` from `claude setup-token`. Without one, a harness asks to log in once in its first VM terminal, and that login stays in the `sawtooth-home` volume, shared by every VM agent |
+| Logins | Through a secret: each harness profile suggests the names it can log in with, such as `CLAUDE_CODE_OAUTH_TOKEN` from `claude setup-token`. Without one, a harness asks to log in once in each sandbox's first VM terminal, and that login stays in the sandbox's home volume |
+| Home | One volume per sandbox, `sawtooth-home-` and a hash of Sawtooth's home, the factory and the sandbox. An agent's shell runs what's in its home, so a home shared across sandboxes would let an untrusted agent leave something for a trusted one to run with its secrets |
 
 The probe behind "test this sandbox" checks these from inside the container, with the network and relay an agent gets.
 
@@ -24,9 +25,9 @@ The probe behind "test this sandbox" checks these from inside the container, wit
 - Both changed: nothing is overwritten, and the person is told.
 - No record: the VM's copy can't be shown to come from this folder, so it's replaced.
 
-Work crosses as a git bundle. Commits coming back must follow on from the folder's own, except in a throwaway copy, where only kept files go anywhere. Fetches run with `fsck`, which refuses a tree containing `.git`, so a VM can't plant a hook on the Mac. Sawtooth's own files, the knowledge-base links, never cross. The VM gets a plain copy of the knowledge base instead. What agents write to that copy comes back on every sync. It's merged with what changed on the Mac meanwhile, keeping every line either side added (`git merge-file --union`), into the factory's knowledge file. The knowledge review then shows it like any agent's edit. A link, a file the project tracks, or anything over 1 MB isn't read back.
+Work crosses as a git bundle. Commits coming back must follow on from the folder's own, except in a throwaway copy, where only kept files go anywhere. Fetches run with `fsck`, which refuses a tree containing `.git`, so a VM can't plant a hook on the Mac. No git filter runs on either side, because `.gitattributes`, which the VM writes, picks them. Otherwise git-lfs on the Mac would fetch whatever URL the VM named, outside the web filter. If a switch fails partway, the folder goes back to how it was, uncommitted work included, so the next sync can still tell which side changed. A folder syncs one at a time, held by a file lock, because the engine and each terminal's `vm-run` sync from different processes. Sawtooth's own files, the knowledge-base links, never cross. The VM gets a plain copy of the knowledge base instead. What agents write to that copy comes back on every sync. It's merged with what changed on the Mac meanwhile, keeping every line either side added (`git merge-file --union`), into the factory's knowledge file. The knowledge review then shows it like any agent's edit. A link, a file the project tracks, or anything over 1 MB isn't read back.
 
-The engine syncs when an agent says it's done, when a person treats work as done, before the next round in the same terminal, and when a terminal that isn't on the line ends. Volumes and containers go when the work ends.
+The engine syncs when an agent says it's done, when a person treats work as done, before the next round in the same terminal, and when a terminal that was never on the line ends. A line terminal ending doesn't sync, even after its work ended, since that would write into ended work and make its volume again. Volumes and containers go when the work ends.
 
 ## Things learned building it
 
@@ -50,7 +51,11 @@ The image is built on first use and named by a hash of its files. After a build,
 
 - On Linux, Docker shares the kernel, so the wall is thinner than a real VM. The Linux relay, which mounts the filter's and report's Unix sockets, hasn't been run.
 - Any agent in a VM can read the secrets it's given, since its harness needs them. Use a token made for the VM, which can be cancelled alone. Keeping keys out of the VM entirely would mean the filter adding them to requests, which needs it to open TLS.
-- Every VM agent shares `sawtooth-home`. An agent could change a harness's settings there for later agents. They're still inside the VM.
+- A sandbox's agents share its home. An agent can change a harness's settings there for later agents of the same sandbox, which get the same secrets.
+- A removed sandbox's home volume stays, with any login in it, until it's removed with `docker volume rm`. So does the `sawtooth-home` volume every VM agent shared before homes were per sandbox.
 - A knowledge-base edit from the VM is live for every agent before a person reviews it, as any agent's edit is. For untrusted work that's a way to reach trusted agents, and closing it means agents reading only the approved copy.
 - The image installs Claude Code, Codex, opencode and Gemini CLI from npm. A real harness has only been started with `--version`. Logging in and working inside the VM have been tested only with a stand-in agent.
 - Codex's browser login listens on localhost inside the container, which the Mac's browser can't reach. Use its device login or an API key.
+- A sync isn't a snapshot. The agent keeps running after it says it's done, so it can write while its copy is read, and that sync then fails as "didn't come out the same". The Mac's edits made during a sync's few seconds are overwritten.
+- The knowledge base's 1 MB limit is checked before the file is read, so a VM can grow it between the two. A sync has no timeout, so a VM can stall one, for example with a named pipe as its knowledge file.
+- The setup marker is in the Mac's folder, so a VM copy made again, such as after its volume was removed, starts without its setup.

@@ -33,9 +33,6 @@ const SYNC: &str = include_str!("../vm/sawtooth-sync");
 /// The name a person's own image starts FROM.
 pub const LATEST: &str = "sawtooth-vm:latest";
 
-/// Where harness logins live, shared by every VM agent.
-pub const HOME_VOLUME: &str = "sawtooth-home";
-
 /// Written into the terminal's git folder once the container is about to start, or when it can't.
 const READY: &str = "sawtooth-vm-ready";
 
@@ -109,6 +106,14 @@ fn terminal_id(spec: &Spec) -> String {
 }
 
 /// The label every container and network of one Sawtooth home carries.
+/// The home folder a sandbox's agents share, where harness logins and settings live. One per
+/// sandbox: an agent's shell runs what's in its home, so a shared one would let an agent of one
+/// sandbox leave something for an agent of another, which has other secrets.
+pub fn home_volume(store: &Path, factory: &str, runner: &str) -> String {
+    let id = format!("{}\0{factory}\0{runner}", store.display());
+    format!("sawtooth-home-{}", &sha(id.as_bytes())[..16])
+}
+
 pub fn home_label(store: &Path) -> String {
     format!("sawtooth.home={}", key(store))
 }
@@ -489,9 +494,16 @@ pub struct Spec {
     pub env: Vec<(String, String)>,
     /// Secrets the container gets, by name. Their values are read on the Mac when it starts.
     pub secrets: Vec<String>,
+    /// The volume that's the agent's home: its sandbox's, from `home_volume`.
+    pub home: String,
 }
 
 impl Spec {
+    /// The home volume, or one of the folder's own when nothing named a sandbox, so it's never shared by mistake.
+    fn home(&self) -> String {
+        if self.home.is_empty() { home_volume(&self.store, "", &self.dir.display().to_string()) } else { self.home.clone() }
+    }
+
     pub fn record(&self) -> PathBuf {
         record(&self.store, &self.dir)
     }
@@ -580,6 +592,11 @@ pub fn knowledge_back(vm: &dyn Side, kb: &Path, given: &Path, names: &[String]) 
 
 /// `knowledge_back` for a terminal's VM. Nothing when the factory has no knowledge base.
 pub fn knowledge(spec: &Spec, docker: &Path) -> Result<bool, String> {
+    let _held = hold(&spec.store, &spec.dir)?;
+    knowledge_held(spec, docker)
+}
+
+fn knowledge_held(spec: &Spec, docker: &Path) -> Result<bool, String> {
     let Some(kb) = &spec.knowledge else { return Ok(false) };
     let vm = Volume { docker: docker.to_path_buf(), image: image(), volume: volume(&spec.dir) };
     knowledge_back(&vm, kb, &knowledge_given(&spec.store, &spec.dir), &spec.exclude)
@@ -590,8 +607,26 @@ fn branch_of(dir: &Path) -> String {
     crate::worktree::git(dir, &["branch", "--show-current"]).unwrap_or_default()
 }
 
+/// Keeps a folder's syncs one at a time until it's dropped. The engine and each terminal's
+/// `vm-run` sync from different processes, so it's a lock on a file. Two at once could each see
+/// the other's half-done switch, leave a volume behind, or write into work that has ended.
+fn hold(store: &Path, dir: &Path) -> Result<std::fs::File, String> {
+    let path = store.join("vm").join("locks").join(format!("{}.lock", key(dir)));
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    let file = std::fs::OpenOptions::new().create(true).truncate(false).write(true).open(&path).map_err(|e| format!("couldn't open {}: {e}", path.display()))?;
+    file.lock().map_err(|e| format!("couldn't wait for another sync of the folder: {e}"))?;
+    Ok(file)
+}
+
 /// Keeps a terminal's folder and its VM copy in step, whichever way that goes.
 pub fn sync(spec: &Spec, docker: &Path) -> Result<Synced, String> {
+    let _held = hold(&spec.store, &spec.dir)?;
+    sync_held(spec, docker)
+}
+
+fn sync_held(spec: &Spec, docker: &Path) -> Result<Synced, String> {
     ensure_volume(docker, &spec.store, &spec.dir)?;
     let host = Local { dir: &spec.dir };
     let vm = Volume { docker: docker.to_path_buf(), image: image(), volume: volume(&spec.dir) };
@@ -651,7 +686,7 @@ fn agent_args(spec: &Spec, name: &str, image: &str) -> Vec<String> {
     let mut a: Vec<String> = ["run", "--rm", "-it", "--name", name, "--network", &network(spec)].iter().map(|s| s.to_string()).collect();
     a.extend(["--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--pids-limit", "4096"].map(String::from));
     a.extend(["--label".into(), home_label(&spec.store)]);
-    a.extend(["-v".into(), format!("{}:/work", volume(&spec.dir)), "-v".into(), format!("{HOME_VOLUME}:/home/agent"), "-w".into(), "/work".into()]);
+    a.extend(["-v".into(), format!("{}:/work", volume(&spec.dir)), "-v".into(), format!("{}:/home/agent", spec.home()), "-w".into(), "/work".into()]);
     for (k, v) in agent_env(spec) {
         a.extend(["-e".into(), format!("{k}={v}")]);
     }
@@ -688,6 +723,8 @@ pub fn cleanup(docker: &Path, spec: &Spec) {
 
 /// Forgets a folder's VM copy, once its work is over.
 pub fn forget(store: &Path, dir: &Path) {
+    // After a sync that's running, so it can't make the volume again behind this.
+    let _held = hold(store, dir);
     let _ = std::fs::remove_file(record(store, dir));
     let _ = std::fs::remove_file(knowledge_given(store, dir));
     if let Some(docker) = docker() {
@@ -748,7 +785,12 @@ pub fn main(args: &[String]) -> i32 {
         Ok(t) => t,
         Err(why) => return fail(markers.as_ref(), &why),
     };
-    match sync(&spec, &docker) {
+    // Held until the copy is ready, so the engine can't sync it halfway through.
+    let held = match hold(&spec.store, &spec.dir) {
+        Ok(h) => h,
+        Err(why) => return fail(markers.as_ref(), &why),
+    };
+    match sync_held(&spec, &docker) {
         Ok(Synced::Sent) => say("copied the work into the VM"),
         Ok(Synced::Took) => say("brought back work the VM had"),
         Ok(Synced::Same) => {}
@@ -756,7 +798,7 @@ pub fn main(args: &[String]) -> i32 {
     }
     if let Some(kb) = &spec.knowledge {
         // What the last container wrote comes back before the new one gets a fresh copy.
-        match knowledge(&spec, &docker) {
+        match knowledge_held(&spec, &docker) {
             Ok(true) => say("brought back knowledge-base edits from the VM, for your review"),
             Ok(false) => {}
             Err(why) => say(&format!("couldn't bring back knowledge-base edits: {why}")),
@@ -766,6 +808,7 @@ pub fn main(args: &[String]) -> i32 {
             say(&format!("the VM has no knowledge base: {why}"));
         }
     }
+    drop(held);
     if let Err(why) = open_network(&docker, &spec, &tag) {
         cleanup(&docker, &spec);
         return fail(markers.as_ref(), &why);
@@ -1011,6 +1054,85 @@ mod tests {
         assert!(why.contains("hasDotgit"), "refused for the right reason: {why}");
         assert!(!p.host.path().join(".git/hooks/post-checkout").exists());
         assert_eq!(git(p.host.path(), &["rev-parse", "HEAD"]).unwrap(), before);
+    }
+
+    #[test]
+    fn a_filter_the_vm_asks_for_never_runs_on_the_mac() {
+        let p = Pair::new();
+        // As git lfs install leaves it, but a program that shows whether it ran.
+        let ran = p.records.path().join("filter-ran");
+        let touch = format!("touch '{}'; cat", ran.display());
+        for k in ["clean", "smudge"] {
+            git(p.host.path(), &["config", &format!("filter.evil.{k}"), &touch]).unwrap();
+        }
+        git(p.host.path(), &["config", "filter.evil.required", "true"]).unwrap();
+        p.sync().unwrap();
+        std::fs::write(p.v(".gitattributes"), "* filter=evil\n").unwrap();
+        std::fs::write(p.v("b.txt"), "from the vm\n").unwrap();
+        p.commit_in_vm("ask for the filter");
+        assert_eq!(p.sync().unwrap(), Synced::Took);
+        assert_eq!(read(&p.h("b.txt")), "from the vm\n");
+        std::fs::write(p.h("c.txt"), "from the mac\n").unwrap();
+        assert_eq!(p.sync().unwrap(), Synced::Sent);
+        assert!(!ran.exists(), "the filter ran on the Mac");
+    }
+
+    #[test]
+    fn a_switch_that_fails_puts_sawtooths_files_back_and_can_sync_again() {
+        let p = Pair::new();
+        std::fs::write(p.h("knowledge.md"), "the mac's knowledge\n").unwrap();
+        std::os::unix::fs::symlink(p.h("knowledge.md"), p.h("AGENTS.md")).unwrap();
+        std::fs::write(p.host.path().join(".git/info/exclude"), "/AGENTS.md\n/knowledge.md\n").unwrap();
+        std::fs::write(p.h("draft.txt"), "uncommitted on the mac\n").unwrap();
+        p.sync().unwrap();
+        std::fs::write(p.v("b.txt"), "from the vm\n").unwrap();
+        p.commit_in_vm("vm work");
+        // Another git holding the index makes the checkout fail after Sawtooth's files moved aside.
+        let lock = p.host.path().join(".git/index.lock");
+        std::fs::write(&lock, "").unwrap();
+        assert!(p.sync().is_err());
+        assert!(p.h("AGENTS.md").is_symlink(), "the link came back");
+        assert_eq!(read(&p.h("draft.txt")), "uncommitted on the mac\n");
+        assert!(!p.h("b.txt").exists());
+        assert!(git(p.host.path(), &["for-each-ref", "refs/sawtooth"]).unwrap().is_empty(), "no refs left behind");
+        std::fs::remove_file(&lock).unwrap();
+        assert_eq!(p.sync().unwrap(), Synced::Took);
+        assert_eq!(read(&p.h("b.txt")), "from the vm\n");
+        assert!(p.h("AGENTS.md").is_symlink());
+    }
+
+    #[test]
+    fn each_sandbox_has_a_home_of_its_own() {
+        let store = Path::new("/home/sawtooth");
+        let untrusted = home_volume(store, "f1", "strangers");
+        assert_eq!(untrusted, home_volume(store, "f1", "strangers"), "a sandbox keeps its logins");
+        assert_ne!(untrusted, home_volume(store, "f1", "trusted"));
+        assert_ne!(untrusted, home_volume(store, "f2", "strangers"), "same name in another factory");
+        assert_ne!(untrusted, home_volume(Path::new("/home/e2e"), "f1", "strangers"), "a test's home is its own");
+        let spec = Spec { home: untrusted.clone(), dir: "/w".into(), token: "t".into(), ..Spec::default() };
+        let args = agent_args(&spec, "a", "img");
+        assert!(args.contains(&format!("{untrusted}:/home/agent")), "{args:?}");
+        let nameless = Spec { dir: "/w".into(), token: "t".into(), ..Spec::default() };
+        let mount = agent_args(&nameless, "a", "img").into_iter().find(|a| a.ends_with(":/home/agent")).unwrap();
+        assert!(mount.starts_with("sawtooth-home-") && mount != format!("{untrusted}:/home/agent"), "{mount}");
+    }
+
+    #[test]
+    fn syncs_of_one_folder_wait_for_each_other() {
+        let store = tempfile::tempdir().unwrap();
+        let dir = Path::new("/some/folder");
+        let first = hold(store.path(), dir).unwrap();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let s = store.path().to_path_buf();
+        let waiter = std::thread::spawn(move || {
+            let _second = hold(&s, Path::new("/some/folder")).unwrap();
+            tx.send(()).unwrap();
+        });
+        assert!(rx.recv_timeout(std::time::Duration::from_millis(300)).is_err(), "it didn't wait");
+        let _other = hold(store.path(), Path::new("/another/folder")).unwrap();
+        drop(first);
+        rx.recv_timeout(std::time::Duration::from_secs(5)).expect("it never got its turn");
+        waiter.join().unwrap();
     }
 
     /// The same round trip through a real Docker volume. Needs Docker, so it's run by name:

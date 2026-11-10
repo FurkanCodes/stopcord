@@ -21,8 +21,30 @@
 #       missing, or too big to be notes.
 #
 # EXCLUDED names belong to Sawtooth, such as knowledge-base links: they never cross and are
-# never touched. Hooks never run, here or on the Mac.
+# never touched. Hooks never run, here or on the Mac, and neither do filters.
 set -eu
+
+# A filter is a program git runs on a file's contents, chosen by .gitattributes, which the other
+# side writes. On the Mac that could be git-lfs fetching a URL the VM picked, outside the web
+# filter. Every filter configured anywhere is blanked, which git takes as no filter, so both sides
+# also see the same bytes. Names go through git's environment, so any character in one is safe.
+blank_filters() {
+    names=$(git config --name-only --get-regexp '^filter\.' 2>/dev/null | sed -n 's/^filter\.\(.*\)\.[^.]*$/\1/p' | sort -u)
+    i=0
+    while IFS= read -r f; do
+        [ -n "$f" ] || continue
+        for k in clean smudge process; do
+            export "GIT_CONFIG_KEY_$i=filter.$f.$k" "GIT_CONFIG_VALUE_$i="
+            i=$((i + 1))
+        done
+        export "GIT_CONFIG_KEY_$i=filter.$f.required" "GIT_CONFIG_VALUE_$i=false"
+        i=$((i + 1))
+    done <<EOF
+$names
+EOF
+    export GIT_CONFIG_COUNT=$i
+}
+blank_filters
 
 g() { git -c core.hooksPath=/dev/null -c core.fsmonitor=false -c advice.detachedHead=false "$@"; }
 
@@ -83,11 +105,29 @@ aside() {
         if [ -e "$n" ] || [ -L "$n" ]; then mv "$n" "$keep/$n"; fi
     done
 }
+# Puts back whatever aside moved. Names have no slash in them, so each is its own entry in $keep.
 back() {
-    for n do
-        if [ -e "$keep/$n" ] || [ -L "$keep/$n" ]; then rm -rf "$n"; mv "$keep/$n" "$n"; fi
+    for p in "$keep"/* "$keep"/.[!.]* "$keep"/..?*; do
+        if [ -e "$p" ] || [ -L "$p" ]; then n=${p##*/}; rm -rf "$n"; mv "$p" "$n"; fi
     done
     rmdir "$keep" 2>/dev/null || rm -rf "$keep"
+}
+
+# When the switch fails partway, the folder goes back to how it was, uncommitted work included,
+# and Sawtooth's files come back. Otherwise both sides would look changed from then on, and
+# nothing could sync again.
+undo() {
+    status=$?
+    set +e
+    # Each step only after the one before worked: clean removes uncommitted files, which only
+    # read-tree brings back, so it must never run when the checkout didn't.
+    if [ -n "$undo_head" ]; then
+        if [ -n "$undo_branch" ]; then g checkout -q -f -B "$undo_branch" "$undo_head"; else g checkout -q -f --detach "$undo_head"; fi &&
+            g clean -fdq && g read-tree --reset -u "$undo_state" && g reset -q
+    fi
+    back
+    forget_in
+    exit "$status"
 }
 
 forget_in() { g for-each-ref --format='%(refname)' refs/sawtooth/in/ | while read -r r; do g update-ref -d "$r"; done; }
@@ -116,12 +156,20 @@ unpack() {
         echo "sawtooth-sync: its history was rewritten, so it doesn't follow on from this folder" >&2
         exit 3
     fi
+    undo_head= undo_branch= undo_state=
+    if has_head; then
+        undo_head=$(g rev-parse HEAD)
+        undo_branch=$(g symbolic-ref -q --short HEAD || true)
+        undo_state=$(wip "$@")
+    fi
     aside "$@"
+    trap undo EXIT
     if [ -n "$branch" ]; then g checkout -q -f -B "$branch" "$new"; else g checkout -q -f --detach "$new"; fi
     g clean -fdq
     g read-tree --reset -u refs/sawtooth/in/wip
     g reset -q
-    back "$@"
+    trap - EXIT
+    back
     if [ -n "$setbase" ] && [ "$setbase" != "$branch" ] && g rev-parse -q --verify refs/sawtooth/in/base >/dev/null; then
         g branch -f "$setbase" refs/sawtooth/in/base
     fi

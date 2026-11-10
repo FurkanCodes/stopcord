@@ -105,7 +105,7 @@ try:
     bridge("[...document.querySelectorAll('[data-sandbox] h4')].find(h=>h.innerText==='the vm').scrollIntoView({block:'start'});return 1"); time.sleep(0.4); shot('vm-settings')
     t = text()
     hint = bridge("return document.querySelector('[data-sandbox] input[id^=sb-img-]')?.placeholder||''")
-    check('setup explains the vm', 'the vm' in t and 'sawtooth-home' in t and 'FROM sawtooth-vm:latest' in hint, (hint, t[:800]))
+    check('setup explains the vm', 'the vm' in t and "this sandbox's own" in t and 'FROM sawtooth-vm:latest' in hint, (hint, t[:800]))
     check('setup offers the harness its login names', 'CLAUDE_CODE_OAUTH_TOKEN' in t and 'claude setup-token' in t, t[:1200])
     press('1'); time.sleep(0.5)
 

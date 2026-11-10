@@ -262,7 +262,7 @@ fn test_vm(store: &Store, bridge: &Bridge, factory: &Factory, runner: &Runner, a
     let harness = harness::find(&harnesses, &factory.defaults.harness);
     let site = harness.and_then(|h| h.domains.first()).map(|d| format!("api.{d}")).unwrap_or_default();
     let info = bridge.call("confine.prepare", json!({ "allow": allowed_sites(runner, harness), "vm": true }))?;
-    let spec = vm_spec(store, &info, Path::new(""), runner, String::new(), String::new(), Vec::new(), None, Vec::new());
+    let spec = vm_spec(store, &info, factory, Path::new(""), runner, String::new(), String::new(), Vec::new(), None, Vec::new());
     let image = if runner.vm_image.trim().is_empty() { tag } else { runner.vm_image.trim().to_string() };
     let checks = vm::probe(&docker, &spec, &image, &home_dir(), &site);
     let _ = bridge.call("confine.release", json!({ "token": spec.token }));
@@ -271,8 +271,9 @@ fn test_vm(store: &Store, bridge: &Bridge, factory: &Factory, runner: &Runner, a
 
 /// A VM terminal's spec, from what the daemon made for it.
 #[allow(clippy::too_many_arguments)]
-fn vm_spec(store: &Store, info: &Value, dir: &Path, runner: &Runner, command: String, base: String, exclude: Vec<String>, knowledge: Option<PathBuf>, env: Vec<(String, String)>) -> vm::Spec {
+fn vm_spec(store: &Store, info: &Value, factory: &Factory, dir: &Path, runner: &Runner, command: String, base: String, exclude: Vec<String>, knowledge: Option<PathBuf>, env: Vec<(String, String)>) -> vm::Spec {
     vm::Spec {
+        home: vm::home_volume(store.home(), &factory.id, &runner.id),
         token: info["token"].as_str().unwrap_or_default().to_string(),
         dir: dir.to_path_buf(),
         store: store.home().to_path_buf(),
@@ -527,7 +528,7 @@ pub fn prepare(
                 }
                 None => (Vec::new(), None),
             };
-            let mut spec = vm_spec(store, &info, cwd, r, command, base, exclude, knowledge, git_identity(cwd));
+            let mut spec = vm_spec(store, &info, factory, cwd, r, command, base, exclude, knowledge, git_identity(cwd));
             spec.throwaway = cwd.starts_with(store.worktrees_dir(&factory.id).join(".copies"));
             started.argv = vec![program.display().to_string(), "vm-run".into(), serde_json::to_string(&spec).unwrap_or_default()];
             started.env.push((vm::KEY.to_string(), spec.key.clone()));
