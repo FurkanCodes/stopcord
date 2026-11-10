@@ -10,7 +10,8 @@ The `vm` level runs each terminal in a fresh Linux container in Docker. It's for
 | Network | Its own `--internal` network, where it can reach only a relay container. The relay forwards port 3128 to the terminal's web filter and port 3129 to its report port |
 | Reports | `st`, a Python script, sends reports with the terminal's key. The key travels in the environment, never on a command line, because `ps` shows those to anything on the Mac |
 | Privileges | User `agent` (uid 1000), `--cap-drop ALL`, `no-new-privileges`, a process limit |
-| Logins | The `sawtooth-home` volume, shared by every VM agent. A person logs in once, in the first VM terminal |
+| Secrets | A sandbox lists environment variable names, and each container gets the secrets of those names from `~/.sawtooth/secrets`. `vm-run` reads them on the Mac and passes `-e NAME` with no value, so no value is ever on a command line, in the spec or in a log. Names Sawtooth sets itself, such as the proxy variables or `SAWTOOTH_*`, are refused, so a secret can't send traffic around the filter |
+| Logins | Through a secret: each harness profile suggests the names it can log in with, such as `CLAUDE_CODE_OAUTH_TOKEN` from `claude setup-token`. Without one, a harness asks to log in once in its first VM terminal, and that login stays in the `sawtooth-home` volume, shared by every VM agent |
 
 The probe behind "test this sandbox" checks these from inside the container, with the network and relay an agent gets.
 
@@ -35,9 +36,14 @@ The engine syncs when an agent says it's done, when a person treats work as done
 - With `-t`, killing `docker run` leaves its container running. Containers are removed by name before their volumes, because a volume in use can't be removed.
 - Tokens restart with each daemon, and a test's daemon runs beside the real one. So names include a hash of Sawtooth's home, and the e2e test only cleans up containers labelled with its own home.
 
+## Why logins come in as secrets
+
+Copying a harness's login from the Mac doesn't work generally. Each harness keeps it somewhere else (Claude Code in the Keychain, Codex in a file), and most logins renew by cancelling the old key, so a copy shared with the Mac logs one side out. What every harness accepts is an environment variable, so a VM gets its own token or key, which can be cancelled alone. The profile's suggested names are data, so a harness Sawtooth doesn't know works by typing its variable's name.
+
 ## Limits
 
 - On Linux, Docker shares the kernel, so the wall is thinner than a real VM. The Linux relay, which mounts the filter's and report's Unix sockets, hasn't been run.
+- Any agent in a VM can read the secrets it's given, since its harness needs them. Use a token made for the VM, which can be cancelled alone. Keeping keys out of the VM entirely would mean the filter adding them to requests, which needs it to open TLS.
 - Every VM agent shares `sawtooth-home`. An agent could change a harness's settings there for later agents. They're still inside the VM.
 - The knowledge base is read-only in the VM: what an agent writes to it there doesn't come back.
 - The image installs Claude Code, Codex, opencode and Gemini CLI from npm. A real harness has only been started with `--version`. Logging in and working inside the VM have been tested only with a stand-in agent.

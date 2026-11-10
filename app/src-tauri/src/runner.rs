@@ -287,6 +287,7 @@ fn vm_spec(store: &Store, info: &Value, dir: &Path, runner: &Runner, command: St
         report_socket: PathBuf::from(info["report"].as_str().unwrap_or_default()),
         key: info["key"].as_str().unwrap_or_default().to_string(),
         env,
+        secrets: runner.secrets.clone(),
     }
 }
 
@@ -319,7 +320,10 @@ pub fn info(store: &Store) -> Value {
         "blocks": blocks,
         "escapes": ESCAPES.iter().map(|(what, why)| json!({ "what": what, "why": why })).collect::<Vec<_>>(),
         "alwaysReads": LISTED_HOME_READS.iter().map(|r| format!("~/{r}")).collect::<Vec<_>>(),
-        "harnesses": harnesses.iter().map(|h| json!({ "id": h.id, "sites": h.domains, "quiet": h.quiet_domains, "ownSandbox": !h.own_sandbox_args.trim().is_empty() })).collect::<Vec<_>>(),
+        "harnesses": harnesses
+            .iter()
+            .map(|h| json!({ "id": h.id, "sites": h.domains, "quiet": h.quiet_domains, "ownSandbox": !h.own_sandbox_args.trim().is_empty(), "loginEnv": h.login_env, "loginHint": h.login_hint }))
+            .collect::<Vec<_>>(),
         "docker": match vm::available() {
             Ok(docker) => json!({ "ok": true, "why": "", "image": vm::LATEST, "built": vm::has_image(&docker, &vm::image()) }),
             Err(why) => json!({ "ok": false, "why": why, "image": vm::LATEST, "built": false }),

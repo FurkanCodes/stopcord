@@ -768,6 +768,19 @@ fn set_secret(app: State<'_, App>, name: String, value: String) -> Result<(), Fa
     settings::set_secret(app.store.home(), &name, &value).map_err(fail)
 }
 
+/// Which of these secrets have a value. Never the values: the window can't read a secret back.
+#[tauri::command(async)]
+fn secrets_set(app: State<'_, App>, names: Vec<String>) -> Vec<String> {
+    names.into_iter().filter(|n| settings::get_secret(app.store.home(), n).is_some()).collect()
+}
+
+/// Checks a secret's name for a VM, then stores it like any other secret.
+#[tauri::command(async)]
+fn set_vm_secret(app: State<'_, App>, name: String, value: String) -> Result<(), Failure> {
+    vm::secret_name(&name).map_err(|why| Failure::new("secret", why))?;
+    settings::set_secret(app.store.home(), &name, value.trim()).map_err(fail)
+}
+
 #[tauri::command(async)]
 fn harnesses(app: State<'_, App>) -> Vec<harness::Harness> {
     harness::load(&app.store.home().join("harnesses")).0
@@ -915,6 +928,8 @@ fn main() {
             run_benchmark,
             test_runner,
             sandbox_info,
+            secrets_set,
+            set_vm_secret,
             benchmark_results,
             suggest_start,
             answer_proposal,

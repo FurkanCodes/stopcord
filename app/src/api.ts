@@ -70,6 +70,8 @@ export interface Runner {
   vmCommand?: string;
   /** VM level: the image agents run in, built FROM sawtooth-vm:latest. */
   vmImage?: string;
+  /** VM level: secrets each agent gets as environment variables, by name. */
+  secrets?: string[];
   setupCommands?: string[];
 }
 
@@ -78,7 +80,7 @@ export interface SandboxInfo {
   blocks: { id: string; label: string; paths: string[] }[];
   escapes: { what: string; why: string }[];
   alwaysReads: string[];
-  harnesses: { id: string; sites: string[]; quiet: string[]; ownSandbox: boolean }[];
+  harnesses: { id: string; sites: string[]; quiet: string[]; ownSandbox: boolean; loginEnv: string[]; loginHint: string }[];
   /** Whether the VM runner can work here, and what to do if not. */
   docker: { ok: boolean; why: string; image: string; built: boolean };
 }
@@ -444,6 +446,9 @@ export const api = {
   machine: () => invoke<Machine>('machine'),
   saveMachine: (settings: Settings) => invoke<Machine>('save_machine', { settings }),
   setSecret: (name: string, value: string) => invoke<void>('set_secret', { name, value }),
+  /** Which of these secrets have a value. Never the values themselves. */
+  secretsSet: (names: string[]) => invoke<string[]>('secrets_set', { names }),
+  setVmSecret: (name: string, value: string) => invoke<void>('set_vm_secret', { name, value }),
   harnesses: () => invoke<HarnessProfile[]>('harnesses'),
   saveHarness: (harness: HarnessProfile) => invoke<void>('save_harness', { harness }),
   nearbyFolders: () => invoke<FolderSuggestion[]>('nearby_folders'),

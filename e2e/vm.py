@@ -8,7 +8,7 @@ case "$1" in
 planner) echo "1. Make the change." > PLAN.md; echo evil > planner-evil.txt; git add -A; git commit --no-verify -qm "planner went too far"; st done "wrote the plan" ;;
 builder)
   date +%s >> work.txt
-  st note "builder-saw users=[$(ls /Users 2>&1 | head -1)] docker=$(test -S /var/run/docker.sock && echo yes || echo no) home=$(ls ~/.ssh 2>&1 | head -1)"
+  st note "builder-saw users=[$(ls /Users 2>&1 | head -1)] docker=$(test -S /var/run/docker.sock && echo yes || echo no) home=$(ls ~/.ssh 2>&1 | head -1) token-len=${#E2E_TOKEN} missing=[${GEMINI_API_KEY-unset}]"
   git add -A; git commit --no-verify -qm "work"; st done "made the change" ;;
 reviewer)
   st note "reviewer-saw head=$(git rev-parse HEAD) branch=$(git branch --show-current)"
@@ -20,6 +20,7 @@ esac
 
 VM_FILES = ['Dockerfile', 'st', 'sawtooth-sync', 'relay', 'probe']
 STANDIN_IMAGE = 'sawtooth-e2e-standin'
+SECRET = 'hunter2-e2e'
 
 
 def sawtooth_image():
@@ -98,9 +99,14 @@ try:
     t = text()
     hint = bridge("return document.querySelector('[data-sandbox] input[id^=sb-img-]')?.placeholder||''")
     check('setup explains the vm', 'the vm' in t and 'sawtooth-home' in t and 'FROM sawtooth-vm:latest' in hint, (hint, t[:800]))
+    check('setup offers the harness its login names', 'CLAUDE_CODE_OAUTH_TOKEN' in t and 'claude setup-token' in t, t[:1200])
     press('1'); time.sleep(0.5)
 
-    f = factory(); f['runners'][0]['vmImage'] = STANDIN_IMAGE; inv('save_factory', factory=f); time.sleep(0.5)
+    said = bridge("return await window.__TAURI_INTERNALS__.invoke('set_vm_secret',{name:'HTTPS_PROXY',value:'http://evil:1'}).then(()=>'stored').catch(e=>JSON.stringify(e))")
+    check('a secret named like the proxy is refused', 'set by Sawtooth' in said, said)
+    inv('set_vm_secret', name='E2E_TOKEN', value=SECRET)
+    check('the window learns which secrets are set, not their values', inv('secrets_set', names=['E2E_TOKEN', 'GEMINI_API_KEY']) == ['E2E_TOKEN'])
+    f = factory(); f['runners'][0]['vmImage'] = STANDIN_IMAGE; f['runners'][0]['secrets'] = ['E2E_TOKEN', 'GEMINI_API_KEY']; inv('save_factory', factory=f); time.sleep(0.5)
     inv('feed_tickets', id='p', tickets=[{'key': 'T-1', 'title': 'a ticket', 'body': 'do the thing', 'url': ''}])
     must('T-1 reaches approval', lambda: item('T-1')['waiting'] == 'approve', 120)
     time.sleep(1)
@@ -116,6 +122,10 @@ try:
     check('the reviewer changed nothing real', 'reviewer-evil.txt' not in fs and open(item('T-1')['worktree'] + '/a.txt').read() == 'x\n', fs)
     saw = [r for r in runs() if 'builder-saw' in r]; print('builder saw:', saw[:1], flush=True)
     check('the vm saw none of the mac', any('No such file' in r and 'docker=no' in r for r in saw), saw)
+    check('the agent got its secret, and nothing for one with no value', any(f'token-len={len(SECRET)}' in r and 'missing=[unset]' in r for r in saw), saw)
+    shown = subprocess.run(['ps', '-axww', '-o', 'command'], capture_output=True, text=True).stdout
+    check("the secret is in no process's command line", SECRET not in shown and 'E2E_TOKEN' in shown, [l for l in shown.splitlines() if 'E2E_TOKEN' in l][:2])
+    check('the secret is in no run log', not any(SECRET in r for r in runs(200)))
     check('the run log says when work came back', any('brought back the work from the VM' in r for r in runs()), runs(20))
     worktree = item('T-1')['worktree']
     copies = [os.path.join(dp, d) for dp, ds, _ in os.walk(f'{H}/worktrees/p/.copies') for d in ds if os.path.isdir(os.path.join(dp, d, '.git'))]
@@ -129,6 +139,11 @@ try:
     left = [v for v in ours if v in volumes()]
     check('the volumes go when the work ends', not left, left)
     wait('the containers go too', lambda: not containers(), 20)
+    press('6'); time.sleep(1)
+    bridge("const k=document.querySelector('[data-sandbox] button[aria-expanded]');if(k.getAttribute('aria-expanded')!=='true')k.click();return 1"); time.sleep(0.6)
+    bridge("document.querySelector('[data-secrets]').scrollIntoView({block:'center'});return 1"); time.sleep(0.4); shot('vm-secrets')
+    rows = bridge("return document.querySelector('[data-secrets]').innerText")
+    check('setup shows which secrets have a value', 'E2E_TOKEN' in rows and '\nset' in rows and 'no value' in rows and SECRET not in rows, rows)
     print('EXIT', FAILS, flush=True)
 except SystemExit as e:
     print('STOPPED', e, FAILS, flush=True)

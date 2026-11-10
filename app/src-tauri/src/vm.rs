@@ -44,6 +44,35 @@ const PROXY: &str = "http://sawtooth:3128";
 /// The environment variable a terminal's report key travels in.
 pub const KEY: &str = "SAWTOOTH_KEY";
 
+/// Names a secret can't take, because Sawtooth sets them: a secret named HTTPS_PROXY could send
+/// an agent's traffic around its filter.
+const RESERVED: &[&str] = &["HTTPS_PROXY", "HTTP_PROXY", "https_proxy", "http_proxy", "NO_PROXY", "no_proxy", "ALL_PROXY", "all_proxy", "HOME", "PATH", "TERM"];
+
+/// Whether `name` can be a secret a VM agent gets: an environment variable's name that Sawtooth doesn't set itself.
+pub fn secret_name(name: &str) -> Result<(), String> {
+    let mut chars = name.chars();
+    let shaped = chars.next().is_some_and(|c| c.is_ascii_alphabetic() || c == '_') && chars.all(|c| c.is_ascii_alphanumeric() || c == '_');
+    if !shaped {
+        return Err(format!("{name:?} isn't an environment variable's name. Use letters, digits and underscores."));
+    }
+    if RESERVED.contains(&name) || name.starts_with("SAWTOOTH_") {
+        return Err(format!("{name} is set by Sawtooth, so it can't be a secret."));
+    }
+    Ok(())
+}
+
+/// The values of a terminal's secrets, read on the Mac, and the names that have none.
+pub fn secret_values(store: &Path, names: &[String]) -> (Vec<(String, String)>, Vec<String>) {
+    let (mut found, mut missing) = (Vec::new(), Vec::new());
+    for name in names.iter().filter(|n| secret_name(n).is_ok()) {
+        match crate::settings::get_secret(store, name) {
+            Some(value) => found.push((name.clone(), value)),
+            None => missing.push(name.clone()),
+        }
+    }
+    (found, missing)
+}
+
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
@@ -371,6 +400,8 @@ pub struct Spec {
     pub key: String,
     /// More for the container's environment, such as who commits.
     pub env: Vec<(String, String)>,
+    /// Secrets the container gets, by name. Their values are read on the Mac when it starts.
+    pub secrets: Vec<String>,
 }
 
 impl Spec {
@@ -452,8 +483,11 @@ fn agent_args(spec: &Spec, name: &str, image: &str) -> Vec<String> {
     for (k, v) in agent_env(spec) {
         a.extend(["-e".into(), format!("{k}={v}")]);
     }
-    // No value, so Docker copies it from its own environment rather than its command line.
+    // No values, so Docker copies them from its own environment rather than its command line.
     a.extend(["-e".into(), KEY.into()]);
+    for name in spec.secrets.iter().filter(|n| secret_name(n).is_ok()) {
+        a.extend(["-e".into(), name.clone()]);
+    }
     a.push(image.to_string());
     a
 }
@@ -560,13 +594,17 @@ pub fn main(args: &[String]) -> i32 {
         return fail(markers.as_ref(), &why);
     }
     let image = if spec.image.trim().is_empty() { tag } else { spec.image.trim().to_string() };
+    let (secrets, missing) = secret_values(&spec.store, &spec.secrets);
+    if !missing.is_empty() {
+        say(&format!("{} has no value in sawtooth's secrets, so the VM doesn't get it", missing.join(", ")));
+    }
     let setup_marker = crate::worktree::git(&spec.dir, &["rev-parse", "--git-path", crate::runner::SETUP_DONE]).ok().map(|p| spec.dir.join(p));
     if !spec.setup.is_empty() && setup_marker.as_ref().is_some_and(|m| !m.exists()) {
         say("running setup in the VM");
         let steps = spec.setup.iter().map(|s| format!("({s})")).collect::<Vec<_>>().join(" && ");
         let mut args = agent_args(&spec, &format!("{}-setup", agent(&spec)), &image);
         args.extend(["bash".into(), "-lc".into(), steps]);
-        let ok = Command::new(&docker).args(&args).status().is_ok_and(|s| s.success());
+        let ok = Command::new(&docker).args(&args).envs(secrets.iter().cloned()).status().is_ok_and(|s| s.success());
         if let Some(m) = &setup_marker {
             let _ = std::fs::write(if ok { m.clone() } else { PathBuf::from(format!("{}.failed", m.display())) }, "");
         }
@@ -580,7 +618,7 @@ pub fn main(args: &[String]) -> i32 {
     }
     let mut args = agent_args(&spec, &agent(&spec), &image);
     args.extend(["bash".into(), "-lc".into(), inner_command(&spec.command)]);
-    let err = Command::new(&docker).args(&args).exec();
+    let err = Command::new(&docker).args(&args).envs(secrets).exec();
     cleanup(&docker, &spec);
     fail(None, &format!("couldn't start the container: {err}"))
 }
@@ -846,6 +884,35 @@ mod tests {
         assert!(image().starts_with("sawtooth-vm:") && image().len() == "sawtooth-vm:".len() + 12);
         assert_eq!(image(), image());
         assert_ne!(volume(Path::new("/a")), volume(Path::new("/b")));
+    }
+
+    #[test]
+    fn a_secret_is_an_environment_name_sawtooth_doesnt_set() {
+        assert!(secret_name("CLAUDE_CODE_OAUTH_TOKEN").is_ok());
+        assert!(secret_name("_private2").is_ok());
+        for bad in ["", "2FAST", "MY-KEY", "A B", "../x", "HTTPS_PROXY", "no_proxy", "PATH", "SAWTOOTH_KEY", "SAWTOOTH_ANYTHING"] {
+            assert!(secret_name(bad).is_err(), "{bad:?} must be refused");
+        }
+    }
+
+    #[test]
+    fn secrets_go_to_docker_by_name_and_their_values_stay_on_the_mac() {
+        let store = tempfile::tempdir().unwrap();
+        crate::settings::set_secret(store.path(), "OPENAI_API_KEY", "sk-very-secret").unwrap();
+        let spec = Spec {
+            token: "c1".into(),
+            store: store.path().into(),
+            secrets: vec!["OPENAI_API_KEY".into(), "GEMINI_API_KEY".into(), "HTTPS_PROXY".into()],
+            ..Spec::default()
+        };
+        let args = agent_args(&spec, "a", "img");
+        let line = args.join(" ");
+        assert!(args.windows(2).any(|w| w[0] == "-e" && w[1] == "OPENAI_API_KEY"), "{line}");
+        assert!(!line.contains("sk-very-secret") && !serde_json::to_string(&spec).unwrap().contains("sk-very-secret"));
+        assert!(!args.windows(2).any(|w| w[0] == "-e" && w[1] == "HTTPS_PROXY"), "a reserved name is never passed: {line}");
+        let (found, missing) = secret_values(store.path(), &spec.secrets);
+        assert_eq!(found, vec![("OPENAI_API_KEY".to_string(), "sk-very-secret".to_string())]);
+        assert_eq!(missing, vec!["GEMINI_API_KEY".to_string()]);
     }
 
     #[test]

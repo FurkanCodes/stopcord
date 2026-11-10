@@ -49,6 +49,12 @@ pub struct Harness {
     /// How to run a single prompt and exit, with `{prompt}` where the prompt goes. For judges and suggestions.
     pub one_shot: String,
     pub trust: Option<Trust>,
+    /// Environment variables it can log in with, for a VM, where its login on the Mac isn't there.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub login_env: Vec<String>,
+    /// Where a person gets one of those.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub login_hint: String,
 }
 
 fn strings(items: &[&str]) -> Vec<String> {
@@ -77,6 +83,8 @@ pub fn builtin() -> Vec<Harness> {
             sandboxed_args: "--permission-mode acceptEdits --allowedTools Bash".into(),
             own_sandbox_args: r#"--permission-mode acceptEdits --settings '{"sandbox":{"enabled":true,"autoAllowBashIfSandboxed":true}}'"#.into(),
             one_shot: "claude -p {prompt}".into(),
+            login_env: strings(&["CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY"]),
+            login_hint: "a token from `claude setup-token` on your mac, or an API key".into(),
             trust: Some(Trust {
                 contains: "Yes, I trust this folder".into(),
                 // The menu starts on "No, exit", so Enter alone would refuse.
@@ -98,6 +106,8 @@ pub fn builtin() -> Vec<Harness> {
             sandboxed_args: r#"--sandbox danger-full-access --ask-for-approval never --no-daemon -c 'projects={"{project}"={trust_level="trusted"}}'"#.into(),
             own_sandbox_args: r#"--sandbox workspace-write --ask-for-approval never -c 'projects={"{project}"={trust_level="trusted"}}'"#.into(),
             one_shot: "codex exec --skip-git-repo-check --sandbox danger-full-access {prompt}".into(),
+            login_env: strings(&["OPENAI_API_KEY", "CODEX_API_KEY"]),
+            login_hint: "an OpenAI API key".into(),
             trust: Some(Trust {
                 contains: "Trust this folder?".into(),
                 // The menu starts on "Trust and continue".
@@ -116,6 +126,8 @@ pub fn builtin() -> Vec<Harness> {
             sandboxed_args: "--yolo".into(),
             own_sandbox_args: String::new(),
             one_shot: "gemini -p {prompt}".into(),
+            login_env: strings(&["GEMINI_API_KEY"]),
+            login_hint: "a Gemini API key from Google AI Studio".into(),
             trust: None,
         },
         Harness {
@@ -129,6 +141,8 @@ pub fn builtin() -> Vec<Harness> {
             sandboxed_args: "--auto".into(),
             own_sandbox_args: String::new(),
             one_shot: "opencode run {prompt}".into(),
+            login_env: strings(&["OPENROUTER_API_KEY", "ANTHROPIC_API_KEY", "OPENAI_API_KEY"]),
+            login_hint: "the API key of the provider you use with it".into(),
             trust: None,
         },
     ]

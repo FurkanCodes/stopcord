@@ -189,6 +189,10 @@ pub struct Runner {
     /// VM level: the image agents run in, built FROM sawtooth-vm:latest. Empty means Sawtooth's own.
     #[serde(skip_serializing_if = "no_text")]
     pub vm_image: String,
+    /// VM level: secrets each agent gets as environment variables, by name. The values stay in
+    /// `~/.sawtooth/secrets`, under the same names.
+    #[serde(skip_serializing_if = "none")]
+    pub secrets: Vec<String>,
     /// Commands run in the worktree before the agent starts.
     #[serde(skip_serializing_if = "none")]
     pub setup_commands: Vec<String>,

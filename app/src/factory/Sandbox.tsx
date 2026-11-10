@@ -47,6 +47,102 @@ function Quiet({ children }: { children: ReactNode }) {
   return <span className="t-muted" style={{ fontSize: 12, padding: '2px 8px' }}>{children}</span>;
 }
 
+const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+/** A VM's secrets: names in the factory, values in sawtooth's secrets, which the window can set but never read. */
+function Secrets({ index: i, names, harnesses, onChange }: { index: number; names: string[]; harnesses: SandboxInfo['harnesses']; onChange: (names: string[]) => void }) {
+  const [set, setSet] = useState<string[]>([]);
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const [adding, setAdding] = useState('');
+  const [problem, setProblem] = useState('');
+  const key = names.join(' ');
+  const refresh = () => {
+    api.secretsSet(names).then(setSet, () => {});
+  };
+  useEffect(refresh, [key]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const add = (name: string) => {
+    const n = name.trim();
+    if (!n) return;
+    if (!ENV_NAME.test(n)) return setProblem(`${n} isn't an environment variable's name. use letters, digits and underscores`);
+    setProblem('');
+    if (!names.includes(n)) onChange([...names, n]);
+    setAdding('');
+  };
+  const save = async (name: string) => {
+    const value = drafts[name] ?? '';
+    if (!value.trim()) return;
+    try {
+      await api.setVmSecret(name, value);
+      setDrafts((d) => ({ ...d, [name]: '' }));
+      setProblem('');
+      refresh();
+    } catch (e) {
+      setProblem((e as { message?: string }).message ?? String(e));
+    }
+  };
+  const offers = harnesses.filter((h) => h.loginEnv.some((n) => !names.includes(n)));
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }} data-secrets>
+      {names.map((name) => {
+        const has = set.includes(name);
+        return (
+          <div key={name} style={{ display: 'flex', gap: 10, alignItems: 'center', padding: '0 8px' }}>
+            <span style={{ width: '26ch', flexShrink: 0, overflow: 'hidden', textOverflow: 'ellipsis' }}>{name}</span>
+            <span className={has ? 't-muted' : 't-red'} style={{ width: '9ch', flexShrink: 0 }}>{has ? 'set' : 'no value'}</span>
+            <input
+              id={`sb-sec-${i}-${name}`}
+              aria-label={`value for ${name}`}
+              type="password"
+              autoComplete="off"
+              spellCheck={false}
+              className="t-field"
+              style={{ flex: 1 }}
+              value={drafts[name] ?? ''}
+              placeholder={has ? 'paste to replace' : 'paste the value, then enter'}
+              onChange={(e) => setDrafts((d) => ({ ...d, [name]: e.currentTarget.value }))}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') void save(name);
+              }}
+              onBlur={() => void save(name)}
+            />
+            <Key size="xs" onClick={() => onChange(names.filter((n) => n !== name))}>
+              remove
+            </Key>
+          </div>
+        );
+      })}
+      <input
+        id={`sb-sec-add-${i}`}
+        className="t-field"
+        spellCheck={false}
+        value={adding}
+        placeholder="add a name, like OPENAI_API_KEY"
+        onChange={(e) => setAdding(e.currentTarget.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') add(adding);
+        }}
+      />
+      {offers.map((h) => (
+        <div key={h.id} style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap', padding: '0 8px' }}>
+          <span className="t-muted">{h.id} can use</span>
+          {h.loginEnv
+            .filter((n) => !names.includes(n))
+            .map((n) => (
+              <Key key={n} size="xs" onClick={() => add(n)}>
+                + {n}
+              </Key>
+            ))}
+          {h.loginHint && <span className="t-dim">{h.loginHint}</span>}
+        </div>
+      ))}
+      {problem && <span className="t-red" style={{ padding: '0 8px' }}>{problem}</span>}
+      <Quiet>values stay in ~/.sawtooth/secrets and can't be shown again. every agent in this vm can read them, so use tokens you can cancel</Quiet>
+    </div>
+  );
+}
+
 /** Where agents run, and everything their sandbox lets them touch. */
 export function SandboxPane({ factory, set, style }: { factory: Factory; set: (patch: Partial<Factory>) => void; style: CSSProperties }) {
   const [info, setInfo] = useState<SandboxInfo | null>(null);
@@ -172,8 +268,11 @@ function SandboxCard({ index: i, factory, runner: r, info, onInfo, startOpen, on
               <Row id={`sb-img-${i}`} label="image">
                 <input id={`sb-img-${i}`} className="t-field" spellCheck={false} value={r.vmImage ?? ''} placeholder={`sawtooth's own${info && !info.docker.built ? ', built on first use (a few minutes)' : ''}. yours must start FROM ${info?.docker.image ?? 'sawtooth-vm:latest'}`} onChange={(e) => onChange({ vmImage: e.currentTarget.value })} />
               </Row>
+              <Row label="secrets">
+                <Secrets index={i} names={r.secrets ?? []} harnesses={harnesses} onChange={(secrets) => onChange({ secrets })} />
+              </Row>
               <Row label="logins">
-                <Quiet>log in to each harness once, in its first vm terminal. logins are kept in the docker volume sawtooth-home, which every vm agent shares</Quiet>
+                <Quiet>a harness with no secret asks you to log in, once, in its first vm terminal. those logins are kept in the docker volume sawtooth-home, which every vm agent shares</Quiet>
               </Row>
               <Quiet>on linux, docker shares your kernel, so the wall is thinner than a real vm.</Quiet>
             </Group>
