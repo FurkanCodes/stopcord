@@ -193,9 +193,20 @@ impl Engine {
                         i.terminal = None;
                     }
                 });
+                let in_vm: Vec<crate::vm::Spec> = {
+                    let state = self.state.lock().unwrap();
+                    w.agents.values().filter_map(|t| state.terminals.get(t).and_then(crate::vm::spec_of)).collect()
+                };
                 for t in w.agents.values() {
                     let _ = self.bridge.call("terminal.close", json!({ "id": t }));
                 }
+                // The containers go first: a volume still in use can't be removed.
+                if let Some(docker) = crate::vm::docker() {
+                    for spec in &in_vm {
+                        crate::vm::cleanup(&docker, spec);
+                    }
+                }
+                self.forget_vm_copies(factory, &w);
                 let _ = std::fs::remove_dir_all(self.copies_root(factory, &w));
                 self.log(factory, Run::new("line", format!("{key} {outcome}")).ok(true).work(&w.id).by("engine"));
                 if w.bench.is_none() {
@@ -247,7 +258,9 @@ impl Engine {
             },
             None => None,
         };
-        let st = self.store.home().join("bin/st").display().to_string();
+        // In a VM, st is on the PATH; the Mac's path to it isn't there.
+        let in_vm = crate::runner::in_vm(crate::runner::pick(&f, agent.as_ref().map(|a| a.runner.as_str())));
+        let st = if in_vm { "st".to_string() } else { self.store.home().join("bin/st").display().to_string() };
         let skills: Vec<(String, String, String)> = f
             .skills
             .iter()
@@ -265,6 +278,11 @@ impl Engine {
         let write = if is_scorer { line::scorer_brief } else { line::brief };
         let brief = write(agent.as_ref().map_or("", |a| a.prompt.as_str()), &w, &skills, &st);
         let (id, text) = if let Some(t) = existing {
+            // The folder may have moved on since the last round, as when kept files came back.
+            if let Err(why) = self.mirror_vm(factory, &t) {
+                self.fail_step(factory, key, format!("{key} couldn't bring the VM up to date for {stage}: {why}"));
+                return;
+            }
             let text = if note.is_empty() {
                 brief
             } else {
@@ -347,6 +365,49 @@ impl Engine {
                     .by("engine"),
             ),
             Err(e) => self.fail_step(factory, key, format!("{key} has a terminal for {stage} but never got its brief: {e}")),
+        }
+    }
+
+    /// Brings a VM terminal's folder and its copy in the VM into step. Nothing for other terminals.
+    fn mirror_vm(&self, factory: &str, terminal: &str) -> Result<(), String> {
+        let t = self.state.lock().unwrap().terminals.get(terminal).cloned();
+        let Some(spec) = t.as_ref().and_then(crate::vm::spec_of) else { return Ok(()) };
+        let docker = crate::vm::available()?;
+        let what = match crate::vm::sync(&spec, &docker)? {
+            crate::vm::Synced::Took => "brought back the work from the VM",
+            crate::vm::Synced::Sent => "copied the work into the VM",
+            crate::vm::Synced::Same => return Ok(()),
+        };
+        self.log(factory, Run::new("vm", format!("{what} for {}", spec.dir.display())).terminal(Some(terminal)).by("engine"));
+        Ok(())
+    }
+
+    /// A VM terminal ended. Its containers go, and a terminal that wasn't on the line keeps what it did.
+    pub(crate) fn vm_exited(self: &Arc<Self>, terminal: &Value) {
+        let Some(spec) = crate::vm::spec_of(terminal) else { return };
+        let Some(docker) = crate::vm::docker() else { return };
+        crate::vm::cleanup(&docker, &spec);
+        let id = terminal["id"].as_str().unwrap_or_default();
+        // The line collects its own work when an agent says it's done, and a new terminal takes back anything left.
+        if self.item_on(id).is_some() {
+            return;
+        }
+        let Some(factory) = self.factory_of(terminal).map(|f| f.id) else { return };
+        if let Err(why) = self.mirror_vm(&factory, id) {
+            self.log(&factory, Run::new("vm", format!("the work in {} stayed in the VM: {why}", spec.dir.display())).ok(false).terminal(Some(id)).by("engine"));
+        }
+    }
+
+    /// The work is over, so its copies in the VM go too.
+    fn forget_vm_copies(&self, factory: &str, w: &WorkItem) {
+        let mut dirs: Vec<PathBuf> = std::fs::read_dir(self.copies_root(factory, w)).into_iter().flatten().flatten().map(|e| e.path()).collect();
+        if !w.worktree.is_empty() {
+            dirs.push(PathBuf::from(&w.worktree));
+        }
+        for dir in dirs {
+            if crate::vm::record(self.store.home(), &dir).exists() {
+                crate::vm::forget(self.store.home(), &dir);
+            }
         }
     }
 
@@ -605,6 +666,10 @@ impl Engine {
         self.log(&factory, Run::new("agent", format!("{verb}: {text}")).terminal(Some(terminal)).work(&work_id).by("agent"));
         let step = match verb {
             "done" => {
+                if let Err(why) = self.mirror_vm(&factory, terminal) {
+                    self.fail_step(&factory, &key, format!("{key} finished, but its work couldn't come back from the VM: {why}"));
+                    return;
+                }
                 if let Err(why) = self.finish_copy(&factory, &key) {
                     self.fail_step(&factory, &key, format!("{key} finished, but its copy couldn't be collected: {why}"));
                     return;
@@ -686,7 +751,8 @@ impl Engine {
                 if waiting == Waiting::No {
                     // Agents do forget the last step, and one reminder is cheaper than stopping the line.
                     if me.state.lock().unwrap().reminded.insert(terminal.clone()) {
-                        let st = me.store.home().join("bin/st").display().to_string();
+                        let in_vm = me.state.lock().unwrap().terminals.get(&terminal).and_then(crate::vm::spec_of).is_some();
+                        let st = if in_vm { "st".to_string() } else { me.store.home().join("bin/st").display().to_string() };
                         let nudge = format!("You stopped without reporting. If you've finished, run: {st} done \"one line on what you did\". If you need a person, run: {st} ask \"your question\".");
                         if me.type_engine_turn(&terminal, &nudge).is_ok() {
                             me.log(&factory, Run::new("line", format!("{key} stopped without reporting, so it was reminded once")).by("engine"));
@@ -849,6 +915,9 @@ impl Engine {
             other => return Err(format!("unknown action {other}")),
         };
         if matches!(act, Action::TreatAsDone) {
+            if let Some(t) = &w.terminal {
+                self.mirror_vm(factory, t).map_err(|why| format!("{key}'s work couldn't come back from the VM: {why}"))?;
+            }
             self.finish_copy(factory, key)?;
         }
         let step = self.store.update(factory, |fa| line::person(fa, key, act)).map_err(|e| format!("{e:#}"))?;

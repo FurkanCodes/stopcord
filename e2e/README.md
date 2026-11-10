@@ -20,10 +20,11 @@ No test calls a model unless you ask for `real_answer`, which spends quota. Each
 | `answer_failure` | An answer that can't be typed says so, keeps the words, and clears when one lands |
 | `isolation` | A misbehaving planner and reviewer change nothing real, with and without a sandbox |
 | `sandbox` | Testing a sandbox from setup reports what really held, for each kind of runner |
+| `vm` | Agents in Docker work on a copy, only their work comes back, and the copies go when the work ends. Needs Docker running |
 | `markdown`, `logos`, `terminal` | Rendering |
 
 ## Stand-in agents
 
-`standins/*.rs` compile to a binary named `claude`, so the daemon recognizes it through its normal rules. `line.rs` plays any role and runs a test's `turn.sh` each turn, so a test can script good or bad behaviour. An agent inside a sandbox can't write outside its folder, so stand-ins report through `st note`.
+`standins/*.rs` compile to a binary named `claude`, and `line.py` is the same stand-in for the VM, baked into an image, so the daemon recognizes it through its normal rules. `line.rs` plays any role and runs a test's `turn.sh` each turn, so a test can script good or bad behaviour. An agent inside a sandbox can't write outside its folder, so stand-ins report through `st note`.
 
 Stand-ins prove the app's side. They don't prove a real harness starts or behaves, which is what `real_answer` and real tickets are for.

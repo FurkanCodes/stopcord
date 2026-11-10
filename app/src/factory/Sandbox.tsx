@@ -7,7 +7,7 @@ const LEVELS: [Level, string, string][] = [
   ['contained', "sawtooth's sandbox", 'limits files and sites, and asks you about a blocked site'],
   ['harness', "the harness's own", "turns on the harness's sandbox. sawtooth's web filter and asking are off, and it can't be tested here"],
   ['worktree', 'none', 'its own folder and branch, and nothing else'],
-  ['vm', 'a linux vm', "for work you don't trust"],
+  ['vm', 'a linux vm', "a fresh linux container in docker for each terminal. it works on a copy and never sees your mac. for work you don't trust"],
 ];
 
 const levelName = (l: Level) => LEVELS.find(([v]) => v === l)?.[1] ?? l;
@@ -61,17 +61,19 @@ export function SandboxPane({ factory, set, style }: { factory: Factory; set: (p
         where agents run. the factory uses {factory.defaults.runner || 'none'} unless an agent picks another.
       </p>
       {factory.runners.map((r, i) => (
-        <SandboxCard key={i} index={i} factory={factory} runner={r} info={info} startOpen={factory.runners.length === 1} onChange={(patch) => edit(i, patch)} onRemove={() => set({ runners: factory.runners.filter((_, j) => j !== i) })} />
+        <SandboxCard key={i} index={i} factory={factory} runner={r} info={info} onInfo={setInfo} startOpen={factory.runners.length === 1} onChange={(patch) => edit(i, patch)} onRemove={() => set({ runners: factory.runners.filter((_, j) => j !== i) })} />
       ))}
     </Pane>
   );
 }
 
-function SandboxCard({ index: i, factory, runner: r, info, startOpen, onChange, onRemove }: { index: number; factory: Factory; runner: Runner; info: SandboxInfo | null; startOpen: boolean; onChange: (patch: Partial<Runner>) => void; onRemove: () => void }) {
+function SandboxCard({ index: i, factory, runner: r, info, onInfo, startOpen, onChange, onRemove }: { index: number; factory: Factory; runner: Runner; info: SandboxInfo | null; onInfo: (info: SandboxInfo) => void; startOpen: boolean; onChange: (patch: Partial<Runner>) => void; onRemove: () => void }) {
   const [open, setOpen] = useState(startOpen);
   const [test, setTest] = useState<{ report: SandboxTest; settings: string } | null>(null);
   const [testing, setTesting] = useState(false);
   const contained = r.level === 'contained';
+  const ownVm = r.level === 'vm' && !!(r.vmCommand ?? '').trim();
+  const vm = r.level === 'vm' && !ownVm;
   const unblock = r.unblock ?? [];
   const listed = r.reads === 'listed';
   const settings = JSON.stringify(r);
@@ -84,7 +86,8 @@ function SandboxCard({ index: i, factory, runner: r, info, startOpen, onChange, 
     levelName(r.level),
     contained && (listed ? "reads only what's listed" : 'reads everything'),
     contained && unblock.length > 0 && `${unblock.length} block${unblock.length === 1 ? '' : 's'} off`,
-    contained && (r.networkAllow ?? []).length > 0 && `${r.networkAllow!.length} more site${r.networkAllow!.length === 1 ? '' : 's'}`,
+    vm && (r.vmImage ? r.vmImage : "sawtooth's image"),
+    (contained || vm) && (r.networkAllow ?? []).length > 0 && `${r.networkAllow!.length} more site${r.networkAllow!.length === 1 ? '' : 's'}`,
     test && !stale && told.length > 0 && `${held} of ${told.length} as set`,
   ].filter(Boolean).join(' · ');
 
@@ -93,6 +96,7 @@ function SandboxCard({ index: i, factory, runner: r, info, startOpen, onChange, 
     try {
       await saveNow(factory);
       setTest({ report: await api.testRunner(factory.id, r.id), settings });
+      if (vm) api.sandboxInfo().then(onInfo, () => {});
     } catch (e) {
       showProblem(e);
     } finally {
@@ -130,7 +134,6 @@ function SandboxCard({ index: i, factory, runner: r, info, startOpen, onChange, 
           )}
 
           {contained && (
-            <>
               <Group title="files">
                 <Row id={`sb-w-${i}`} label="writes">
                   <Quiet>its own folder, always</Quiet>
@@ -157,7 +160,26 @@ function SandboxCard({ index: i, factory, runner: r, info, startOpen, onChange, 
                   {listed && <ListInput id={`sb-rd-${i}`} value={r.read} placeholder="and also, like ~/notes" onChange={(read) => onChange({ read })} />}
                 </Row>
               </Group>
+          )}
 
+          {vm && (
+            <Group title="the vm">
+              {info && !info.docker.ok && <span className="t-red" style={{ padding: '0 8px' }}>{info.docker.why}</span>}
+              <Row label="sees">
+                <Quiet>a copy of its folder, made fresh in a docker volume. none of your mac's files, docker, or the mac itself</Quiet>
+                <Quiet>its work comes back as git commits and changes when it says it's done. a commit that rewrites history doesn't</Quiet>
+              </Row>
+              <Row id={`sb-img-${i}`} label="image">
+                <input id={`sb-img-${i}`} className="t-field" spellCheck={false} value={r.vmImage ?? ''} placeholder={`sawtooth's own${info && !info.docker.built ? ', built on first use (a few minutes)' : ''}. yours must start FROM ${info?.docker.image ?? 'sawtooth-vm:latest'}`} onChange={(e) => onChange({ vmImage: e.currentTarget.value })} />
+              </Row>
+              <Row label="logins">
+                <Quiet>log in to each harness once, in its first vm terminal. logins are kept in the docker volume sawtooth-home, which every vm agent shares</Quiet>
+              </Row>
+              <Quiet>on linux, docker shares your kernel, so the wall is thinner than a real vm.</Quiet>
+            </Group>
+          )}
+
+          {(contained || vm) && (
               <Group title="network">
                 <Row id={`sb-n-${i}`} label="allowed">
                   {harnesses.map((h) => (
@@ -182,7 +204,9 @@ function SandboxCard({ index: i, factory, runner: r, info, startOpen, onChange, 
                   </div>
                 </Row>
               </Group>
+          )}
 
+          {contained && (
               <Group title="always blocked">
                 {(info?.escapes ?? []).map((e) => (
                   <div key={e.what} style={{ display: 'flex', gap: 12, padding: '0 8px' }}>
@@ -192,12 +216,12 @@ function SandboxCard({ index: i, factory, runner: r, info, startOpen, onChange, 
                 ))}
                 <Quiet>these can't be opened: any of them would let an agent start something outside the sandbox. pick none instead.</Quiet>
               </Group>
-            </>
           )}
 
           {r.level === 'vm' && (
-            <Row id={`sb-v-${i}`} label="vm command">
-              <input id={`sb-v-${i}`} className="t-field" spellCheck={false} value={r.vmCommand ?? ''} placeholder="limactl shell --workdir {dir} default bash -lc {cmd}" onChange={(e) => onChange({ vmCommand: e.currentTarget.value })} />
+            <Row id={`sb-v-${i}`} label="own command">
+              <input id={`sb-v-${i}`} className="t-field" spellCheck={false} value={r.vmCommand ?? ''} placeholder="empty uses sawtooth's container. yours replaces it: {dir} is the folder, {cmd} the command" onChange={(e) => onChange({ vmCommand: e.currentTarget.value })} />
+              {ownVm && <Quiet>your command runs the agent instead of sawtooth's container, with no copy, web filter or test.</Quiet>}
             </Row>
           )}
 
@@ -207,7 +231,7 @@ function SandboxCard({ index: i, factory, runner: r, info, startOpen, onChange, 
 
           <Group title="test">
             <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
-              <Key size="xs" onClick={() => void runTest()} disabled={testing}>{testing ? 'testing…' : 'test this sandbox'}</Key>
+              <Key size="xs" onClick={() => void runTest()} disabled={testing}>{vm && info && !info.docker.built ? (testing ? 'building the image and testing… a few minutes' : 'build the image and test') : testing ? 'testing…' : 'test this sandbox'}</Key>
               {test && told.length > 0 && (
                 <span role="status" className={held < told.length ? 't-red' : 't-muted'}>
                   {new Date(test.report.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} · {held} of {told.length} as set{stale ? ' · settings changed since' : ''}

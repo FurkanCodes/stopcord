@@ -68,6 +68,8 @@ export interface Runner {
   networkQuiet?: string[];
   otherSites?: 'ask' | 'block';
   vmCommand?: string;
+  /** VM level: the image agents run in, built FROM sawtooth-vm:latest. */
+  vmImage?: string;
   setupCommands?: string[];
 }
 
@@ -77,6 +79,8 @@ export interface SandboxInfo {
   escapes: { what: string; why: string }[];
   alwaysReads: string[];
   harnesses: { id: string; sites: string[]; quiet: string[]; ownSandbox: boolean }[];
+  /** Whether the VM runner can work here, and what to do if not. */
+  docker: { ok: boolean; why: string; image: string; built: boolean };
 }
 
 export interface SandboxCheck {

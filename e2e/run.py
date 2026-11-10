@@ -24,6 +24,7 @@ TESTS = [
     ('isolation', ['worktree']),
     ('isolation', ['contained']),
     ('sandbox', []),
+    ('vm', []),
     ('markdown', []),
     ('logos', []),
     ('terminal', []),

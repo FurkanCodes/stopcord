@@ -38,6 +38,7 @@ mod templates;
 mod testbridge;
 mod tickets;
 mod typing;
+mod vm;
 mod work;
 mod worktree;
 
@@ -824,6 +825,7 @@ fn main() {
         Some("st") => std::process::exit(st::main(&args[2..])),
         Some("sandbox-bridge") => std::process::exit(sawtooth_sandbox::bridge_main(&args[2..])),
         Some("probe") => std::process::exit(probe::main(&args[2..])),
+        Some("vm-run") => std::process::exit(vm::main(&args[2..])),
         _ => {}
     }
 

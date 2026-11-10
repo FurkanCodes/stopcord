@@ -1,0 +1,18 @@
+#!/bin/sh
+# Runs next to one agent's container and is the only thing it can reach: port 3128 goes to its
+# web filter and 3129 to its report socket, both on the Mac. It ends when its agent is gone.
+#   FILTER, REPORT  socat addresses on the Mac's side
+#   AGENT           the agent container's name
+set -eu
+socat TCP-LISTEN:3128,fork,reuseaddr "$FILTER" &
+socat TCP-LISTEN:3129,fork,reuseaddr "$REPORT" &
+seen= waited=0
+while sleep 2; do
+    if getent hosts "$AGENT" >/dev/null 2>&1; then
+        seen=1
+    elif [ -n "$seen" ] || [ "$waited" -gt 7200 ]; then
+        kill 0
+        exit 0
+    fi
+    waited=$((waited + 2))
+done

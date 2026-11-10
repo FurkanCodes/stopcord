@@ -7,10 +7,15 @@
 //!
 //! The socket proves who is speaking: one socket, one terminal. Nothing an agent
 //! says in a report can claim to be another terminal.
+//!
+//! A terminal in a VM can't reach a Unix socket on the Mac, so it may also get a port
+//! on loopback. Anything on the Mac can reach loopback, so there a report has to start
+//! with the terminal's own key.
 
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::os::unix::fs::PermissionsExt;
+use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::os::unix::net::UnixListener;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -41,6 +46,59 @@ pub struct Confine {
     /// The terminal this belongs to, once it has started.
     terminal: Arc<Mutex<Option<String>>>,
     stop: Arc<AtomicBool>,
+    /// For a terminal in a VM: the loopback port it reports on, and the key that proves it's speaking.
+    remote: Option<(u16, String)>,
+}
+
+/// Who a report goes to once it's read.
+#[derive(Clone)]
+struct Inbox {
+    reports: Arc<Mutex<Vec<Value>>>,
+    terminal: Arc<Mutex<Option<String>>>,
+    notify: Notify,
+}
+
+impl Inbox {
+    /// Reads one report from a connection and answers it. A report may start with the key, and
+    /// has to when `required`.
+    fn serve(&self, reader: impl Read, mut writer: impl Write, key: Option<&str>, required: bool) {
+        let mut line = String::new();
+        if BufReader::new(reader.take(MAX_REPORT_BYTES)).read_line(&mut line).is_err() {
+            return;
+        }
+        let line = line.trim();
+        let keyed = key.and_then(|key| line.strip_prefix(key)).and_then(|rest| rest.strip_prefix(' '));
+        let body = match (keyed, required) {
+            (Some(rest), _) => Some(rest),
+            (None, false) => Some(line),
+            (None, true) => None,
+        };
+        let reply = match body.map(clean_report) {
+            None => json!({ "ok": false, "error": "that report didn't carry this terminal's key" }),
+            Some(Ok(report)) => {
+                {
+                    let mut all = self.reports.lock().unwrap();
+                    all.push(report.clone());
+                    let extra = all.len().saturating_sub(KEEP_REPORTS);
+                    all.drain(..extra);
+                }
+                let id = self.terminal.lock().unwrap().clone();
+                (self.notify)("terminal.report", json!({ "id": id, "report": report }));
+                json!({ "ok": true })
+            }
+            Some(Err(message)) => json!({ "ok": false, "error": message }),
+        };
+        let _ = writeln!(writer, "{reply}");
+    }
+}
+
+/// A key nobody can guess, from the system's random source.
+fn new_key() -> Result<String> {
+    let mut bytes = [0u8; 16];
+    std::fs::File::open("/dev/urandom")
+        .and_then(|mut f| f.read_exact(&mut bytes))
+        .context("couldn't read /dev/urandom")?;
+    Ok(bytes.iter().map(|b| format!("{b:02x}")).collect())
 }
 
 /// Accepts what `st` sends: one JSON object per connection.
@@ -82,6 +140,11 @@ pub fn clean_report(raw: &str) -> Result<Value, String> {
 impl Confine {
     /// `run_dir` must be private to this user. `allow` of `None` means no filter.
     pub fn start(run_dir: &Path, token: &str, allow: Option<Vec<String>>, notify: Notify) -> Result<Confine> {
+        Confine::start_with(run_dir, token, allow, notify, false)
+    }
+
+    /// `start`, and with `remote` a loopback port and key for a terminal in a VM.
+    pub fn start_with(run_dir: &Path, token: &str, allow: Option<Vec<String>>, notify: Notify, remote: bool) -> Result<Confine> {
         std::fs::create_dir_all(run_dir).with_context(|| format!("couldn't create {}", run_dir.display()))?;
         let _ = std::fs::set_permissions(run_dir, std::fs::Permissions::from_mode(0o700));
         let report = run_dir.join(format!("{token}.sock"));
@@ -118,41 +181,47 @@ impl Confine {
             }
         };
 
-        let (accept_reports, accept_terminal, accept_stop, accept_notify) =
-            (Arc::clone(&reports), Arc::clone(&terminal), Arc::clone(&stop), notify);
+        let inbox = Inbox { reports: Arc::clone(&reports), terminal: Arc::clone(&terminal), notify };
+        // On Linux a VM's relay reaches the socket itself, and its st sends the key there too.
+        let key = if remote { Some(new_key()?) } else { None };
+        let (accept_inbox, accept_stop, socket_key) = (inbox.clone(), Arc::clone(&stop), key.clone());
         thread::Builder::new().name("sawtooth-report".into()).spawn(move || {
             for stream in listener.incoming() {
                 if accept_stop.load(Ordering::SeqCst) {
                     break;
                 }
                 let Ok(stream) = stream else { continue };
-                let (reports, terminal, notify) =
-                    (Arc::clone(&accept_reports), Arc::clone(&accept_terminal), Arc::clone(&accept_notify));
+                let (inbox, key) = (accept_inbox.clone(), socket_key.clone());
                 thread::spawn(move || {
                     let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
-                    let Ok(mut writer) = stream.try_clone() else { return };
-                    let mut line = String::new();
-                    if BufReader::new(stream.take(MAX_REPORT_BYTES)).read_line(&mut line).is_err() {
-                        return;
-                    }
-                    let reply = match clean_report(line.trim()) {
-                        Ok(report) => {
-                            {
-                                let mut all = reports.lock().unwrap();
-                                all.push(report.clone());
-                                let extra = all.len().saturating_sub(KEEP_REPORTS);
-                                all.drain(..extra);
-                            }
-                            let id = terminal.lock().unwrap().clone();
-                            notify("terminal.report", json!({ "id": id, "report": report }));
-                            json!({ "ok": true })
-                        }
-                        Err(message) => json!({ "ok": false, "error": message }),
-                    };
-                    let _ = writeln!(writer, "{reply}");
+                    let Ok(writer) = stream.try_clone() else { return };
+                    inbox.serve(stream, writer, key.as_deref(), false);
                 });
             }
         })?;
+
+        let remote = if let Some(key) = key {
+            let tcp = TcpListener::bind("127.0.0.1:0").context("couldn't open a report port")?;
+            let port = tcp.local_addr()?.port();
+            let (accept_key, accept_stop) = (key.clone(), Arc::clone(&stop));
+            thread::Builder::new().name("sawtooth-report-tcp".into()).spawn(move || {
+                for stream in tcp.incoming() {
+                    if accept_stop.load(Ordering::SeqCst) {
+                        break;
+                    }
+                    let Ok(stream) = stream else { continue };
+                    let (inbox, key) = (inbox.clone(), accept_key.clone());
+                    thread::spawn(move || {
+                        let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
+                        let Ok(writer) = stream.try_clone() else { return };
+                        inbox.serve(stream, writer, Some(&key), true);
+                    });
+                }
+            })?;
+            Some((port, key))
+        } else {
+            None
+        };
 
         Ok(Confine {
             token: token.to_string(),
@@ -162,6 +231,7 @@ impl Confine {
             reports,
             terminal,
             stop,
+            remote,
         })
     }
 
@@ -171,6 +241,8 @@ impl Confine {
             "report": self.report.display().to_string(),
             "port": self.filter.as_ref().map(Filter::port),
             "filter": self.filter.as_ref().map(|_| self.filter_socket.display().to_string()),
+            "reportPort": self.remote.as_ref().map(|(port, _)| port),
+            "key": self.remote.as_ref().map(|(_, key)| key),
         })
     }
 
@@ -205,6 +277,9 @@ impl Confine {
         self.stop.store(true, Ordering::SeqCst);
         // Wake the accept loop so it sees the flag.
         let _ = std::os::unix::net::UnixStream::connect(&self.report);
+        if let Some((port, _)) = &self.remote {
+            let _ = TcpStream::connect_timeout(&SocketAddr::from(([127, 0, 0, 1], *port)), Duration::from_secs(1));
+        }
         let _ = std::fs::remove_file(&self.report);
         if let Some(f) = self.filter.take() {
             f.stop();
@@ -280,6 +355,41 @@ mod tests {
         let got = c.take_reports();
         assert_eq!(got.len(), KEEP_REPORTS);
         assert_eq!(got.last().unwrap()["text"], format!("{}", KEEP_REPORTS + 4));
+    }
+
+    fn say_tcp(port: u16, line: &str) -> Value {
+        let mut s = TcpStream::connect(("127.0.0.1", port)).unwrap();
+        writeln!(s, "{line}").unwrap();
+        let mut out = String::new();
+        BufReader::new(s).read_line(&mut out).unwrap();
+        serde_json::from_str(&out).unwrap()
+    }
+
+    #[test]
+    fn a_vm_reports_on_a_port_and_only_with_its_key() {
+        let dir = tempfile::tempdir().unwrap();
+        let c = Confine::start_with(dir.path(), "c1", None, quiet(), true).unwrap();
+        let info = c.info();
+        let port = info["reportPort"].as_u64().unwrap() as u16;
+        let key = info["key"].as_str().unwrap().to_string();
+        assert_eq!(key.len(), 32);
+        assert_eq!(say_tcp(port, r#"{"verb":"note","text":"no key"}"#)["ok"], false);
+        assert_eq!(say_tcp(port, &format!(r#"{}x {{"verb":"note","text":"wrong key"}}"#, &key[..31]))["ok"], false);
+        assert_eq!(say_tcp(port, &format!(r#"{key} {{"verb":"note","text":"hi"}}"#))["ok"], true);
+        let got = c.take_reports();
+        assert_eq!(got.len(), 1, "only the keyed report counts: {got:?}");
+        assert_eq!(got[0]["text"], "hi");
+        assert_eq!(say(&c.report, r#"{"verb":"note","text":"the socket needs no key"}"#)["ok"], true);
+        assert_eq!(say(&c.report, &format!(r#"{key} {{"verb":"note","text":"but takes one"}}"#))["ok"], true);
+        let texts: Vec<Value> = c.take_reports().into_iter().map(|r| r["text"].clone()).collect();
+        assert_eq!(texts, vec![json!("the socket needs no key"), json!("but takes one")]);
+    }
+
+    #[test]
+    fn a_terminal_on_the_mac_gets_no_port() {
+        let dir = tempfile::tempdir().unwrap();
+        let c = Confine::start(dir.path(), "c1", None, quiet()).unwrap();
+        assert!(c.info()["reportPort"].is_null() && c.info()["key"].is_null());
     }
 
     #[test]

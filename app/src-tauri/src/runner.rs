@@ -14,6 +14,7 @@ use crate::bridge::{Bridge, Failure};
 use crate::factories::{Factory, Level, Runner, Store};
 use crate::harness::{self, Harness};
 use crate::shell;
+use crate::vm;
 
 /// What to give the daemon's `terminal.start`.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -21,6 +22,13 @@ pub struct Started {
     pub argv: Vec<String>,
     pub env: Vec<(String, String)>,
     pub confine: String,
+    /// The harness, said outright when the daemon can't see it run, as in a VM.
+    pub agent: Option<String>,
+}
+
+/// Whether a runner puts its agents in Sawtooth's VM, rather than a person's own VM command.
+pub fn in_vm(runner: Option<&Runner>) -> bool {
+    runner.is_some_and(|r| r.level == Level::Vm && r.vm_command.trim().is_empty())
 }
 
 /// The runner a terminal uses: the one asked for, else the factory's default.
@@ -174,7 +182,8 @@ pub fn test(store: &Store, bridge: &Bridge, factory: &Factory, runner: &Runner, 
     let note = |text: &str| Ok(TestReport { checks: Vec::new(), note: text.to_string(), at });
     match runner.level {
         Level::Harness => return note("A harness's own sandbox runs inside the harness, so Sawtooth can't test it from outside."),
-        Level::Vm => return note("Testing a VM runner isn't built yet."),
+        Level::Vm if !runner.vm_command.trim().is_empty() => return note("A VM started by your own command can't be tested from here."),
+        Level::Vm => return test_vm(store, bridge, factory, runner, at),
         _ => {}
     }
     let home = home_dir();
@@ -242,6 +251,56 @@ pub fn test(store: &Store, bridge: &Bridge, factory: &Factory, runner: &Runner, 
     Ok(TestReport { checks, note: String::new(), at })
 }
 
+/// Runs the probe in a VM runner's container, on the network and relay an agent would get.
+/// The probe also reaches a site the factory's harness needs, as an agent would.
+fn test_vm(store: &Store, bridge: &Bridge, factory: &Factory, runner: &Runner, at: u64) -> Result<TestReport, Failure> {
+    let docker = vm::available().map_err(fail)?;
+    let tag = vm::ensure_image(&docker, store.home(), true).map_err(fail)?;
+    let (harnesses, _) = harness::load(&store.home().join("harnesses"));
+    let harness = harness::find(&harnesses, &factory.defaults.harness);
+    let site = harness.and_then(|h| h.domains.first()).map(|d| format!("api.{d}")).unwrap_or_default();
+    let info = bridge.call("confine.prepare", json!({ "allow": allowed_sites(runner, harness), "vm": true }))?;
+    let spec = vm_spec(store, &info, Path::new(""), runner, String::new(), String::new(), Vec::new(), None, Vec::new());
+    let image = if runner.vm_image.trim().is_empty() { tag } else { runner.vm_image.trim().to_string() };
+    let checks = vm::probe(&docker, &spec, &image, &home_dir(), &site);
+    let _ = bridge.call("confine.release", json!({ "token": spec.token }));
+    Ok(TestReport { checks: checks.map_err(fail)?, note: String::new(), at })
+}
+
+/// A VM terminal's spec, from what the daemon made for it.
+#[allow(clippy::too_many_arguments)]
+fn vm_spec(store: &Store, info: &Value, dir: &Path, runner: &Runner, command: String, base: String, exclude: Vec<String>, knowledge: Option<PathBuf>, env: Vec<(String, String)>) -> vm::Spec {
+    vm::Spec {
+        token: info["token"].as_str().unwrap_or_default().to_string(),
+        dir: dir.to_path_buf(),
+        store: store.home().to_path_buf(),
+        image: runner.vm_image.trim().to_string(),
+        command,
+        setup: runner.setup_commands.clone(),
+        base,
+        exclude,
+        throwaway: false,
+        knowledge,
+        filter_port: info["port"].as_u64().unwrap_or(0) as u16,
+        filter_socket: PathBuf::from(info["filter"].as_str().unwrap_or_default()),
+        report_port: info["reportPort"].as_u64().unwrap_or(0) as u16,
+        report_socket: PathBuf::from(info["report"].as_str().unwrap_or_default()),
+        key: info["key"].as_str().unwrap_or_default().to_string(),
+        env,
+    }
+}
+
+/// Who commits in the VM: the same person as in the folder.
+fn git_identity(dir: &Path) -> Vec<(String, String)> {
+    let mut env = Vec::new();
+    for (key, vars) in [("user.name", ["GIT_AUTHOR_NAME", "GIT_COMMITTER_NAME"]), ("user.email", ["GIT_AUTHOR_EMAIL", "GIT_COMMITTER_EMAIL"])] {
+        if let Ok(value) = crate::worktree::git(dir, &["config", key]) {
+            env.extend(vars.iter().map(|v| (v.to_string(), value.clone())));
+        }
+    }
+    env
+}
+
 /// What the settings screen shows that isn't in a factory: built-in blocks, locked escapes, what
 /// listed reads always include, and the sites each harness needs.
 pub fn info(store: &Store) -> Value {
@@ -261,6 +320,10 @@ pub fn info(store: &Store) -> Value {
         "escapes": ESCAPES.iter().map(|(what, why)| json!({ "what": what, "why": why })).collect::<Vec<_>>(),
         "alwaysReads": LISTED_HOME_READS.iter().map(|r| format!("~/{r}")).collect::<Vec<_>>(),
         "harnesses": harnesses.iter().map(|h| json!({ "id": h.id, "sites": h.domains, "quiet": h.quiet_domains, "ownSandbox": !h.own_sandbox_args.trim().is_empty() })).collect::<Vec<_>>(),
+        "docker": match vm::available() {
+            Ok(docker) => json!({ "ok": true, "why": "", "image": vm::LATEST, "built": vm::has_image(&docker, &vm::image()) }),
+            Err(why) => json!({ "ok": false, "why": why, "image": vm::LATEST, "built": false }),
+        },
     })
 }
 
@@ -273,7 +336,7 @@ pub fn vm_argv(template: &str, dir: &Path, command: &str, shell_path: &str) -> V
 
 /// Long enough for a cold install on a slow connection.
 const SETUP_TIMEOUT: Duration = Duration::from_secs(20 * 60);
-const SETUP_DONE: &str = "sawtooth-setup-done";
+pub const SETUP_DONE: &str = "sawtooth-setup-done";
 
 fn setup_markers(cwd: &Path) -> Option<(PathBuf, PathBuf)> {
     let done = cwd.join(crate::worktree::git(cwd, &["rev-parse", "--git-path", SETUP_DONE]).ok()?);
@@ -303,7 +366,23 @@ fn with_setup(setup: &[String], command: &str) -> String {
 }
 
 /// Waits for a just-started terminal's setup to finish, so typing can't time out behind a slow install.
+/// In a VM it waits for the image, the copy and the setup, which `vm-run` does before the agent starts.
 pub fn wait_for_setup(runner: Option<&Runner>, cwd: &Path) -> Result<(), String> {
+    if in_vm(runner) {
+        let (ready, failed) = vm::markers(cwd).ok_or("couldn't find the worktree's git folder")?;
+        let start = Instant::now();
+        while start.elapsed() < SETUP_TIMEOUT {
+            if ready.exists() {
+                return Ok(());
+            }
+            if failed.exists() {
+                let why = std::fs::read_to_string(&failed).unwrap_or_default();
+                return Err(format!("the VM didn't start: {}", why.trim()));
+            }
+            std::thread::sleep(Duration::from_millis(500));
+        }
+        return Err("the VM didn't start in 20 minutes".to_string());
+    }
     if runner.is_none_or(|r| r.setup_commands.is_empty()) {
         return Ok(());
     }
@@ -320,8 +399,6 @@ pub fn wait_for_setup(runner: Option<&Runner>, cwd: &Path) -> Result<(), String>
     }
     Err("the runner's setup didn't finish in 20 minutes".to_string())
 }
-
-pub const DEFAULT_VM_COMMAND: &str = "limactl shell --workdir {dir} default bash -lc {cmd}";
 
 /// Prepares a terminal's start. Wraps it in its runner and makes its report socket.
 #[allow(clippy::too_many_arguments)]
@@ -361,11 +438,13 @@ pub fn prepare(
         with_setup(setup, &c)
     });
     let argv = shell::argv(&shell_path, run_command.as_deref());
+    let docker_vm = in_vm(runner);
+    let docker = if docker_vm { Some(vm::available().map_err(fail)?) } else { None };
     let allow: Value = match runner {
-        Some(r) if contained => json!(allowed_sites(r, harness)),
+        Some(r) if contained || docker_vm => json!(allowed_sites(r, harness)),
         _ => Value::Null,
     };
-    let info = bridge.call("confine.prepare", json!({ "allow": allow }))?;
+    let info = bridge.call("confine.prepare", json!({ "allow": allow, "vm": docker_vm }))?;
     let confine = info["token"].as_str().unwrap_or_default().to_string();
     let report = info["report"].as_str().map(PathBuf::from);
     let bin = store.home().join("bin");
@@ -407,10 +486,33 @@ pub fn prepare(
             started.argv = wrapped.argv;
             started.env.extend(wrapped.env);
         }
+        (Level::Vm, Some(r)) if docker.is_some() => {
+            if let Some((ready, failed)) = vm::markers(cwd) {
+                let _ = std::fs::remove_file(ready);
+                let _ = std::fs::remove_file(failed);
+            }
+            if let Some((_, failed)) = setup_markers(cwd) {
+                let _ = std::fs::remove_file(failed);
+            }
+            // Inside, the harness trusts the VM's copy of the folder, and its own sandbox is off as with ours.
+            let command = command.map(|c| harness::sandboxed_command(harness, c, "/work")).unwrap_or_default();
+            let base = crate::worktree::git(Path::new(&factory.path), &["branch", "--show-current"]).unwrap_or_default();
+            let (exclude, knowledge) = match factory.knowledge() {
+                Some(part) => {
+                    let names = part.read_as.iter().map(|n| n.trim().to_string()).filter(|n| !n.is_empty() && !n.contains('/') && n != "." && n != "..").collect();
+                    (names, Some(store.knowledge_file(&factory.id)))
+                }
+                None => (Vec::new(), None),
+            };
+            let mut spec = vm_spec(store, &info, cwd, r, command, base, exclude, knowledge, git_identity(cwd));
+            spec.throwaway = cwd.starts_with(store.worktrees_dir(&factory.id).join(".copies"));
+            started.argv = vec![program.display().to_string(), "vm-run".into(), serde_json::to_string(&spec).unwrap_or_default()];
+            started.env.push((vm::KEY.to_string(), spec.key.clone()));
+            started.agent = harness.map(|h| h.id.clone());
+        }
         (Level::Vm, Some(r)) => {
-            let template = if r.vm_command.trim().is_empty() { DEFAULT_VM_COMMAND } else { r.vm_command.as_str() };
             let line = run_command.unwrap_or_else(|| "bash -l".to_string());
-            started.argv = vm_argv(template, cwd, &line, &shell_path);
+            started.argv = vm_argv(&r.vm_command, cwd, &line, &shell_path);
         }
         _ => started.argv = argv,
     }

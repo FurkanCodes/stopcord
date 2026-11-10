@@ -114,6 +114,9 @@ pub fn start_terminal(store: &Store, bridge: &Bridge, program: &Path, req: Start
         let started = runner::prepare(store, bridge, f, chosen, command, Path::new(&cwd), program)?;
         params["argv"] = json!(started.argv);
         params["confine"] = json!(started.confine);
+        if let Some(agent) = &started.agent {
+            params["agent"] = json!(agent);
+        }
         let env: serde_json::Map<String, Value> = started.env.into_iter().map(|(k, v)| (k, json!(v))).collect();
         params["env"] = Value::Object(env);
     }
@@ -462,8 +465,13 @@ impl Engine {
         match event["event"].as_str() {
             Some("terminal.closed") => {
                 if let Some(id) = event["id"].as_str() {
-                    self.state.lock().unwrap().terminals.remove(id);
+                    let gone = self.state.lock().unwrap().terminals.remove(id);
                     self.typist.forget(id);
+                    // Closing a terminal stops Docker's client, not its container.
+                    if let Some(terminal) = gone {
+                        let me = Arc::clone(self);
+                        thread::spawn(move || me.vm_exited(&terminal));
+                    }
                 }
                 self.pump_tickets();
             }
@@ -506,6 +514,8 @@ impl Engine {
                 }
                 if kind == "terminal.exited" {
                     self.pump_tickets();
+                    let (me, terminal) = (Arc::clone(self), terminal.clone());
+                    thread::spawn(move || me.vm_exited(&terminal));
                 }
             }
             None => {}

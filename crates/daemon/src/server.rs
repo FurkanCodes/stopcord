@@ -284,7 +284,8 @@ impl Inner {
                 inner.broadcast(&event, None);
             }
         });
-        let confine = Confine::start(&self.run_dir(), &token, allow, notify)
+        let remote = params.get("vm").and_then(Value::as_bool).unwrap_or(false);
+        let confine = Confine::start_with(&self.run_dir(), &token, allow, notify, remote)
             .map_err(|e| err("confine_failed", format!("{e:#}")))?;
         let info = confine.info();
         self.confines.lock().unwrap().insert(token, Arc::new(confine));

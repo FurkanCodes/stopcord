@@ -1,0 +1,81 @@
+#!/usr/bin/env python3
+"""st: how an agent in a VM tells the factory what it's doing.
+
+The same reports as the Mac's st, sent through the relay next to this container. The key
+it was started with is what proves which terminal is speaking.
+"""
+import json
+import os
+import socket
+import sys
+
+USAGE = """usage: st done "what you did"
+       st ask "your question"
+       st note "something worth keeping"
+       st finding --file a.rs --line 9 --severity high --kind clear "what's wrong"
+       st score 7 "why\""""
+
+
+def parse(args):
+    if not args:
+        raise ValueError(USAGE)
+    verb, rest = args[0], args[1:]
+    if verb in ("done", "ask", "note"):
+        return {"verb": verb, "text": " ".join(rest)}
+    if verb == "score":
+        if not rest or not rest[0].isdigit() or int(rest[0]) > 10:
+            raise ValueError(USAGE)
+        return {"verb": "score", "score": int(rest[0]), "text": " ".join(rest[1:])}
+    if verb == "finding":
+        report = {"verb": "finding", "file": "", "line": 0, "severity": "", "kind": "", "text": ""}
+        text, it = [], iter(rest)
+        for a in it:
+            if a in ("--file", "--severity", "--kind"):
+                value = next(it, None)
+                if value is None:
+                    raise ValueError(USAGE)
+                report[a[2:]] = value
+            elif a == "--line":
+                value = next(it, "")
+                if not value.isdigit():
+                    raise ValueError(USAGE)
+                report["line"] = int(value)
+            else:
+                text.append(a)
+        report["text"] = " ".join(text)
+        return report
+    raise ValueError(USAGE)
+
+
+def send(report):
+    where, key = os.environ.get("SAWTOOTH_REPORT", ""), os.environ.get("SAWTOOTH_KEY", "")
+    if not where or not key:
+        raise RuntimeError("this isn't a Sawtooth factory terminal")
+    host, _, port = where.rpartition(":")
+    with socket.create_connection((host, int(port)), timeout=10) as s:
+        s.sendall(f"{key} {json.dumps(report)}\n".encode())
+        reply = s.makefile().readline()
+    try:
+        answer = json.loads(reply)
+    except ValueError:
+        raise RuntimeError("couldn't reach Sawtooth")
+    if answer.get("ok") is not True:
+        raise RuntimeError(answer.get("error") or "Sawtooth refused that")
+
+
+def main(args):
+    try:
+        send(parse(args))
+    except ValueError as e:
+        print(e, file=sys.stderr)
+        return 1
+    except (OSError, RuntimeError) as e:
+        print(f"st: {e}", file=sys.stderr)
+        return 1
+    # Silence reads as failure: an agent that heard nothing sent another question to check.
+    print("st: asked. a person's answer will be typed here" if args[0] == "ask" else "st: sent")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

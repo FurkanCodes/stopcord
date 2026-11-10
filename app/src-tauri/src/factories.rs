@@ -182,9 +182,13 @@ pub struct Runner {
     pub network_quiet: Vec<String>,
     #[serde(skip_serializing_if = "is_default")]
     pub other_sites: OtherSites,
-    /// VM level: the command that runs a command inside the VM. `{dir}` is the worktree and `{cmd}` the command.
+    /// VM level: a person's own command that runs a command inside their VM, replacing Sawtooth's
+    /// container and everything it does. `{dir}` is the worktree and `{cmd}` the command.
     #[serde(skip_serializing_if = "no_text")]
     pub vm_command: String,
+    /// VM level: the image agents run in, built FROM sawtooth-vm:latest. Empty means Sawtooth's own.
+    #[serde(skip_serializing_if = "no_text")]
+    pub vm_image: String,
     /// Commands run in the worktree before the agent starts.
     #[serde(skip_serializing_if = "none")]
     pub setup_commands: Vec<String>,

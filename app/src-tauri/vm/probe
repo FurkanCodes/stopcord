@@ -1,0 +1,119 @@
+#!/usr/bin/env python3
+"""Run inside a VM runner's container: tries what the container should allow or stop and
+prints what happened, on a line starting with the mark, in the Mac probe's format.
+
+    probe '{"macHome": "/Users/me", "macPort": 51234}'
+"""
+import json
+import os
+import socket
+import sys
+
+MARK = "SAWTOOTH-PROBE "
+
+
+def check(name, should_block, got, why=""):
+    want = "blocked" if should_block else "allowed"
+    if got is None:
+        return {"name": name, "want": want, "got": f"couldn't tell: {why}", "held": None}
+    return {"name": name, "want": want, "got": got, "held": (got == "blocked") == should_block}
+
+
+def connects(host, port):
+    try:
+        with socket.create_connection((host, port), timeout=3):
+            return "allowed"
+    except OSError:
+        return "blocked"
+
+
+def ask_filter(site):
+    """The filter's status for a site: 200 when it connected, 403 when it refused."""
+    proxy = os.environ.get("HTTPS_PROXY", "")
+    address = proxy.rstrip("/").rsplit("//", 1)[-1]
+    host, _, port = address.rpartition(":")
+    if not host:
+        return None, "no web filter was set up"
+    try:
+        with socket.create_connection((host, int(port)), timeout=10) as s:
+            s.sendall(f"CONNECT {site}:443 HTTP/1.1\r\nHost: {site}:443\r\n\r\n".encode())
+            head = s.recv(64).decode(errors="replace").split()
+    except OSError as e:
+        return None, f"couldn't reach the filter: {e}"
+    return (head[1] if len(head) > 1 else ""), ""
+
+
+def unknown_site():
+    status, why = ask_filter("sawtooth-probe.invalid")
+    if status is None:
+        return None, why
+    return ("allowed" if status == "200" else "blocked"), ""
+
+
+def allowed_site(site):
+    status, why = ask_filter(site)
+    if status is None:
+        return None, why
+    if status == "200":
+        return "allowed", ""
+    if status == "403":
+        return "blocked", ""
+    # Let through, but the site itself didn't answer, as when this machine is offline.
+    return None, f"{site} didn't answer"
+
+
+def reports():
+    where, key = os.environ.get("SAWTOOTH_REPORT", ""), os.environ.get("SAWTOOTH_KEY", "")
+    host, _, port = where.rpartition(":")
+    if not host:
+        return None, "no report address was set up"
+    try:
+        with socket.create_connection((host, int(port)), timeout=5) as s:
+            # Not a real report, so Sawtooth answers without recording anything.
+            s.sendall(f'{key} {{"verb":"probe"}}\n'.encode())
+            json.loads(s.makefile().readline())
+        return "allowed", ""
+    except (OSError, ValueError) as e:
+        return "blocked", str(e)
+
+
+def run(spec):
+    out = []
+    try:
+        with open("/work/.sawtooth-probe", "w") as f:
+            f.write("sawtooth probe")
+        os.remove("/work/.sawtooth-probe")
+        out.append(check("writes in its own folder", False, "allowed"))
+    except OSError as e:
+        out.append(check("writes in its own folder", False, "blocked", str(e)))
+    home = spec.get("macHome", "")
+    if home:
+        out.append(check("sees your mac's home folder", True, "allowed" if os.path.exists(home) else "blocked"))
+    docker = "/var/run/docker.sock"
+    if os.path.exists(docker):
+        try:
+            s = socket.socket(socket.AF_UNIX)
+            s.connect(docker)
+            s.close()
+            out.append(check("reaches docker", True, "allowed"))
+        except OSError:
+            out.append(check("reaches docker", True, "blocked"))
+    else:
+        out.append(check("reaches docker", True, "blocked"))
+    if spec.get("macPort"):
+        out.append(check("reaches the mac", True, connects("host.docker.internal", int(spec["macPort"]))))
+    out.append(check("goes around the web filter", True, connects("1.1.1.1", 443)))
+    got, why = unknown_site()
+    out.append(check("reaches a site on no list", True, got, why))
+    site = spec.get("allowedSite", "")
+    if site:
+        got, why = allowed_site(site)
+        out.append(check(f"reaches {site}, which it needs", False, got, why))
+    got, why = reports()
+    out.append(check("reports back to sawtooth", False, got, why))
+    return out
+
+
+if __name__ == "__main__":
+    spec = json.loads(sys.argv[1]) if len(sys.argv) > 1 else {}
+    print(MARK + json.dumps(run(spec)))

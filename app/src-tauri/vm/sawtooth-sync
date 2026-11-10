@@ -1,0 +1,148 @@
+#!/bin/sh
+# Mirrors a git folder between the Mac and a VM's volume. The same script runs on both sides,
+# in the folder's top directory.
+#
+#   sawtooth-sync state -- EXCLUDED...
+#       "empty", or "HEAD TREE": the commit, and the tree of everything in the folder that
+#       git doesn't ignore, committed or not. Trees are content addresses, so two sides with
+#       the same files print the same line whatever their git versions.
+#   sawtooth-sync pack BASE BASEREF -- EXCLUDED...
+#       A bundle on stdout with the folder's state as a commit on top of its own, and BASEREF's
+#       branch. Commits BASE already has are left out when this side has BASE. A bundle drops a
+#       branch the other side already has, but never the state, so the state's parent is the
+#       commit to be on.
+#   sawtooth-sync unpack [--ff-only] [--branch NAME] [--set-base NAME] -- EXCLUDED... < bundle
+#       Makes the folder exactly what the bundle holds. With --ff-only the commit has to follow
+#       on from the folder's own, so history can't be rewritten under it.
+#   sawtooth-sync knowledge NAME < content
+#       Writes a plain copy of the knowledge base, kept out of git, unless the repo tracks NAME.
+#
+# EXCLUDED names belong to Sawtooth, such as knowledge-base links: they never cross and are
+# never touched. Hooks never run, here or on the Mac.
+set -eu
+
+g() { git -c core.hooksPath=/dev/null -c core.fsmonitor=false -c advice.detachedHead=false "$@"; }
+
+# Everything in the folder as a commit on top of HEAD, made the same way on both sides so the
+# same files give the same commit.
+wip() {
+    # An ignored name is never added anyway, and git refuses a pathspec that names one.
+    for n do
+        shift
+        g check-ignore -q -- "$n" 2>/dev/null || set -- "$@" ":(exclude,top)$n"
+    done
+    idx=$(mktemp "${TMPDIR:-/tmp}/sawtooth-index.XXXXXX")
+    real=$(g rev-parse --git-path index)
+    # -p keeps the index's time, which is how git knows to look again at a file changed in the
+    # same second it last looked. A fresh time would make that change look like nothing.
+    if [ -f "$real" ]; then cp -p "$real" "$idx"; else rm -f "$idx"; fi
+    GIT_INDEX_FILE=$idx g add -A -- . "$@"
+    tree=$(GIT_INDEX_FILE=$idx g write-tree)
+    rm -f "$idx"
+    printf 'sawtooth: the folder as it was\n' | GIT_AUTHOR_NAME=sawtooth GIT_AUTHOR_EMAIL=sawtooth@localhost \
+        GIT_COMMITTER_NAME=sawtooth GIT_COMMITTER_EMAIL=sawtooth@localhost \
+        GIT_AUTHOR_DATE='@0 +0000' GIT_COMMITTER_DATE='@0 +0000' g commit-tree "$tree" -p HEAD
+}
+
+has_head() { g rev-parse -q --verify 'HEAD^{commit}' >/dev/null 2>&1; }
+
+dashes() { [ "${1-}" = -- ] || { echo "sawtooth-sync: expected --" >&2; exit 2; }; }
+
+state() {
+    dashes "$@"; shift
+    if ! has_head; then echo empty; return; fi
+    c=$(wip "$@")
+    echo "$(g rev-parse HEAD) $(g rev-parse "$c^{tree}")"
+}
+
+pack() {
+    base=$1 baseref=$2; shift 2; dashes "$@"; shift
+    has_head || { echo "sawtooth-sync: there's nothing committed to send" >&2; exit 2; }
+    c=$(wip "$@")
+    g update-ref refs/sawtooth/wip "$c"
+    set -- refs/sawtooth/wip
+    if [ -n "$baseref" ] && g rev-parse -q --verify "refs/heads/$baseref^{commit}" >/dev/null; then
+        g update-ref refs/sawtooth/base "refs/heads/$baseref"
+        set -- "$@" refs/sawtooth/base
+    fi
+    if [ "$base" != - ] && g cat-file -e "$base^{commit}" 2>/dev/null; then set -- "$@" "^$base"; fi
+    out=$(mktemp "${TMPDIR:-/tmp}/sawtooth-bundle.XXXXXX")
+    g bundle create -q "$out" "$@"
+    cat "$out"
+    rm -f "$out"
+    for r in wip base; do g update-ref -d "refs/sawtooth/$r" 2>/dev/null || true; done
+}
+
+# Moves Sawtooth's own files out of the way while the folder changes, and back after.
+aside() {
+    keep=$(mktemp -d "${TMPDIR:-/tmp}/sawtooth-keep.XXXXXX")
+    for n do
+        if [ -e "$n" ] || [ -L "$n" ]; then mv "$n" "$keep/$n"; fi
+    done
+}
+back() {
+    for n do
+        if [ -e "$keep/$n" ] || [ -L "$keep/$n" ]; then rm -rf "$n"; mv "$keep/$n" "$n"; fi
+    done
+    rmdir "$keep" 2>/dev/null || rm -rf "$keep"
+}
+
+forget_in() { g for-each-ref --format='%(refname)' refs/sawtooth/in/ | while read -r r; do g update-ref -d "$r"; done; }
+
+unpack() {
+    ff= branch= setbase=
+    while [ $# -gt 0 ]; do
+        case $1 in
+            --ff-only) ff=1 ;;
+            --branch) branch=$2; shift ;;
+            --set-base) setbase=$2; shift ;;
+            --) shift; break ;;
+            *) echo "sawtooth-sync: unknown option $1" >&2; exit 2 ;;
+        esac
+        shift
+    done
+    g rev-parse --git-dir >/dev/null 2>&1 || g init -q
+    b=$(mktemp "${TMPDIR:-/tmp}/sawtooth-bundle.XXXXXX")
+    cat > "$b"
+    g -c transfer.fsckObjects=true -c fetch.fsckObjects=true -c fetch.fsck.hasDotgit=error \
+        fetch -q "$b" '+refs/sawtooth/*:refs/sawtooth/in/*'
+    rm -f "$b"
+    new=$(g rev-parse refs/sawtooth/in/wip^1)
+    if [ -n "$ff" ] && has_head && ! g merge-base --is-ancestor HEAD "$new"; then
+        forget_in
+        echo "sawtooth-sync: its history was rewritten, so it doesn't follow on from this folder" >&2
+        exit 3
+    fi
+    aside "$@"
+    if [ -n "$branch" ]; then g checkout -q -f -B "$branch" "$new"; else g checkout -q -f --detach "$new"; fi
+    g clean -fdq
+    g read-tree --reset -u refs/sawtooth/in/wip
+    g reset -q
+    back "$@"
+    if [ -n "$setbase" ] && [ "$setbase" != "$branch" ] && g rev-parse -q --verify refs/sawtooth/in/base >/dev/null; then
+        g branch -f "$setbase" refs/sawtooth/in/base
+    fi
+    forget_in
+}
+
+knowledge() {
+    name=$1
+    content=$(mktemp "${TMPDIR:-/tmp}/sawtooth-kb.XXXXXX")
+    cat > "$content"
+    if [ -n "$(g ls-files -- "$name")" ]; then rm -f "$content"; return; fi
+    rm -rf "$name"
+    mv "$content" "$name"
+    exclude=$(g rev-parse --git-path info/exclude)
+    mkdir -p "$(dirname "$exclude")"
+    grep -qxF "/$name" "$exclude" 2>/dev/null || echo "/$name" >> "$exclude"
+}
+
+cmd=${1-}
+[ $# -gt 0 ] && shift
+case $cmd in
+    state) state "$@" ;;
+    pack) pack "$@" ;;
+    unpack) unpack "$@" ;;
+    knowledge) knowledge "$@" ;;
+    *) echo "usage: sawtooth-sync state|pack|unpack|knowledge ..." >&2; exit 2 ;;
+esac
