@@ -30,6 +30,7 @@ TESTS = [
     ('source_keys', []),
     ('integrations', []),
     ('oauth', []),
+    ('templates', []),
     ('terminal', []),
 ]
 ON_REQUEST = [('real_answer', [])]

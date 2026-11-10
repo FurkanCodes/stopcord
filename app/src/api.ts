@@ -399,6 +399,20 @@ export interface SourceTemplate {
   vars: { name: string; label: string; placeholder: string; hint: string }[];
 }
 
+/** A factory's way of working without its project: the line, roles, sandboxes, skills and checks. */
+export interface FactoryTemplate {
+  id: string;
+  name: string;
+  description: string;
+  defaults: Defaults;
+  line: LineStage[];
+  agents: Agent[];
+  scorers: Agent[];
+  skills: Skill[];
+  runners: Runner[];
+  checks: Part[];
+}
+
 export interface HarnessProfile {
   id: string;
   commands: string[];
@@ -492,8 +506,14 @@ export const api = {
   factories: () => invoke<Factory[]>('factories'),
   brokenFactories: () => invoke<string[]>('broken_factories'),
   dismissAlert: (id: string, key: string) => invoke<void>('dismiss_alert', { id, key }),
-  createFactory: (args: { path: string; name: string; template: 'open' | 'reviewed' | 'line'; readAs: string[]; harness?: string; reviewer?: string; level?: Level }) =>
+  createFactory: (args: { path: string; name: string; template: 'open' | 'reviewed' | 'line'; readAs: string[]; harness?: string; reviewer?: string; level?: Level; from?: string }) =>
     invoke<Factory>('create_factory', args),
+  /** Factory templates saved on this machine. */
+  listTemplates: () => invoke<FactoryTemplate[]>('list_templates'),
+  saveTemplate: (factory: string, name: string, description: string) => invoke<FactoryTemplate>('save_template', { factory, name, description }),
+  removeTemplate: (id: string) => invoke<void>('remove_template', { id }),
+  exportTemplate: (id: string, path: string) => invoke<void>('export_template', { id, path }),
+  importTemplate: (path: string) => invoke<FactoryTemplate>('import_template', { path }),
   saveFactory: (factory: Factory) => invoke<Factory>('save_factory', { factory }),
   removeFactory: (id: string) => invoke<void>('remove_factory', { id }),
   startTerminal: (args: {

@@ -31,6 +31,7 @@ mod line;
 mod project;
 mod runner;
 mod runs;
+mod saved_templates;
 mod settings;
 mod shell;
 mod slack;
@@ -317,8 +318,14 @@ fn create_factory(
     harness: Option<String>,
     reviewer: Option<String>,
     level: Option<String>,
+    from: Option<String>,
 ) -> Result<FactoryInfo, Failure> {
     let folder = Path::new(&path);
+    // A saved template brings its own line, roles, sandboxes and checks.
+    let from = match from.filter(|t| !t.trim().is_empty()) {
+        Some(id) => Some(saved_templates::get(app.store.home(), &id).map_err(fail)?),
+        None => None,
+    };
     let mut parts = vec![Part {
         id: "kb".into(),
         kind: Kind::Knowledge,
@@ -326,7 +333,7 @@ fn create_factory(
         read_as,
         ..Part::default()
     }];
-    if template == "reviewed" || template == "line" {
+    if from.is_none() && (template == "reviewed" || template == "line") {
         if let Some(test) = project::test_command(folder) {
             parts.push(Part {
                 id: "tests".into(),
@@ -348,7 +355,10 @@ fn create_factory(
     }
     let test = parts.iter().find(|p| p.id == "tests").map(|p| p.command.clone());
     let mut factory = app.store.create(folder, &name, parts).map_err(fail)?;
-    if template == "line" {
+    if let Some(t) = &from {
+        saved_templates::apply(t, &mut factory, project::test_command(folder).as_deref());
+        factory = app.store.save(&factory).map_err(fail)?;
+    } else if template == "line" {
         let harness = harness.filter(|h| !h.trim().is_empty()).unwrap_or_else(|| "claude".to_string());
         let reviewer = reviewer.filter(|h| !h.trim().is_empty()).unwrap_or_else(|| harness.clone());
         let level = match level.as_deref() {
@@ -371,6 +381,33 @@ fn create_factory(
         &Run::new("factory", format!("{} became a factory", factory.name)),
     );
     Ok(app.info(factory))
+}
+
+#[tauri::command(async)]
+fn list_templates(app: State<'_, App>) -> Vec<saved_templates::Template> {
+    saved_templates::list(app.store.home()).0
+}
+
+/// Keeps a factory's way of working as a template. One with the same name is replaced.
+#[tauri::command(async)]
+fn save_template(app: State<'_, App>, factory: String, name: String, description: String) -> Result<saved_templates::Template, Failure> {
+    let f = app.store.get(&factory).map_err(fail)?;
+    saved_templates::save(app.store.home(), &saved_templates::from_factory(&f, &name, &description)).map_err(fail)
+}
+
+#[tauri::command(async)]
+fn remove_template(app: State<'_, App>, id: String) -> Result<(), Failure> {
+    saved_templates::remove(app.store.home(), &id).map_err(fail)
+}
+
+#[tauri::command(async)]
+fn export_template(app: State<'_, App>, id: String, path: String) -> Result<(), Failure> {
+    saved_templates::export(app.store.home(), &id, Path::new(&path)).map_err(fail)
+}
+
+#[tauri::command(async)]
+fn import_template(app: State<'_, App>, path: String) -> Result<saved_templates::Template, Failure> {
+    saved_templates::import(app.store.home(), Path::new(&path)).map_err(fail)
 }
 
 #[tauri::command(async)]
@@ -1077,6 +1114,11 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![
             broken_factories,
+            list_templates,
+            save_template,
+            remove_template,
+            export_template,
+            import_template,
             dismiss_alert,
             leave_key::in_terminal,
             daemon,

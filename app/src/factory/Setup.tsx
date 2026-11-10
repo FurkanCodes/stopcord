@@ -120,7 +120,7 @@ function Need({ id, label, value, action, children }: { id: string; label: strin
 }
 
 const NEEDS: [string, string][] = [['sources', 'work comes from'], ['harness', 'runs with'], ['sandbox', 'works in'], ['line', 'line'], ['reports', 'tells you']];
-const TUNED: [string, string][] = [['tuning-agents', 'agents'], ['tuning-sandboxes', 'sandboxes'], ['tuning-sources', 'sources'], ['tuning-scorers', 'scorers'], ['tuning-skills', 'skills'], ['tuning-benchmarks', 'benchmarks']];
+const TUNED: [string, string][] = [['tuning-agents', 'agents'], ['tuning-sandboxes', 'sandboxes'], ['tuning-sources', 'sources'], ['tuning-scorers', 'scorers'], ['tuning-skills', 'skills'], ['tuning-benchmarks', 'benchmarks'], ['tuning-template', 'template']];
 const section = (id: string) => (id.startsWith('tuning-') ? document.getElementById(id) : document.querySelector(`[data-need="${id}"]`));
 
 /**
@@ -325,6 +325,7 @@ export function Setup({ factory, onRemove }: { factory: Factory; onRemove: () =>
               ))}
             </Pane>
             <BenchPane factory={factory} set={set} />
+            <TemplatePane factory={factory} />
             <div style={{ display: 'flex', gap: 10, alignItems: 'baseline', flexWrap: 'wrap', padding: '0 12px' }}>
               <Key size="sm" onClick={onRemove}>remove this factory</Key>
               <span className="t-dim" style={{ fontSize: 12 }}>takes it out of sawtooth. the project folder stays as it is</span>
@@ -574,6 +575,42 @@ function TellsYou({ factory, set }: { factory: Factory; set: (patch: Partial<Fac
         </div>
       )}
     </Need>
+  );
+}
+
+/** Keeps this factory's way of working, without its project, for new factories to start from. */
+function TemplatePane({ factory }: { factory: Factory }) {
+  const [name, setName] = useState('');
+  const [about, setAbout] = useState('');
+  const [said, setSaid] = useState<{ ok: boolean; text: string } | null>(null);
+  const [taken, setTaken] = useState<string[]>([]);
+  useEffect(() => {
+    api.listTemplates().then((all) => setTaken(all.map((t) => t.name.toLowerCase())), () => undefined);
+  }, [said]);
+  const wanted = (name.trim() || factory.name).toLowerCase();
+  const save = async () => {
+    try {
+      const t = await api.saveTemplate(factory.id, name.trim() || factory.name, about);
+      setSaid({ ok: true, text: `saved as ${t.name}. a new factory can start from it, under start` });
+    } catch (e) {
+      setSaid({ ok: false, text: failureText(e) });
+    }
+  };
+  return (
+    <Pane id="tuning-template" title="as a template" heading={3} style={paneStyle}>
+      <p className="t-muted">the line, the roles with their harnesses and models, sandboxes, skills, scorers and checks. not this project&apos;s folder, tickets, sources, reports or secrets.</p>
+      <FieldRow id="tpl-name" label="name" width="14ch">
+        <input id="tpl-name" className="t-field" spellCheck={false} value={name} placeholder={factory.name} onChange={(e) => setName(e.currentTarget.value)} />
+      </FieldRow>
+      <FieldRow id="tpl-about" label="what it's for" width="14ch">
+        <input id="tpl-about" className="t-field" spellCheck={false} value={about} placeholder="like: fixes small bugs from sentry, reviewed by another model" onChange={(e) => setAbout(e.currentTarget.value)} />
+      </FieldRow>
+      <span style={{ display: 'flex', gap: 10, alignItems: 'baseline', flexWrap: 'wrap', paddingLeft: 'calc(14ch + 12px)' }}>
+        <Key size="xs" className="is-action" onClick={() => void save()}>{taken.includes(wanted) ? 'replace the template' : 'save as a template'}</Key>
+        {said && <span role="status" data-template-saved><ConnectionState ok={said.ok}>{said.text}</ConnectionState></span>}
+        {!said && taken.includes(wanted) && <span className="t-dim" style={{ fontSize: 12 }}>there's already a template with this name. factories made from it keep what they have</span>}
+      </span>
+    </Pane>
   );
 }
 

@@ -1,13 +1,15 @@
 import { useEffect, useRef, useState } from 'react';
-import { open } from '@tauri-apps/plugin-dialog';
-import { api, failureText, type FolderSuggestion, type Level, type ProjectInfo } from './api';
+import { open, save } from '@tauri-apps/plugin-dialog';
+import { api, failureText, type FactoryTemplate, type FolderSuggestion, type Level, type ProjectInfo } from './api';
+import { runsOn, useHarnessProfiles } from './harness';
 import { harnessFiles } from './factory/parts';
 import { go, openFactory, refreshFactories, sawtoothHome, useStore } from './store';
 import { tilde } from './text';
-import { Brand, Check, FieldRow, Key, Pane, Radio, Screen, Sep } from './tui/kit';
+import { ArmedKey, Brand, Check, FieldRow, Key, Pane, Radio, Screen, Sep } from './tui/kit';
 import { plain, useKeys } from './tui/keys';
 
-type Template = 'open' | 'reviewed' | 'line';
+/** A built-in start, or `saved:<id>` for a template made from another factory. */
+type Template = 'open' | 'reviewed' | 'line' | `saved:${string}`;
 
 /** "my-project" from a name the way the app makes factory ids. */
 function idOf(name: string): string {
@@ -40,8 +42,14 @@ export function NewFactory() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const folderInput = useRef<HTMLInputElement>(null);
+  const [saved, setSaved] = useState<FactoryTemplate[]>([]);
+  const [shared, setShared] = useState('');
+  const profiles = useHarnessProfiles();
+  const loadSaved = () => api.listTemplates().then(setSaved, () => setSaved([]));
+  const from = template.startsWith('saved:') ? template.slice('saved:'.length) : '';
 
   useEffect(() => {
+    void loadSaved();
     api.nearbyFolders().then(setNearby, () => setNearby([]));
     folderInput.current?.focus();
   }, []);
@@ -91,9 +99,11 @@ export function NewFactory() {
     setBusy(true);
     setError(null);
     try {
-      const factory = await api.createFactory({ path: folder.trim(), name: name.trim(), template, readAs: links, harness, reviewer, level });
+      const factory = from
+        ? await api.createFactory({ path: folder.trim(), name: name.trim(), template: 'line', readAs: links, from })
+        : await api.createFactory({ path: folder.trim(), name: name.trim(), template: template as 'open' | 'reviewed' | 'line', readAs: links, harness, reviewer, level });
       await refreshFactories();
-      openFactory(factory.id, template === 'line' ? 'work' : 'overview');
+      openFactory(factory.id, template === 'line' || from ? 'work' : 'overview');
     } catch (e) {
       setError(failureText(e));
     } finally {
@@ -299,6 +309,63 @@ export function NewFactory() {
                   <span style={{ fontWeight: 600 }}>{title}</span>
                 </Radio>
               ))}
+              {saved.length > 0 && <span className="t-dim" style={{ fontSize: 12, padding: '8px 8px 2px' }}>your templates</span>}
+              {saved.map((t) => (
+                <div key={t.id} data-template={t.id} style={{ display: 'flex', alignItems: 'flex-start', gap: 6 }}>
+                  <div style={{ flex: '1 1 auto', minWidth: 0 }}>
+                    <Radio
+                      id={`tpl-saved-${t.id}`}
+                      name="template"
+                      checked={template === `saved:${t.id}`}
+                      onChange={() => setTemplate(`saved:${t.id}`)}
+                      note={<span style={{ whiteSpace: 'pre-line' }}>{[t.line.map((st) => st.id).join(' → '), t.agents.map((a) => `${a.id} on ${runsOn(profiles, a.harness || t.defaults.harness || '') || 'the default'}`).join(', '), t.description].filter(Boolean).join('\n')}</span>}
+                    >
+                      <span style={{ fontWeight: 600 }}>{t.name}</span>
+                    </Radio>
+                  </div>
+                  <Key
+                    size="xs"
+                    title="Save it as a file to hand to someone else. It has no secrets in it"
+                    onClick={async () => {
+                      const path = await save({ defaultPath: `${t.id}.sawtooth.yaml`, filters: [{ name: 'Sawtooth template', extensions: ['yaml'] }] });
+                      if (!path) return;
+                      await api.exportTemplate(t.id, path).then(() => setShared(`saved ${t.name} to ${tilde(path)}`), (e) => setShared(failureText(e)));
+                    }}
+                  >
+                    share
+                  </Key>
+                  <ArmedKey
+                    size="xs"
+                    title="Factories already made from it keep working"
+                    onClick={() => {
+                      if (template === `saved:${t.id}`) setTemplate('line');
+                      void api.removeTemplate(t.id).then(loadSaved);
+                    }}
+                  >
+                    remove
+                  </ArmedKey>
+                </div>
+              ))}
+              <span style={{ display: 'flex', gap: 8, alignItems: 'baseline', flexWrap: 'wrap', padding: '6px 0 0 2px' }}>
+                <Key
+                  size="xs"
+                  onClick={async () => {
+                    const path = await open({ multiple: false, filters: [{ name: 'Sawtooth template', extensions: ['yaml', 'yml'] }] });
+                    if (typeof path !== 'string') return;
+                    try {
+                      const t = await api.importTemplate(path);
+                      await loadSaved();
+                      setTemplate(`saved:${t.id}`);
+                      setShared(`added ${t.name}`);
+                    } catch (e) {
+                      setShared(failureText(e));
+                    }
+                  }}
+                >
+                  open a template file…
+                </Key>
+                {shared ? <span role="status" className="t-muted" style={{ fontSize: 12 }}>{shared}</span> : saved.length === 0 && <span className="t-dim" style={{ fontSize: 12 }}>or save one from any factory's setup, under tuning</span>}
+              </span>
             </div>
           </div>
 
