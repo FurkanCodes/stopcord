@@ -276,8 +276,18 @@ pub struct LineStage {
     #[serde(skip_serializing_if = "none")]
     pub race: Vec<String>,
     /// Races: the scorer that picks among the copies that passed. Empty keeps the first to pass.
+    /// Panels: the scorer that scores each round, from 0 to 10.
     #[serde(skip_serializing_if = "no_text")]
     pub judge: String,
+    /// Agent stages: other agents that take turns with `agent`, in order, with `st say`.
+    #[serde(skip_serializing_if = "none")]
+    pub panel: Vec<String>,
+    /// Panels: the most rounds before a person is asked. Zero means 3.
+    #[serde(skip_serializing_if = "zero")]
+    pub rounds: u32,
+    /// Panels: the judge's score that ends the stage. Zero means 7.
+    #[serde(skip_serializing_if = "zero")]
+    pub threshold: u32,
     /// The last stage: how to merge. Empty merges the branch locally; anything else is a shell command.
     #[serde(skip_serializing_if = "no_text")]
     pub merge: String,
@@ -457,6 +467,21 @@ pub struct WorkItem {
     pub merge_error: String,
     /// The race at its current stage, while one is running.
     pub race: Option<Race>,
+    /// The panel at its current stage, while one is talking.
+    pub panel: Option<Panel>,
+}
+
+/// Agents taking turns at one stage, each in its own terminal.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct Panel {
+    pub stage: String,
+    /// From 1.
+    pub round: u32,
+    /// Whose turn it is.
+    pub turn: String,
+    /// What each member said, oldest first.
+    pub said: Vec<Note>,
 }
 
 /// Several agents doing one stage at once, each in its own copy, until one is kept.

@@ -514,13 +514,40 @@ function Line({ factory, set }: { factory: Factory; set: (patch: Partial<Factory
             <FieldRow label="races with" width="14ch">
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
                 {factory.agents.filter((a) => a.id !== s.agent).map((a) => (
-                  <Check key={a.id} id={`st-${i}-race-${a.id}`} checked={(s.race ?? []).includes(a.id)} onChange={(on) => stage(i, on ? { race: [...(s.race ?? []), a.id], isolated: false, keep: [] } : { race: (s.race ?? []).filter((x) => x !== a.id) })}>
+                  <Check key={a.id} id={`st-${i}-race-${a.id}`} checked={(s.race ?? []).includes(a.id)} onChange={(on) => stage(i, on ? { race: [...(s.race ?? []), a.id], panel: [], isolated: false, keep: [] } : { race: (s.race ?? []).filter((x) => x !== a.id) })}>
                     {a.id}
                   </Check>
                 ))}
               </div>
               <span className="t-dim" style={{ fontSize: 12 }}>{(s.race ?? []).length ? `${(s.race ?? []).length + 1} agents do this at once, each in its own copy. ${factory.line.some((g) => g.id === s.then && g.kind === 'gate') ? `the ${s.then} checks run in every copy` : 'with no gate next, every finished copy counts'}, and one that passes comes back to the branch` : 'none. pick agents to race this one, each in its own copy'}</span>
             </FieldRow>
+          )}
+          {s.kind === 'agent' && factory.agents.length > 1 && !(s.race ?? []).length && (
+            <FieldRow label="talks with" width="14ch">
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                {factory.agents.filter((a) => a.id !== s.agent).map((a) => (
+                  <Check key={a.id} id={`st-${i}-panel-${a.id}`} checked={(s.panel ?? []).includes(a.id)} onChange={(on) => stage(i, on ? { panel: [...(s.panel ?? []), a.id], race: [] } : { panel: (s.panel ?? []).filter((x) => x !== a.id) })}>
+                    {a.id}
+                  </Check>
+                ))}
+              </div>
+              <span className="t-dim" style={{ fontSize: 12 }}>{(s.panel ?? []).length ? `a panel: ${[s.agent, ...(s.panel ?? [])].join(', then ')}, taking turns with st say, each in its own terminal. ${s.judge ? `${s.judge} scores every round, and ${s.threshold || 7} or more ends the stage` : `it ends after ${s.rounds || 3} rounds`}` : 'nobody. pick agents to talk this through with it in turns'}</span>
+            </FieldRow>
+          )}
+          {s.kind === 'agent' && (s.panel ?? []).length > 0 && (
+            <>
+              <Pick id={`st-judge-${i}`} label="scored by" value={s.judge ?? ''} options={[['', 'nobody: it ends after its rounds'], ...factory.scorers.map((a): [string, string] => [a.id, `${a.id}, after every round`])]} onChange={(judge) => stage(i, { judge })} />
+              <FieldRow id={`st-rounds-${i}`} label="rounds" width="14ch">
+                <input id={`st-rounds-${i}`} type="number" min={1} className="t-field" style={{ width: '8ch' }} value={s.rounds || 3} onChange={(e) => stage(i, { rounds: Number(e.currentTarget.value) || 3 })} />
+                <span className="t-dim" style={{ fontSize: 12 }}>{s.judge ? 'then a person is asked' : 'then the last word is its note'}</span>
+              </FieldRow>
+              {s.judge && (
+                <FieldRow id={`st-thr-${i}`} label="settled at" width="14ch">
+                  <input id={`st-thr-${i}`} type="number" min={0} max={10} className="t-field" style={{ width: '8ch' }} value={s.threshold || 7} onChange={(e) => stage(i, { threshold: Math.min(10, Number(e.currentTarget.value) || 7) })} />
+                  <span className="t-dim" style={{ fontSize: 12 }}>out of 10</span>
+                </FieldRow>
+              )}
+            </>
           )}
           {s.kind === 'agent' && (s.race ?? []).length > 0 && <Pick id={`st-judge-${i}`} label="judged by" value={s.judge ?? ''} options={[['', 'nobody: the first to pass is kept'], ...factory.scorers.map((a): [string, string] => [a.id, `${a.id}, which picks among the copies that pass`])]} onChange={(judge) => stage(i, { judge })} />}
           {s.kind === 'agent' && !(s.race ?? []).length && <Pick id={`st-iso-${i}`} label="works in" value={s.isolated ? 'copy' : ''} options={[['', 'the real branch'], ['copy', 'a throwaway copy']]} onChange={(v) => stage(i, v === 'copy' ? { isolated: true } : { isolated: false, keep: [] })} />}

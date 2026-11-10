@@ -28,6 +28,7 @@ No test calls a model unless you ask for `real_answer`, which spends quota. Each
 | `roles_talk` | Each stage's note reaches every stage after it, the builder hands work back to the planner with `st send` and the planner gets the message, and handoff shows the notes from each stage |
 | `answers_once` | A reviewer and a scorer that answer once get the diff and the notes with no terminal, the reviewer's clear finding sends the work back to the builder, the scorer's last line becomes its score, and setup shows how each role runs |
 | `race` | Three builders race at build, each in its own copy and terminal; the one that fails the tests is out, a judge that answers once picks between the two that pass, only the winner's commits reach the branch, and the racers' terminals and copies are cleaned up |
+| `panel` | The planner and a critic take turns at plan with `st say`, each hearing the other in its own terminal; a judge that answers once scores each round, one ticket settles in round two with its plan kept, and one that never settles asks a person, who answers the last speaker |
 | `markdown`, `logos`, `terminal` | Rendering |
 
 ## Stand-in agents

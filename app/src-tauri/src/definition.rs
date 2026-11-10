@@ -507,6 +507,15 @@ fn validate_line(line: &[LineStage], agents: &BTreeSet<&str>, checks: &BTreeSet<
                 if s.race.contains(&s.agent) {
                     out.push(format!("stage {} races {} against itself", s.id, s.agent));
                 }
+                for m in s.panel.iter().filter(|m| !agents.contains(m.as_str())) {
+                    out.push(format!("stage {} has a panel member that doesn't exist: {m}", s.id));
+                }
+                if s.panel.contains(&s.agent) {
+                    out.push(format!("stage {} puts {} on a panel with itself", s.id, s.agent));
+                }
+                if !s.panel.is_empty() && !s.race.is_empty() {
+                    out.push(format!("stage {} is both a race and a panel. Pick one", s.id));
+                }
                 if !s.judge.is_empty() && !agents.contains(s.judge.as_str()) {
                     out.push(format!("stage {} is judged by a scorer that doesn't exist: {}", s.id, s.judge));
                 }
@@ -1022,6 +1031,12 @@ mod tests {
         assert!(line_problems(|f| f.line[0].race = vec!["ghost".into()]).contains("races an agent that doesn't exist"));
         assert!(line_problems(|f| f.line[0].race = vec![f.line[0].agent.clone()]).contains("against itself"));
         assert!(line_problems(|f| f.line[0].judge = "ghost".into()).contains("judged by a scorer that doesn't exist"));
+        assert!(line_problems(|f| f.line[0].panel = vec!["ghost".into()]).contains("panel member that doesn't exist"));
+        assert!(line_problems(|f| {
+            f.line[0].panel = vec![f.agents[0].id.clone()];
+            f.line[0].race = vec![f.agents[0].id.clone()];
+        })
+        .contains("both a race and a panel"));
     }
 
     #[test]

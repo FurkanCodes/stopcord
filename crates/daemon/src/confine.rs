@@ -114,7 +114,7 @@ pub fn clean_report(raw: &str) -> Result<Value, String> {
     };
     let verb = text("verb");
     match verb.as_str() {
-        "done" | "ask" | "note" => Ok(json!({ "verb": verb, "text": text("text") })),
+        "done" | "ask" | "note" | "say" => Ok(json!({ "verb": verb, "text": text("text") })),
         // A stage name is a short slug: anything else isn't one, and the engine checks it's on the line.
         "send" => {
             let to = text("to");

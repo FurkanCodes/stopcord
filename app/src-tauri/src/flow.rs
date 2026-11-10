@@ -16,6 +16,7 @@ use crate::line::{self, Action, Step};
 use crate::runs::{self, Run};
 use crate::{gate, git, harness, hooks, shell, worktree};
 
+mod panel;
 mod race;
 
 const LANDED_TIMEOUT: Duration = Duration::from_secs(30);
@@ -333,7 +334,10 @@ impl Engine {
         };
         let existing = w.agents.get(agent_id).filter(|t| alive(t)).cloned();
         let isolated = f.line.iter().find(|s| s.id == stage && s.isolated).cloned();
+        let mid_panel = w.panel.as_ref().is_some_and(|p| p.stage == stage) && !w.worktree.is_empty();
         let copy = match &isolated {
+            // A panel's members share one copy, as the last of them left it.
+            Some(_) if mid_panel && self.copy_dir(factory, &w, stage).join(".git").is_dir() => Some((PathBuf::from(&w.worktree), self.copy_dir(factory, &w, stage))),
             Some(_) => match self.prepare_copy(&f, &w, stage, existing.is_some()) {
                 Ok(copy) => copy,
                 Err(why) => {
@@ -351,16 +355,22 @@ impl Engine {
         // Where this stage can hand work with `st send`: every other stage a role or a person does.
         let others: Vec<String> = f.line.iter().filter(|s| s.id != stage && s.kind != crate::factories::StageKind::Gate).map(|s| s.id.clone()).collect();
         let brief = write(agent.as_ref().map_or("", |a| a.prompt.as_str()), &w, &skills, &st, &others);
+        // A panel member is told how turns work. Each later turn is only the other member's words.
+        let panel = f.line.iter().find(|s| s.id == stage && !s.panel.is_empty());
+        let brief = match panel {
+            Some(s) => format!("{brief}\n\n{}", line::panel_note(s, agent_id, &st)),
+            None => brief,
+        };
         let (id, text) = if let Some(t) = existing {
             // The folder may have moved on since the last round, as when kept files came back.
             if let Err(why) = self.mirror_vm(factory, &t) {
                 self.fail_step(factory, key, format!("{key} couldn't bring the VM up to date for {stage}: {why}"));
                 return;
             }
-            let text = if note.is_empty() {
-                brief
-            } else {
-                format!("{note}\n\nWhen you've fixed it, commit and run: {st} done \"what you changed\".")
+            let text = match (note.is_empty(), panel.is_some()) {
+                (true, _) => brief,
+                (false, true) => format!("{note}\n\nYour turn. Answer with: {st} say \"what you think\""),
+                (false, false) => format!("{note}\n\nWhen you've fixed it, commit and run: {st} done \"what you changed\"."),
             };
             (t, text)
         } else {
@@ -738,7 +748,9 @@ impl Engine {
                 StageKind::Agent if w.race.as_ref().is_some_and(|r| r.stage == stage.id) => self.check_racers(&f.id, &w.ticket.key),
                 StageKind::Agent if w.terminal.is_none() => {
                     let me = Arc::clone(self);
-                    let (fid, key, sid, agent) = (f.id.clone(), w.ticket.key.clone(), stage.id.clone(), stage.agent.clone());
+                    // On a panel, it's whoever's turn it is.
+                    let agent = w.panel.as_ref().filter(|p| p.stage == stage.id).map_or_else(|| stage.agent.clone(), |p| p.turn.clone());
+                    let (fid, key, sid) = (f.id.clone(), w.ticket.key.clone(), stage.id.clone());
                     std::thread::spawn(move || me.run_agent(&fid, &key, &sid, &agent, ""));
                 }
                 _ => {}
@@ -822,6 +834,10 @@ impl Engine {
                 }
                 self.store.update(factory, |f| line::agent_sends(f, key, &to, &text))
             }
+            "say" => {
+                self.panel_say(factory, key, &text);
+                Ok(Step::Nothing)
+            }
             "ask" => self.store.update(factory, |f| {
                 let question = line::question_text(f, key, &text);
                 line::agent_stopped(f, key, &question)
@@ -897,7 +913,12 @@ impl Engine {
                     if me.state.lock().unwrap().reminded.insert(terminal.clone()) {
                         let in_vm = me.state.lock().unwrap().terminals.get(&terminal).and_then(crate::vm::spec_of).is_some();
                         let st = if in_vm { "st".to_string() } else { me.store.home().join("bin/st").display().to_string() };
-                        let nudge = format!("You stopped without reporting. If you've finished, run: {st} done \"one line on what you did\". If you need a person, run: {st} ask \"your question\".");
+                        let on_panel = me.store.get(&factory).ok().is_some_and(|f| item_of(&f, &key).is_some_and(|w| f.line.iter().any(|s| s.id == w.line_stage && !s.panel.is_empty())));
+                        let nudge = if on_panel {
+                            format!("You stopped without reporting. Finish your turn with: {st} say \"what you think\". If you need a person, run: {st} ask \"your question\".")
+                        } else {
+                            format!("You stopped without reporting. If you've finished, run: {st} done \"one line on what you did\". If you need a person, run: {st} ask \"your question\".")
+                        };
                         if me.type_engine_turn(&terminal, &nudge).is_ok() {
                             me.log(&factory, Run::new("line", format!("{key} stopped without reporting, so it was reminded once")).by("engine"));
                             return;

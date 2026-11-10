@@ -540,7 +540,10 @@ function Detail({ factory, item, runs, terminals, onSending, onSite }: { factory
     .map(([agent, id]) => ({ agent, id, t: terminals.find((x) => x.id === id) }))
     .filter((x) => x.t);
   const sites = sitesFor(factory, item);
-  const question = factory.alerts.find((a) => a.work === item.id && a.kind === 'question')?.text.replace(`${item.ticket.key} asks: `, '');
+  // An agent's own st ask reads as its question. The engine's, like a panel running out of rounds, reads as itself.
+  const raw = factory.alerts.find((a) => a.work === item.id && a.kind === 'question')?.text;
+  const asked = !raw || raw.startsWith(`${item.ticket.key} asks: `);
+  const question = raw?.replace(`${item.ticket.key} asks: `, '');
   const stopped = factory.alerts.find((a) => a.work === item.id && a.kind === 'failed')?.text;
   const answerFailed = factory.alerts.find((a) => a.key === `answer:${item.ticket.key}`);
   const findings: Finding[] = item.findings.filter((f) => f.stage !== 'approve' || w === 'approve').sort((a, b) => (severityRank[a.severity] ?? 3) - (severityRank[b.severity] ?? 3));
@@ -551,6 +554,9 @@ function Detail({ factory, item, runs, terminals, onSending, onSite }: { factory
   const added = files.reduce((n, f) => n + f.lines.filter((l) => l.kind === 'add').length, 0);
   const removed = files.reduce((n, f) => n + f.lines.filter((l) => l.kind === 'del').length, 0);
   const speaker = (() => {
+    // The agent whose terminal is answering now, as the last speaker on a panel.
+    const answering = Object.entries(item.agents).find(([, t]) => t === item.terminal)?.[0];
+    if (answering && !answering.includes('·')) return answering;
     const at = factory.line.findIndex((s) => s.id === item.lineStage);
     return factory.line.slice(0, Math.max(0, at) + 1).reverse().find((s) => s.kind === 'agent')?.agent ?? 'agent';
   })();
@@ -691,7 +697,8 @@ function Detail({ factory, item, runs, terminals, onSending, onSite }: { factory
         {open && w === 'question' && (
           <div style={{ border: '1px solid var(--red-line)', padding: '8px 10px', display: 'flex', flexDirection: 'column', gap: 8 }}>
             <div style={{ color: 'var(--ink)', maxWidth: '90ch' }}>
-              {speaker} asks: <Markdown text={question ?? 'it stopped without saying what it needs'} breaks className="is-lead" />
+              {asked && `${speaker} asks: `}<Markdown text={question ?? 'it stopped without saying what it needs'} breaks className="is-lead" />
+              {!asked && <span className="t-dim" style={{ fontSize: 12 }}>your answer goes to {speaker}</span>}
             </div>
             {sent ? (
               <div role="status" className="t-muted">sent: {sent} · {speaker} gets it as soon as it stops to read</div>
@@ -780,6 +787,18 @@ function Detail({ factory, item, runs, terminals, onSending, onSite }: { factory
                 <span className="t-name" style={{ width: '14ch', flexShrink: 0 }}>{r.agent}</span>
                 <span className={r.state === 'failed' || r.state === 'out' ? 't-red' : r.state === 'passed' ? undefined : 't-muted'} style={{ width: '9ch', flexShrink: 0, ...(r.state === 'passed' ? { color: 'var(--green)' } : {}) }}>{r.state}</span>
                 <span className="t-dim" style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.note.split('\n')[0]}</span>
+              </li>
+            ))}
+          </ul>
+        )}
+
+        {item.panel && item.panel.stage === item.lineStage && (
+          <ul aria-label="The panel" data-panel style={{ margin: 0, display: 'flex', flexDirection: 'column', gap: 4 }}>
+            <li className="t-dim" style={{ fontSize: 12 }}>a panel at {item.panel.stage}{item.panel.round > 0 ? `, round ${item.panel.round}` : ''}. {item.panel.turn}'s turn</li>
+            {item.panel.said.map((n, k) => (
+              <li key={k} style={{ display: 'flex', gap: 10 }}>
+                <span className="t-name" style={{ width: '14ch', flexShrink: 0 }}>{n.agent}</span>
+                <span style={{ minWidth: 0, whiteSpace: 'pre-wrap' }}>{n.text}</span>
               </li>
             ))}
           </ul>

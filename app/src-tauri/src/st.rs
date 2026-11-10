@@ -12,7 +12,7 @@ use std::time::Duration;
 
 use serde_json::{Value, json};
 
-const USAGE: &str = "usage: st done \"your note for the stages after you\"   (or st done - < note.md)\n       st send <stage> \"what it needs to know\"\n       st ask \"your question\"\n       st note \"something worth keeping\"\n       st finding --file a.rs --line 9 --severity high --kind clear \"what's wrong\"\n       st score 7 \"why\"";
+const USAGE: &str = "usage: st done \"your note for the stages after you\"   (or st done - < note.md)\n       st send <stage> \"what it needs to know\"\n       st say \"your turn on a panel\"\n       st ask \"your question\"\n       st note \"something worth keeping\"\n       st finding --file a.rs --line 9 --severity high --kind clear \"what's wrong\"\n       st score 7 \"why\"";
 
 /// Writes the script that puts `st` on a terminal's PATH.
 pub fn install(home: &Path, program: &Path) -> std::io::Result<()> {
@@ -32,7 +32,7 @@ pub fn install(home: &Path, program: &Path) -> std::io::Result<()> {
 pub fn parse(args: &[String]) -> Result<Value, String> {
     let (verb, rest) = args.split_first().ok_or(USAGE)?;
     match verb.as_str() {
-        "done" | "ask" | "note" => Ok(json!({ "verb": verb, "text": words(rest)? })),
+        "done" | "ask" | "note" | "say" => Ok(json!({ "verb": verb, "text": words(rest)? })),
         "send" => {
             let (to, message) = rest.split_first().ok_or(USAGE)?;
             if to.is_empty() || to.starts_with('-') {
@@ -119,6 +119,7 @@ mod tests {
     fn the_words_become_a_report() {
         assert_eq!(parse(&args(&["done", "fixed", "it"])).unwrap(), json!({"verb":"done","text":"fixed it"}));
         assert_eq!(parse(&args(&["ask", "which db?"])).unwrap()["verb"], "ask");
+        assert_eq!(parse(&args(&["say", "the plan needs a migration"])).unwrap(), json!({"verb":"say","text":"the plan needs a migration"}));
     }
 
     #[test]

@@ -132,6 +132,21 @@ export interface Racer {
   at: number;
 }
 
+/** What a stage wrote, or a panel member said. */
+export interface Note {
+  stage: string;
+  agent: string;
+  text: string;
+  at: number;
+}
+
+export interface Panel {
+  stage: string;
+  round: number;
+  turn: string;
+  said: Note[];
+}
+
 export interface Race {
   stage: string;
   racers: Racer[];
@@ -150,8 +165,14 @@ export interface LineStage {
   keep?: string[];
   /** Other agents racing `agent` here, each in its own copy. */
   race?: string[];
-  /** The scorer that picks among the copies that passed. Empty keeps the first to pass. */
+  /** Races: the scorer that picks among the copies that passed. Panels: the scorer of each round. */
   judge?: string;
+  /** Other agents that take turns with `agent`, in order, with `st say`. */
+  panel?: string[];
+  /** Panels: the most rounds before a person is asked. 0 means 3. */
+  rounds?: number;
+  /** Panels: the judge's score that ends the stage. 0 means 7. */
+  threshold?: number;
   merge?: string;
   landed?: string;
 }
@@ -266,12 +287,14 @@ export interface WorkItem {
   bench?: { suite: string; run: string; task: string };
   summary: string;
   /** What each stage wrote for the ones after it, oldest first. */
-  notes?: { stage: string; agent: string; text: string; at: number }[];
+  notes?: Note[];
   base: string;
   merging: string;
   mergeError: string;
   /** The race at its current stage, while one is running. */
   race?: Race | null;
+  /** The panel at its current stage, while one is talking. */
+  panel?: Panel | null;
 }
 
 export type WorkVerb = 'approve' | 'sendBack' | 'treatAsDone' | 'drop' | 'merge' | 'landed' | 'answer';
