@@ -1,5 +1,6 @@
 import { useEffect, useState, type ReactNode } from 'react';
-import { api, type Agent, type BenchResult, type BenchTask, type Factory, type LineStage, type Part, type Report, type Skill, type SourceTemplate, type Suite } from '../api';
+import { api, failureText, REPORT_EVENTS, type Agent, type BenchResult, type BenchTask, type Factory, type LineStage, type Part, type PullStatus, type Report, type Skill, type SourceTemplate, type Suite } from '../api';
+import { ConnectionState } from '../Connections';
 import { changeFactory, refreshFactories, showProblem } from '../store';
 import { ArmedKey, Check, Empty, FieldRow, Key, ListInput, Pane, Screen } from '../tui/kit';
 import { Logo } from '../tui/Logo';
@@ -191,16 +192,20 @@ export function Setup({ factory, onRemove }: { factory: Factory; onRemove: () =>
         ))}
       </Pane>
 
-      <Pane title="reporting back" right={<Key size="xs" onClick={() => set({ reports: [...factory.reports, { id: uniq('report', factory.reports.map((r) => r.id)), on: ['handoff', 'failed', 'merged'], command: '' }] })}>add report</Key>} style={paneStyle}>
+      <Pane title="reporting back" right={<Key size="xs" onClick={() => set({ reports: [...factory.reports, { id: uniq('report', factory.reports.map((r) => r.id)), on: ['handoff', 'failed', 'merged'], command: '', keys: [], slack: '' }] })}>add report</Key>} style={paneStyle}>
         {factory.reports.length === 0 && <Empty style={{ padding: 0 }}>nothing reports back yet</Empty>}
         {factory.reports.map((r, i) => (
-          <Fold key={i} title={r.id} hint={list(r.on)}>
-            <Text id={`rp-id-${i}`} label="name" value={r.id} onChange={(id) => report(i, { id })} />
-            <ListText id={`rp-on-${i}`} label="when" value={r.on} placeholder="approve, question, handoff, failed, landing, merged, dropped" onChange={(v) => report(i, { on: v })} />
-            <Text id={`rp-c-${i}`} label="command" value={r.command} placeholder={'curl -d "{\\"text\\":\\"$ST_TEXT\\"}" "$SLACK_WEBHOOK"'} onChange={(command) => report(i, { command })} />
-            <span className="t-muted" style={{ fontSize: 12 }}>it gets $ST_EVENT $ST_KEY $ST_TITLE $ST_URL $ST_STAGE $ST_BRANCH $ST_SOURCE $ST_TEXT</span>
-            <span><ArmedKey size="xs" onClick={() => set({ reports: factory.reports.filter((_, j) => j !== i) })}>remove report</ArmedKey></span>
-          </Fold>
+          <ReportCard
+            key={i}
+            i={i}
+            factory={factory.id}
+            r={r}
+            report={report}
+            remove={() => {
+              for (const k of r.keys ?? []) void api.setReportKey(factory.id, r.id, k, '').catch(() => {});
+              set({ reports: factory.reports.filter((_, j) => j !== i) });
+            }}
+          />
         ))}
       </Pane>
 
@@ -218,7 +223,7 @@ function Sources({ factory, sources, part, set }: { factory: Factory; sources: P
   }, []);
   function add(t?: SourceTemplate) {
     const id = uniq(t?.id ?? 'source', factory.parts.map((p) => p.id));
-    const blank: Part = { id, kind: 'tickets', name: t?.name ?? 'Source', readAs: [], folder: '', command: t?.command ?? '', runsOn: 'commit', when: 'quiet', schedule: '', runsIn: 'same', prompt: '', harness: '', atOnce: 0, every: t?.every ?? '', autoStart: false, keys: t?.keys ?? [] };
+    const blank: Part = { id, kind: 'tickets', name: t?.name ?? 'Source', readAs: [], folder: '', command: t?.command ?? '', runsOn: 'commit', when: 'quiet', schedule: '', runsIn: 'same', prompt: '', harness: '', atOnce: 0, every: t?.every ?? '', autoStart: false, keys: t?.keys ?? [], connection: t?.connection ?? '', vars: Object.fromEntries((t?.vars ?? []).map((v) => [v.name, ''])) };
     set({ parts: [...factory.parts, blank] });
   }
   return (
@@ -240,6 +245,7 @@ function Sources({ factory, sources, part, set }: { factory: Factory; sources: P
           key={p.id}
           factory={factory.id}
           p={p}
+          pull={factory.pulls?.[p.id]}
           part={part}
           template={templates.find((t) => p.id.startsWith(t.id))}
           remove={() => {
@@ -354,11 +360,122 @@ function BenchPane({ factory, set }: { factory: Factory; set: (patch: Partial<Fa
   );
 }
 
-function SourceCard({ factory, p, part, template, remove }: { factory: string; p: Part; part: (id: string, patch: Partial<Part>) => void; template?: SourceTemplate; remove: () => void }) {
-  const needs = template?.needs;
+/** When a pull happened, in words: "just now", "4 min ago". */
+function ago(at: number) {
+  const s = Math.max(0, Math.round(Date.now() / 1000 - (at > 1e12 ? at / 1000 : at)));
+  if (s < 60) return 'just now';
+  if (s < 3600) return `${Math.round(s / 60)} min ago`;
+  if (s < 86400) return `${Math.round(s / 3600)} h ago`;
+  return `${Math.round(s / 86400)} d ago`;
+}
+
+/** Whether a source can pull, and how its last pull went. Checked again whenever the source changes. */
+/** One report: where it goes, a Slack channel or a command or both, and a test that sends it for real. */
+function ReportCard({ i, factory, r, report, remove }: { i: number; factory: string; r: Report; report: (i: number, patch: Partial<Report>) => void; remove: () => void }) {
+  const [tested, setTested] = useState<{ ok: boolean; said: string } | 'testing' | null>(null);
+  const shape = JSON.stringify([r.slack, r.command, r.keys, r.on]);
+  // A change makes the last test's answer stale.
+  useEffect(() => setTested(null), [shape]);
+  const unknown = r.on.filter((e) => !(REPORT_EVENTS as readonly string[]).includes(e));
+  const where = [r.slack?.trim(), r.command?.trim() ? 'a command' : ''].filter(Boolean).join(' and ');
+  const test = async () => {
+    setTested('testing');
+    try {
+      setTested(await api.testReport(factory, r.id));
+    } catch (e) {
+      setTested({ ok: false, said: failureText(e) });
+    }
+  };
   return (
-    <Fold title={p.name} logo={p.id} hint={p.every || 'by hand'}>
+    <Fold title={r.id} hint={`${list(r.on)}${where ? ` → ${where}` : ' → nowhere yet'}`}>
+      {/* Its keys are kept under its name, so the name stays one a file can have. */}
+      <Text id={`rp-id-${i}`} label="name" value={r.id} onChange={(id) => report(i, { id: id.replace(/[^A-Za-z0-9_.-]/g, '-') })} />
+      <FieldRow id={`rp-on-${i}`} label="when" width="14ch" top>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+          <ListInput id={`rp-on-${i}`} value={r.on} placeholder={REPORT_EVENTS.join(', ')} onChange={(on) => report(i, { on })} />
+          <span className={unknown.length > 0 ? 't-red' : 't-dim'} style={{ fontSize: 12 }}>
+            {unknown.length > 0 ? `${unknown.join(' and ')} ${unknown.length === 1 ? "isn't an event" : "aren't events"}. ` : ''}any of {REPORT_EVENTS.join(', ')}
+          </span>
+        </div>
+      </FieldRow>
+      <FieldRow id={`rp-s-${i}`} label="slack channel" width="14ch" top>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+          <input id={`rp-s-${i}`} className="t-field" spellCheck={false} value={r.slack ?? ''} placeholder="#eng" onChange={(e) => report(i, { slack: e.currentTarget.value })} />
+          <span className="t-dim" style={{ fontSize: 12 }}>the slack connection's bot posts here. invite it to the channel first with /invite @sawtooth</span>
+        </div>
+      </FieldRow>
+      <FieldRow id={`rp-c-${i}`} label="command" width="14ch" top>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+          <input id={`rp-c-${i}`} className="t-field" spellCheck={false} value={r.command ?? ''} placeholder="optional. a shell command, such as a webhook with curl" onChange={(e) => report(i, { command: e.currentTarget.value })} />
+          <span className="t-dim" style={{ fontSize: 12 }}>it gets $ST_EVENT $ST_KEY $ST_TITLE $ST_URL $ST_STAGE $ST_BRANCH $ST_SOURCE $ST_TEXT</span>
+        </div>
+      </FieldRow>
+      {r.command?.trim() && (
+        <FieldRow id={`rp-k-${i}-add`} label="keys" width="14ch" top>
+          <Secrets
+            id={`rp-k-${i}`}
+            names={r.keys ?? []}
+            onChange={(keys) => report(i, { keys })}
+            load={(names) => api.reportKeysSet(factory, r.id, names)}
+            store={(name, value) => api.setReportKey(factory, r.id, name, value)}
+            note="the command gets these as environment variables, such as $WEBHOOK_URL. values stay in sawtooth's secrets, for this report only, and can't be shown again"
+          />
+        </FieldRow>
+      )}
+      <span style={{ display: 'flex', gap: 8, alignItems: 'baseline', flexWrap: 'wrap' }}>
+        <Key size="xs" disabled={tested === 'testing' || !where} title={where ? 'Sends a made-up event, so you can see it arrive' : 'Give it a channel or a command first'} onClick={() => void test()}>
+          {tested === 'testing' ? 'sending…' : 'send a test'}
+        </Key>
+        {tested && tested !== 'testing' && (
+          <span role="status" data-report-test={r.id} style={{ flex: '1 1 240px', minWidth: 0, whiteSpace: 'pre-wrap', fontSize: 12 }}>
+            <ConnectionState ok={tested.ok}>{tested.said}</ConnectionState>
+          </span>
+        )}
+        <ArmedKey size="xs" style={{ marginLeft: 'auto' }} onClick={remove}>remove report</ArmedKey>
+      </span>
+    </Fold>
+  );
+}
+
+function SourceState({ factory, p, pull }: { factory: string; p: Part; pull?: PullStatus }) {
+  const [ready, setReady] = useState<string | null | undefined>(undefined);
+  const shape = JSON.stringify([p.command, p.connection, p.vars, p.keys]);
+  useEffect(() => {
+    // Wait for the change to be saved before asking.
+    const timer = setTimeout(() => api.sourceReady(factory, p.id).then(setReady, (e) => setReady(failureText(e))), 400);
+    return () => clearTimeout(timer);
+  }, [factory, p.id, shape, pull?.at]);
+  if (ready === undefined) return null;
+  if (ready) return <ConnectionState ok={null}>waiting: {ready}</ConnectionState>;
+  if (!pull) return <ConnectionState ok={null}>ready · hasn't pulled yet</ConnectionState>;
+  if (!pull.ok) return <ConnectionState ok={false}>last pull failed {ago(pull.at)}: {pull.error}</ConnectionState>;
+  return <ConnectionState ok>pulled {ago(pull.at)} · {pull.tickets} open, {pull.new} new</ConnectionState>;
+}
+
+function SourceCard({ factory, p, pull, part, template, remove }: { factory: string; p: Part; pull?: PullStatus; part: (id: string, patch: Partial<Part>) => void; template?: SourceTemplate; remove: () => void }) {
+  const needs = template?.needs;
+  const vars = p.vars ?? {};
+  const label = (name: string) => template?.vars.find((v) => v.name === name);
+  return (
+    <Fold title={p.name} logo={p.id} hint={pull && !pull.ok ? 'last pull failed' : p.every || 'by hand'}>
+      <span role="status" data-source-state={p.id} style={{ paddingLeft: 8 }}><SourceState factory={factory} p={p} pull={pull} /></span>
       <Text id={`src-n-${p.id}`} label="name" value={p.name} onChange={(name) => part(p.id, { name })} />
+      {p.connection && (
+        <FieldRow id={`src-cn-${p.id}`} label="signs in with" width="14ch">
+          <span id={`src-cn-${p.id}`} className="t-muted">the {p.connection} connection, set once in machine settings for every factory</span>
+        </FieldRow>
+      )}
+      {Object.keys(vars).map((name) => {
+        const v = label(name);
+        return (
+          <FieldRow key={name} id={`src-v-${p.id}-${name}`} label={v?.label ?? name.toLowerCase()} width="14ch" top>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+              <input id={`src-v-${p.id}-${name}`} className="t-field" spellCheck={false} value={vars[name] ?? ''} placeholder={v?.placeholder} onChange={(e) => part(p.id, { vars: { ...vars, [name]: e.currentTarget.value } })} />
+              <span className={vars[name]?.trim() ? 't-dim' : 't-red'} style={{ fontSize: 12 }}>{vars[name]?.trim() ? '' : 'no value. '}{v?.hint ?? `the pull command gets it as $${name}`}</span>
+            </div>
+          </FieldRow>
+        );
+      })}
       <FieldRow id={`src-c-${p.id}`} label="pull command" width="14ch" top>
         <textarea id={`src-c-${p.id}`} className="t-field" spellCheck={false} rows={2} value={p.command} onChange={(e) => part(p.id, { command: e.currentTarget.value })} />
       </FieldRow>
@@ -371,7 +488,7 @@ function SourceCard({ factory, p, part, template, remove }: { factory: string; p
           load={(names) => api.sourceKeysSet(factory, p.id, names)}
           store={(name, value) => api.setSourceKey(factory, p.id, name, value)}
           suggest={template && template.keys.length > 0 ? [{ label: `${template.name.toLowerCase()} reads`, names: template.keys }] : []}
-          note="the pull command gets these as environment variables. values stay in sawtooth's secrets, for this source only, and can't be shown again"
+          note={p.connection ? `only for anything the ${p.connection} connection doesn't cover. values stay in sawtooth's secrets, for this source only` : "the pull command gets these as environment variables. values stay in sawtooth's secrets, for this source only, and can't be shown again"}
         />
       </FieldRow>
       <Text id={`src-e-${p.id}`} label="pull every" value={p.every ?? ''} placeholder="every 5 minutes. empty pulls by hand" onChange={(every) => part(p.id, { every })} />

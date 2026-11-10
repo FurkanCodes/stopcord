@@ -389,7 +389,7 @@ export function Radio({
         </span>
         <span style={{ minWidth: 0 }}>{children}</span>
       </span>
-      {note && <span style={{ paddingLeft: '5ch', fontSize: 12, color: 'var(--ink-3)' }}>{note}</span>}
+      {note && <span className="t-dim" style={{ paddingLeft: '5ch', fontSize: 12 }}>{note}</span>}
     </label>
   );
 }

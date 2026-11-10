@@ -181,7 +181,11 @@ export function Secrets({ id, names, onChange, load, store, suggest = [], note }
               style={{ flex: 1 }}
               value={drafts[name] ?? ''}
               placeholder={has ? 'paste to replace' : 'paste the value, then enter'}
-              onChange={(e) => setDrafts((d) => ({ ...d, [name]: e.currentTarget.value }))}
+              onChange={(e) => {
+                // Read it now: React clears currentTarget before the updater runs.
+                const value = e.currentTarget.value;
+                setDrafts((d) => ({ ...d, [name]: value }));
+              }}
               onKeyDown={(e) => {
                 if (e.key === 'Enter') void save(name);
               }}

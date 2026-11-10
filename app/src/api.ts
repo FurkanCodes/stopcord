@@ -50,6 +50,10 @@ export interface Part {
   autoStart?: boolean;
   /** Ticket source: environment variables its command gets from sawtooth's secrets. Names only. */
   keys?: string[];
+  /** Ticket source: the connection in settings whose credentials it uses, such as sentry. */
+  connection?: string;
+  /** Ticket source: plain settings of its own, such as SENTRY_ORG. Never secrets. */
+  vars?: Record<string, string>;
 }
 
 export type Level = 'worktree' | 'contained' | 'vm' | 'harness';
@@ -136,7 +140,44 @@ export interface LineStage {
 export interface Report {
   id: string;
   on: string[];
-  command: string;
+  command?: string;
+  /** Environment variables its command gets from sawtooth's secrets, for this report only. */
+  keys?: string[];
+  /** A Slack channel, such as #eng, that the connected bot posts to. */
+  slack?: string;
+}
+
+/** The events a report can be sent on. */
+export const REPORT_EVENTS = ['approve', 'question', 'handoff', 'failed', 'landing', 'merged', 'dropped'] as const;
+
+/** How a source's last pull went. */
+export interface PullStatus {
+  at: number;
+  ok: boolean;
+  tickets: number;
+  new: number;
+  error: string;
+}
+
+export interface ConnectionField {
+  name: string;
+  label: string;
+  secret: boolean;
+  required: boolean;
+  placeholder: string;
+  hint: string;
+}
+
+/** An outside service, signed in to once for every factory. Never a secret's value. */
+export interface Connection {
+  id: string;
+  name: string;
+  fields: ConnectionField[];
+  how: string;
+  link: string;
+  values: Record<string, string>;
+  set: string[];
+  missing: string[];
 }
 
 export interface Defaults {
@@ -281,6 +322,8 @@ export interface Factory {
   queue: Ticket[];
   running: Record<string, string>;
   alerts: Alert[];
+  /** How each source's last pull went, by part id. */
+  pulls?: Record<string, PullStatus>;
   /** Filled in by the app, never saved. */
   worktreesDir: string;
   knowledgePath: string;
@@ -303,6 +346,8 @@ export interface Run {
 export interface Settings {
   slack: { enabled: boolean; appTokenSecret: string; botTokenSecret: string; allowUsers: string[]; factory: string };
   keepAwake: boolean;
+  /** Each connection's plain fields. Secrets are never here. */
+  connections?: Record<string, Record<string, string>>;
 }
 
 export interface Machine {
@@ -317,8 +362,12 @@ export interface SourceTemplate {
   command: string;
   every: string;
   needs: string;
-  /** The keys its command reads. */
+  /** Secret keys of its own. Sources that use a connection have none. */
   keys: string[];
+  /** The connection its credentials come from. Empty for none. */
+  connection: string;
+  /** Plain settings of its own. */
+  vars: { name: string; label: string; placeholder: string; hint: string }[];
 }
 
 export interface HarnessProfile {
@@ -456,6 +505,21 @@ export const api = {
   setVmSecret: (factory: string, runner: string, name: string, value: string) => invoke<void>('set_vm_secret', { factory, runner, name, value }),
   /** Which of a VM sandbox's secrets have a value. Never the values themselves. */
   vmSecretsSet: (factory: string, runner: string, names: string[]) => invoke<string[]>('vm_secrets_set', { factory, runner, names }),
+  connections: () => invoke<Connection[]>('connections'),
+  /** Sets one of a connection's fields. An empty value clears it. */
+  setConnectionField: (connection: string, name: string, value: string) => invoke<void>('set_connection_field', { connection, name, value }),
+  /** Tries the connection for real: who it signs in as, or a Failure saying why not. */
+  testConnection: (connection: string) => invoke<string>('test_connection', { connection }),
+  openConnectionPage: (connection: string) => invoke<void>('open_connection_page', { connection }),
+  slackManifest: () => invoke<string>('slack_manifest'),
+  /** Whether the Slack connection is up, and what it last said. Null while it's off. */
+  slackState: () => invoke<{ ok: boolean; text: string } | null>('slack_state'),
+  /** Why a source can't pull yet, or null when it can. */
+  sourceReady: (id: string, part: string) => invoke<string | null>('source_ready', { id, part }),
+  /** Sends a report with made-up details. */
+  testReport: (id: string, report: string) => invoke<{ ok: boolean; said: string }>('test_report', { id, report }),
+  setReportKey: (factory: string, report: string, name: string, value: string) => invoke<void>('set_report_key', { factory, report, name, value }),
+  reportKeysSet: (factory: string, report: string, names: string[]) => invoke<string[]>('report_keys_set', { factory, report, names }),
   /** A ticket source's key, kept for that factory and source only. An empty value removes it. */
   setSourceKey: (factory: string, source: string, name: string, value: string) => invoke<void>('set_source_key', { factory, source, name, value }),
   /** Which of a ticket source's keys have a value. Never the values themselves. */

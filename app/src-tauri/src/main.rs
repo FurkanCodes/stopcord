@@ -376,6 +376,7 @@ fn create_factory(
 fn save_factory(app: State<'_, App>, factory: Factory) -> Result<FactoryInfo, Failure> {
     let before = app.store.get(&factory.id).map_err(fail)?;
     let saved = app.store.save(&factory).map_err(fail)?;
+    settings::move_report_keys(app.store.home(), &saved.id, &before.reports, &saved.reports).map_err(fail)?;
     app.apply(&saved, Some(&before));
     Ok(app.info(saved))
 }
@@ -847,6 +848,14 @@ fn test_connection(app: State<'_, App>, connection: String) -> Result<String, Fa
     connections::test(app.store.home(), &connection).map_err(|why| Failure::new("connection", why))
 }
 
+/// Opens the page where a connection's token is made. Only those pages: the window can't open others.
+#[tauri::command(async)]
+fn open_connection_page(connection: String) -> Result<(), Failure> {
+    let c = connections::find(&connection).ok_or_else(|| Failure::new("connection", format!("there's no connection called {connection}")))?;
+    let opener = if cfg!(target_os = "macos") { "open" } else { "xdg-open" };
+    std::process::Command::new(opener).arg(c.link).spawn().map(|_| ()).map_err(|e| Failure::new("connection", format!("couldn't open {}: {e}", c.link)))
+}
+
 #[tauri::command(async)]
 fn slack_manifest() -> String {
     connections::slack_manifest()
@@ -1056,6 +1065,7 @@ fn main() {
             set_connection_field,
             test_connection,
             slack_manifest,
+            open_connection_page,
             slack_state,
             source_ready,
             test_report,

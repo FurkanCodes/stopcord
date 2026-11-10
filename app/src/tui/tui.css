@@ -13,7 +13,8 @@
   --ink: oklch(0.94 0.004 260);
   --ink-2: oklch(0.75 0.008 260);
   --ink-3: oklch(0.6 0.008 260);
-  --ink-4: oklch(0.58 0.008 260);
+  /* Passes 4.5:1 on --bar as well as --bg. */
+  --ink-4: oklch(0.6 0.008 260);
   --on-ink: oklch(0.15 0.006 260);
   --red: oklch(0.68 0.2 22);
   --red-text: oklch(0.76 0.15 22);
@@ -472,7 +473,8 @@ textarea::placeholder {
 .t-row[aria-expanded='true'] .t-dim,
 .t-row[aria-selected='true'] .t-dim,
 .t-row[aria-current='true'] .t-dim,
-.t-opt:has(input:checked) .t-dim {
+.t-opt:has(input:checked) .t-dim,
+.t-opt:has(input:checked) .t-faint {
   color: var(--ink-2);
 }
 

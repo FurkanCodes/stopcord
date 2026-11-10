@@ -110,6 +110,27 @@ pub fn report_key(factory: &str, report: &str, name: &str) -> String {
     format!("report.{factory}.{report}.{name}")
 }
 
+/// Keeps a report's keys when it's renamed, since they're kept under its name. Reports are matched
+/// by place, so keys move only when the list kept its length, the old name is gone and the new one
+/// is new: adding, removing or reordering reports moves nothing.
+pub fn move_report_keys(home: &Path, factory: &str, before: &[crate::factories::Report], after: &[crate::factories::Report]) -> Result<()> {
+    if before.len() != after.len() {
+        return Ok(());
+    }
+    for (old, new) in before.iter().zip(after) {
+        if old.id == new.id || after.iter().any(|r| r.id == old.id) || before.iter().any(|r| r.id == new.id) {
+            continue;
+        }
+        for name in old.keys.iter().chain(&new.keys) {
+            if let Some(value) = get_secret(home, &report_key(factory, &old.id, name)) {
+                set_secret(home, &report_key(factory, &new.id, name), &value)?;
+                set_secret(home, &report_key(factory, &old.id, name), "")?;
+            }
+        }
+    }
+    Ok(())
+}
+
 /// What a report's command gets in its environment: each of its keys that has a value.
 pub fn report_env(home: &Path, factory: &str, report: &str, names: &[String]) -> Vec<(String, String)> {
     names.iter().filter_map(|n| get_secret(home, &report_key(factory, report, n)).map(|v| (n.clone(), v))).collect()
@@ -129,6 +150,26 @@ pub fn get_secret(home: &Path, name: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_renamed_report_keeps_its_keys_and_others_keep_theirs() {
+        let home = tempfile::tempdir().unwrap();
+        let h = home.path();
+        let report = |id: &str| crate::factories::Report { id: id.into(), keys: vec!["HOOK".into()], ..Default::default() };
+        set_secret(h, &report_key("f", "a", "HOOK"), "one").unwrap();
+        set_secret(h, &report_key("f", "b", "HOOK"), "two").unwrap();
+
+        move_report_keys(h, "f", &[report("a"), report("b")], &[report("alerts"), report("b")]).unwrap();
+        assert_eq!(get_secret(h, &report_key("f", "alerts", "HOOK")).as_deref(), Some("one"));
+        assert_eq!(get_secret(h, &report_key("f", "a", "HOOK")), None);
+        assert_eq!(get_secret(h, &report_key("f", "b", "HOOK")).as_deref(), Some("two"));
+
+        // Removing one, or swapping two, moves nothing.
+        move_report_keys(h, "f", &[report("alerts"), report("b")], &[report("b")]).unwrap();
+        move_report_keys(h, "f", &[report("alerts"), report("b")], &[report("b"), report("alerts")]).unwrap();
+        assert_eq!(get_secret(h, &report_key("f", "alerts", "HOOK")).as_deref(), Some("one"));
+        assert_eq!(get_secret(h, &report_key("f", "b", "HOOK")).as_deref(), Some("two"));
+    }
 
     #[test]
     fn nothing_public_is_on_until_someone_turns_it_on() {
