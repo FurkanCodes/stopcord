@@ -7,6 +7,7 @@ try:
     launch()
     inv('create_factory', path=os.path.realpath(R), name='keys', template='line', readAs=['AGENTS.md'], harness='claude', reviewer='claude', level='worktree')
     fid = inv('factories')[0]['id']
+    stop(); launch(); time.sleep(1.5)
     bridge("[...document.querySelectorAll('[data-card]')][0].click();return 1"); time.sleep(1); press('6'); time.sleep(1)
 
     bridge("[...document.querySelectorAll('button')].find(b=>b.innerText.trim()==='sentry').click();return 1"); time.sleep(1.2)
