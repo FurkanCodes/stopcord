@@ -1,5 +1,5 @@
 import { useEffect, useState, type CSSProperties, type ReactNode } from 'react';
-import { api, failureText, type Choice, type Connection, type ConnectionField, type Factory, type Knock, type Machine, type Part, type Report, type Settings, type SourceTemplate } from './api';
+import { api, failureText, type Choice, type Connection, type ConnectionField, type Factory, type Knock, type Machine, type Part, type Report, type Settings, type Signing, type SourceTemplate } from './api';
 import { ConnectionState } from './Connections';
 import { sourceState, useSourceReady } from './factory/sourceState';
 import { go, refreshFactories, saveNow, showProblem, useStore } from './store';
@@ -312,6 +312,60 @@ function GitHubCard({ ctx }: { ctx: Ctx }) {
   );
 }
 
+/**
+ * Signing in in the browser: one press, then approve it there. Sentry shows a code to check against
+ * the browser's. Polls until it's done, then tells the card.
+ */
+function BrowserSignIn({ c, onDone }: { c: Connection; onDone: () => void }) {
+  const [s, setS] = useState<Signing | null>(null);
+  const [problem, setProblem] = useState('');
+  useEffect(() => {
+    if (!s?.waiting) return;
+    const timer = setInterval(() => {
+      api.oauthSigning(c.id).then((next) => {
+        setS(next);
+        if (next.done) onDone();
+      }, () => undefined);
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [s?.waiting]); // eslint-disable-line react-hooks/exhaustive-deps
+  const start = async () => {
+    setProblem('');
+    try {
+      setS(await api.oauthStart(c.id));
+    } catch (e) {
+      setProblem(failureText(e));
+    }
+  };
+  if (s?.waiting) {
+    return (
+      <div data-signing={c.id} style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+        <span>
+          approve it in your browser
+          {s.code ? (
+            <>
+              . it should show the code <strong style={{ letterSpacing: 1, userSelect: 'text' }}>{s.code}</strong>
+            </>
+          ) : null}
+          . this page carries on by itself.
+        </span>
+        <span style={{ display: 'flex', gap: 6 }}>
+          <Key size="xs" onClick={() => void api.oauthStart(c.id).catch(() => undefined)}>open the page again ↗</Key>
+          <Key size="xs" onClick={() => void api.oauthCancel(c.id).then(() => setS(null))}>cancel</Key>
+        </span>
+      </div>
+    );
+  }
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+      <span>
+        <Key onClick={() => void start()}>sign in with {c.name} ↗</Key>
+      </span>
+      {(problem || s?.error) && <ConnectionState ok={false}>{problem || s?.error}</ConnectionState>}
+    </div>
+  );
+}
+
 /** Sentry and Linear: a token, then what to pull (a project, a team), then which factories. */
 function TrackerCard({ ctx, c }: { ctx: Ctx; c: Connection }) {
   const t = ctx.templates.find((x) => x.id === c.id);
@@ -325,6 +379,11 @@ function TrackerCard({ ctx, c }: { ctx: Ctx; c: Connection }) {
   const secret = c.fields.filter((f) => f.required);
   const optional = c.fields.filter((f) => !f.required);
   const [more, setMore] = useState(false);
+  // Both ways stay on offer: sign in in the browser, or paste a key. Whichever was used shows first.
+  const pasted = c.set.includes(c.fields.find((f) => f.required)?.name ?? '');
+  const [chosen, setWay] = useState<'browser' | 'key' | null>(null);
+  const way = !c.oauth ? 'key' : (chosen ?? (pasted && !c.signedIn ? 'key' : 'browser'));
+  const keyWord = c.id === 'sentry' ? 'a token' : 'an API key';
 
   // What to pull: Sentry's organization then project, Linear's team.
   const levels = c.id === 'sentry' ? [{ name: 'SENTRY_ORG', label: 'organization' }, { name: 'SENTRY_PROJECT', label: 'project' }] : [{ name: 'LINEAR_TEAM', label: 'team' }];
@@ -366,16 +425,39 @@ function TrackerCard({ ctx, c }: { ctx: Ctx; c: Connection }) {
         !signed ? testLine(tested, c.missing.length > 0 ? 'not set up yet' : 'checking…') : using.length > 0 ? <ConnectionState ok>{`${what} · issues go to ${using.map((f) => f.name).join(', ')}`}</ConnectionState> : <ConnectionState ok={null}>signed in · pick where its issues go below</ConnectionState>
       }
     >
-      <Step n={1} done={signed} current={!signed} title={`sign in to ${c.name}`} summary={signed ? said(tested) : undefined}>
-        <span className="t-muted">
-          {c.id === 'sentry'
-            ? 'make a personal token: open sentry, press create new token, tick event:read, project:read and org:read, create it, and copy it.'
-            : 'make a personal API key: open linear, press new key under personal API keys, and copy it.'}
-        </span>
-        <span>
-          <Key size="xs" onClick={() => void api.openConnectionPage(c.id).catch(showProblem)}>open {c.name.toLowerCase()} ↗</Key>
-        </span>
-        {tokenField && <SecretField c={c} f={tokenField} onSaved={saved} />}
+      <Step n={1} done={signed} current={!signed} title={`sign in to ${c.name}`} summary={signed ? (c.signedIn ? `signed in as ${c.signedIn}` : said(tested)) : undefined}>
+        {c.oauth && (
+          <div role="group" aria-label={`how to sign in to ${c.name}`} style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+            <Key size="xs" pressed={way === 'browser'} onClick={() => setWay('browser')}>sign in in the browser</Key>
+            <Key size="xs" pressed={way === 'key'} onClick={() => setWay('key')}>paste {keyWord}</Key>
+          </div>
+        )}
+        {way === 'browser' &&
+          (c.signedIn ? (
+            <span style={{ display: 'flex', gap: 8, alignItems: 'baseline' }}>
+              <span className="t-muted">signed in as {c.signedIn}, in the browser</span>
+              <Key size="xs" onClick={() => void api.oauthSignOut(c.id).then(saved, showProblem)}>sign out</Key>
+            </span>
+          ) : (
+            <>
+              {pasted && <span className="t-dim">signing in replaces the {keyWord.replace(/^an? /, '')} you pasted.</span>}
+              <BrowserSignIn c={c} onDone={saved} />
+            </>
+          ))}
+        {way === 'key' && (
+          <>
+            <span className="t-muted">
+              {c.id === 'sentry'
+                ? 'make a personal token: open sentry, press create new token, tick event:read, project:read and org:read, create it, and copy it.'
+                : 'make a personal API key: open linear, press new key under personal API keys, and copy it.'}
+            </span>
+            <span>
+              <Key size="xs" onClick={() => void api.openConnectionPage(c.id).catch(showProblem)}>open {c.name.toLowerCase()} ↗</Key>
+            </span>
+            {c.signedIn && <span className="t-dim">pasting one signs you out of the browser sign-in, as {c.signedIn}.</span>}
+            {tokenField && <SecretField c={c} f={tokenField} onSaved={saved} />}
+          </>
+        )}
         {tested && tested !== 'testing' && !tested.ok && <ConnectionState ok={false}>{tested.text}</ConnectionState>}
         {optional.length > 0 && (
           <span>

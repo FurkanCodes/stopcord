@@ -29,6 +29,7 @@ TESTS = [
     ('logos', []),
     ('source_keys', []),
     ('integrations', []),
+    ('oauth', []),
     ('terminal', []),
 ]
 ON_REQUEST = [('real_answer', [])]

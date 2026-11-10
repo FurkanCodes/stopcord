@@ -22,6 +22,7 @@ mod hooks;
 mod bench;
 mod intake;
 mod learn;
+mod oauth;
 mod oneshot;
 mod probe;
 mod kb;
@@ -861,6 +862,27 @@ fn github_repo(app: State<'_, App>, id: String) -> Result<String, Failure> {
     connections::github_repo(Path::new(&f.path)).map_err(|why| Failure::new("github", why))
 }
 
+/// Starts signing in to a connection in the browser. It goes on by itself; `oauth_signing` says how.
+#[tauri::command(async)]
+fn oauth_start(app: State<'_, App>, connection: String) -> Result<oauth::Signing, Failure> {
+    oauth::start(app.store.home(), &connection).map_err(|why| Failure::new("sign in", why))
+}
+
+#[tauri::command(async)]
+fn oauth_signing(connection: String) -> oauth::Signing {
+    oauth::signing(&connection)
+}
+
+#[tauri::command(async)]
+fn oauth_cancel(connection: String) {
+    oauth::cancel(&connection);
+}
+
+#[tauri::command(async)]
+fn oauth_sign_out(app: State<'_, App>, connection: String) -> Result<(), Failure> {
+    oauth::sign_out(app.store.home(), &connection).map_err(|why| Failure::new("sign out", why))
+}
+
 /// People who @mentioned the bot and aren't allowed to send work yet.
 #[tauri::command(async)]
 fn slack_knocks(engine: State<'_, Arc<Engine>>) -> Vec<slack::Knock> {
@@ -1093,6 +1115,10 @@ fn main() {
             connection_choices,
             github_repo,
             slack_knocks,
+            oauth_start,
+            oauth_signing,
+            oauth_cancel,
+            oauth_sign_out,
             allow_slack_user,
             slack_state,
             source_ready,

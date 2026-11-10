@@ -178,6 +178,21 @@ export interface Connection {
   values: Record<string, string>;
   set: string[];
   missing: string[];
+  /** Whether it can sign in in the browser instead of taking a pasted token. */
+  oauth: boolean;
+  /** Who signed in in the browser, when someone did. */
+  signedIn: string | null;
+}
+
+/** How a browser sign-in is going. */
+export interface Signing {
+  waiting: boolean;
+  /** Sentry's code, to check against the one the browser shows. */
+  code: string;
+  url: string;
+  error: string;
+  /** Who it signed in as, once it worked. */
+  done: string;
 }
 
 /** Something to pick instead of typing it, such as a Sentry project or a Slack channel. */
@@ -530,6 +545,10 @@ export const api = {
   /** The GitHub repo a factory's folder points at, such as "acme/web". */
   githubRepo: (id: string) => invoke<string>('github_repo', { id }),
   slackKnocks: () => invoke<Knock[]>('slack_knocks'),
+  oauthStart: (connection: string) => invoke<Signing>('oauth_start', { connection }),
+  oauthSigning: (connection: string) => invoke<Signing>('oauth_signing', { connection }),
+  oauthCancel: (connection: string) => invoke<void>('oauth_cancel', { connection }),
+  oauthSignOut: (connection: string) => invoke<void>('oauth_sign_out', { connection }),
   allowSlackUser: (user: string) => invoke<void>('allow_slack_user', { user }),
   slackManifest: () => invoke<string>('slack_manifest'),
   /** Whether the Slack connection is up, and what it last said. Null while it's off. */

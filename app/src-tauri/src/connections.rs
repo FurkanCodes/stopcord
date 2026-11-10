@@ -105,9 +105,16 @@ pub fn value(home: &Path, connection: &str, field: &Field) -> Option<String> {
             };
             (!legacy.is_empty()).then(|| settings::get_secret(home, &legacy)).flatten()
         })
+        // Signed in in the browser: that token stands in for a pasted one.
+        .or_else(|| crate::oauth::token(home, connection, field.name))
     } else {
         settings::load(home).ok()?.connections.get(connection)?.get(field.name).filter(|v| !v.trim().is_empty()).cloned()
     }
+}
+
+/// A plain field's value, without looking at secrets or signing in.
+pub fn plain(home: &Path, connection: &str, name: &str) -> Option<String> {
+    settings::load(home).ok()?.connections.get(connection)?.get(name).filter(|v| !v.trim().is_empty()).cloned()
 }
 
 /// Stores a field. An empty value clears it.
@@ -116,6 +123,10 @@ pub fn set(home: &Path, connection: &str, name: &str, value: &str) -> Result<(),
     let field = c.fields.iter().find(|f| f.name == name).ok_or_else(|| format!("{} has no field {name}", c.name))?;
     let value = value.trim();
     if field.secret {
+        // A pasted token replaces a browser sign-in: one way in at a time.
+        if !value.is_empty() && crate::oauth::who(home, connection).is_some() {
+            crate::oauth::sign_out(home, connection)?;
+        }
         return settings::set_secret(home, &secret_key(connection, name), value).map_err(|e| format!("{e:#}"));
     }
     let mut s = settings::load(home).map_err(|e| format!("{e:#}"))?;
@@ -152,6 +163,10 @@ pub struct View {
     pub set: Vec<String>,
     /// Required fields with no value.
     pub missing: Vec<String>,
+    /// Whether it can sign in in the browser instead of taking a pasted token.
+    pub oauth: bool,
+    /// Who signed in in the browser, when someone did.
+    pub signed_in: Option<String>,
 }
 
 pub fn views(home: &Path) -> Vec<View> {
@@ -169,7 +184,12 @@ pub fn views(home: &Path) -> Vec<View> {
                     _ => {}
                 }
             }
-            View { connection: c.clone(), values, set, missing: missing(home, c.id).iter().map(|f| f.name.to_string()).collect() }
+            let signed_in = crate::oauth::who(home, c.id);
+            // A browser sign-in fills the token field, but it wasn't pasted, so it isn't "set".
+            if signed_in.is_some() {
+                set.retain(|n| crate::oauth::field(c.id) != Some(n.as_str()));
+            }
+            View { connection: c.clone(), values, set, missing: missing(home, c.id).iter().map(|f| f.name.to_string()).collect(), oauth: crate::oauth::available(home, c.id), signed_in }
         })
         .collect()
 }
@@ -233,7 +253,7 @@ pub fn test(home: &Path, connection: &str) -> Result<String, String> {
             })
         }
         "linear" => {
-            let v: Value = ureq::post("https://api.linear.app/graphql")
+            let v: Value = ureq::post(&format!("{}/graphql", crate::oauth::linear_api()))
                 .set("Authorization", &get("LINEAR_API_KEY"))
                 .timeout(timeout)
                 .send_json(serde_json::json!({ "query": "{ viewer { name email } }" }))
@@ -299,7 +319,7 @@ pub fn choices(home: &Path, connection: &str, parent: &str) -> Result<Vec<Choice
             Ok(pick(&v, "slug", "name"))
         }
         "linear" => {
-            let v: Value = ureq::post("https://api.linear.app/graphql")
+            let v: Value = ureq::post(&format!("{}/graphql", crate::oauth::linear_api()))
                 .set("Authorization", &get("LINEAR_API_KEY"))
                 .timeout(timeout)
                 .send_json(serde_json::json!({ "query": "{ teams(first: 100) { nodes { key name } } }" }))
