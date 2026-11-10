@@ -246,6 +246,8 @@ export interface WorkItem {
   scores: { stage: string; score: number; why: string }[];
   bench?: { suite: string; run: string; task: string };
   summary: string;
+  /** What each stage wrote for the ones after it, oldest first. */
+  notes?: { stage: string; agent: string; text: string; at: number }[];
   base: string;
   merging: string;
   mergeError: string;

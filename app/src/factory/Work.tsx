@@ -735,6 +735,8 @@ function Detail({ factory, item, runs, terminals, onSending, onSite }: { factory
           </div>
         )}
 
+        {(item.notes?.length ?? 0) > 1 && <StageNotes key={item.id} notes={item.notes!} />}
+
         {checks.length > 0 && w !== 'approve' && (
           <ul aria-label="Checks" style={{ display: 'flex', flexWrap: 'wrap', gap: '0 16px' }}>
             {checks.map((c) => (
@@ -922,5 +924,29 @@ function SourceLine({ factory, p }: { factory: Factory; p: Factory['parts'][numb
         {p.name} · {state.text}
       </span>
     </span>
+  );
+}
+
+/** What each stage wrote for the ones after it, in order: the conversation the roles had about this work. */
+function StageNotes({ notes }: { notes: NonNullable<WorkItem['notes']> }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <section aria-label="Notes from each stage" data-stage-notes style={{ maxWidth: '90ch', display: 'flex', flexDirection: 'column', gap: 6 }}>
+      <span>
+        <Key size="xs" aria-expanded={open} onClick={() => setOpen(!open)}>
+          <span aria-hidden="true">{open ? '▾' : '▸'}</span> notes from each stage · {notes.length}
+        </Key>
+      </span>
+      {open && (
+        <ol style={{ display: 'flex', flexDirection: 'column', gap: 10, paddingLeft: 8 }}>
+          {notes.map((n, i) => (
+            <li key={i} style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+              <span className="t-dim" style={{ fontSize: 12 }}>{n.stage}{n.agent ? ` · ${n.agent}` : ''}</span>
+              <Markdown text={n.text} breaks />
+            </li>
+          ))}
+        </ol>
+      )}
+    </section>
   );
 }

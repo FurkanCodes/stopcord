@@ -25,6 +25,7 @@ No test calls a model unless you ask for `real_answer`, which spends quota. Each
 | `integrations` | The integrations page takes Sentry from nothing to a factory's source with only a token typed: a wrong token says so, the organization and project come from Sentry to pick, and ticking a factory adds the source. Uses a fake Sentry on this machine |
 | `oauth` | Signing in to Sentry (device flow) and Linear (PKCE) in the browser, with nothing pasted, against a fake of both: the code waits for approval, a callback with the wrong state is refused, an expired token refreshes by itself, and signing out forgets the tokens |
 | `templates` | A factory is saved as a template from its setup, without its project. A new factory made from it has the same line and roles on the same models. A template goes out as a file and comes back |
+| `roles_talk` | Each stage's note reaches every stage after it, the builder hands work back to the planner with `st send` and the planner gets the message, and handoff shows the notes from each stage |
 | `markdown`, `logos`, `terminal` | Rendering |
 
 ## Stand-in agents

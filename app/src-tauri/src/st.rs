@@ -12,7 +12,7 @@ use std::time::Duration;
 
 use serde_json::{Value, json};
 
-const USAGE: &str = "usage: st done \"what you did\"\n       st ask \"your question\"\n       st note \"something worth keeping\"\n       st finding --file a.rs --line 9 --severity high --kind clear \"what's wrong\"\n       st score 7 \"why\"";
+const USAGE: &str = "usage: st done \"your note for the stages after you\"   (or st done - < note.md)\n       st send <stage> \"what it needs to know\"\n       st ask \"your question\"\n       st note \"something worth keeping\"\n       st finding --file a.rs --line 9 --severity high --kind clear \"what's wrong\"\n       st score 7 \"why\"";
 
 /// Writes the script that puts `st` on a terminal's PATH.
 pub fn install(home: &Path, program: &Path) -> std::io::Result<()> {
@@ -32,7 +32,14 @@ pub fn install(home: &Path, program: &Path) -> std::io::Result<()> {
 pub fn parse(args: &[String]) -> Result<Value, String> {
     let (verb, rest) = args.split_first().ok_or(USAGE)?;
     match verb.as_str() {
-        "done" | "ask" | "note" => Ok(json!({ "verb": verb, "text": rest.join(" ") })),
+        "done" | "ask" | "note" => Ok(json!({ "verb": verb, "text": words(rest)? })),
+        "send" => {
+            let (to, message) = rest.split_first().ok_or(USAGE)?;
+            if to.is_empty() || to.starts_with('-') {
+                return Err(USAGE.to_string());
+            }
+            Ok(json!({ "verb": "send", "to": to, "text": words(message)? }))
+        }
         "score" => {
             let (n, why) = rest.split_first().ok_or(USAGE)?;
             let score: u32 = n.parse().ok().filter(|s| *s <= 10).ok_or(USAGE)?;
@@ -54,6 +61,16 @@ pub fn parse(args: &[String]) -> Result<Value, String> {
         }
         _ => Err(USAGE.to_string()),
     }
+}
+
+/// The words of a report, or what's piped in when they are a lone `-`, for a note too long to quote.
+fn words(rest: &[String]) -> Result<String, String> {
+    if rest.len() == 1 && rest[0] == "-" {
+        let mut text = String::new();
+        std::io::Read::read_to_string(&mut std::io::stdin(), &mut text).map_err(|e| format!("couldn't read the note: {e}"))?;
+        return Ok(text.trim().to_string());
+    }
+    Ok(rest.join(" "))
 }
 
 fn send(socket: &str, report: &Value) -> Result<(), String> {
@@ -102,6 +119,14 @@ mod tests {
     fn the_words_become_a_report() {
         assert_eq!(parse(&args(&["done", "fixed", "it"])).unwrap(), json!({"verb":"done","text":"fixed it"}));
         assert_eq!(parse(&args(&["ask", "which db?"])).unwrap()["verb"], "ask");
+    }
+
+    #[test]
+    fn send_names_a_stage_and_carries_a_message() {
+        let r = parse(&args(&["send", "plan", "step", "3", "needs", "a", "migration"])).unwrap();
+        assert_eq!(r, json!({"verb":"send","to":"plan","text":"step 3 needs a migration"}));
+        assert!(parse(&args(&["send"])).unwrap_err().contains("usage"));
+        assert!(parse(&args(&["send", "--to", "x"])).unwrap_err().contains("usage"));
     }
 
     #[test]

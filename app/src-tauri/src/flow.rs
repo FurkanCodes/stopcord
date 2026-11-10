@@ -241,6 +241,9 @@ impl Engine {
     fn run_agent_inner(self: &Arc<Self>, factory: &str, key: &str, stage: &str, agent_id: &str, note: &str) {
         let Ok(f) = self.store.get(factory) else { return };
         let Some(w) = item_of(&f, key).cloned() else { return };
+        // The line keeps why work came here, so an agent started by a restart is told too.
+        let kept = w.stage_note.clone();
+        let note = if note.is_empty() && w.line_stage == stage { kept.as_str() } else { note };
         let agent = f.agents.iter().chain(&f.scorers).find(|a| a.id == agent_id).cloned();
         let is_scorer = f.scorers.iter().any(|s| s.id == agent_id);
         let alive = |t: &str| {
@@ -276,7 +279,9 @@ impl Engine {
             })
             .collect();
         let write = if is_scorer { line::scorer_brief } else { line::brief };
-        let brief = write(agent.as_ref().map_or("", |a| a.prompt.as_str()), &w, &skills, &st);
+        // Where this stage can hand work with `st send`: every other stage a role or a person does.
+        let others: Vec<String> = f.line.iter().filter(|s| s.id != stage && s.kind != crate::factories::StageKind::Gate).map(|s| s.id.clone()).collect();
+        let brief = write(agent.as_ref().map_or("", |a| a.prompt.as_str()), &w, &skills, &st, &others);
         let (id, text) = if let Some(t) = existing {
             // The folder may have moved on since the last round, as when kept files came back.
             if let Err(why) = self.mirror_vm(factory, &t) {
@@ -356,14 +361,21 @@ impl Engine {
             }
         });
         match self.type_engine_turn(&id, &text) {
-            Ok(()) => self.log(
-                factory,
-                Run::new("line", format!("{key}: {agent_id} started on {stage}"))
-                    .ok(true)
-                    .terminal(Some(&id))
-                    .work(&w.id)
-                    .by("engine"),
-            ),
+            Ok(()) => {
+                let _ = self.store.update(factory, |fa| {
+                    if let Some(i) = fa.work.iter_mut().find(|i| i.ticket.key == key && i.line_stage == stage) {
+                        i.stage_note.clear();
+                    }
+                });
+                self.log(
+                    factory,
+                    Run::new("line", format!("{key}: {agent_id} started on {stage}"))
+                        .ok(true)
+                        .terminal(Some(&id))
+                        .work(&w.id)
+                        .by("engine"),
+                )
+            }
             Err(e) => self.fail_step(factory, key, format!("{key} has a terminal for {stage} but never got its brief: {e}")),
         }
     }
@@ -689,6 +701,19 @@ impl Engine {
                     return;
                 }
                 self.store.update(&factory, |f| line::agent_done(f, &key, &text))
+            }
+            "send" => {
+                let to = report["to"].as_str().unwrap_or_default().to_string();
+                // The work the sender did comes along, as with done.
+                if let Err(why) = self.mirror_vm(&factory, terminal) {
+                    self.fail_step(&factory, &key, format!("{key} was sent to {to}, but its work couldn't come back from the VM: {why}"));
+                    return;
+                }
+                if let Err(why) = self.finish_copy(&factory, &key) {
+                    self.fail_step(&factory, &key, format!("{key} was sent to {to}, but its copy couldn't be collected: {why}"));
+                    return;
+                }
+                self.store.update(&factory, |f| line::agent_sends(f, &key, &to, &text))
             }
             "ask" => self.store.update(&factory, |f| {
                 let question = line::question_text(f, &key, &text);

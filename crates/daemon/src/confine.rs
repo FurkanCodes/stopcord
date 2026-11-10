@@ -115,6 +115,14 @@ pub fn clean_report(raw: &str) -> Result<Value, String> {
     let verb = text("verb");
     match verb.as_str() {
         "done" | "ask" | "note" => Ok(json!({ "verb": verb, "text": text("text") })),
+        // A stage name is a short slug: anything else isn't one, and the engine checks it's on the line.
+        "send" => {
+            let to = text("to");
+            if to.is_empty() || to.len() > 64 || !to.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+                return Err("send needs the name of a stage, like build".to_string());
+            }
+            Ok(json!({ "verb": verb, "to": to, "text": text("text") }))
+        }
         "score" => match v["score"].as_u64().filter(|n| *n <= 10) {
             Some(score) => Ok(json!({ "verb": verb, "score": score, "text": text("text") })),
             None => Err("a score is a whole number from 0 to 10".to_string()),
@@ -334,6 +342,8 @@ mod tests {
         let c = Confine::start(dir.path(), "c1", None, quiet()).unwrap();
         assert_eq!(say(&c.report, "not json")["ok"], false);
         assert_eq!(say(&c.report, r#"{"verb":"merge"}"#)["ok"], false);
+        assert_eq!(clean_report(r#"{"verb":"send","to":"plan","text":"needs a migration"}"#).unwrap()["to"], "plan");
+        assert!(clean_report(r#"{"verb":"send","to":"../x","text":"hi"}"#).is_err());
         assert!(c.take_reports().is_empty());
     }
 

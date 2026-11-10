@@ -7,7 +7,29 @@
 //!
 //! Agents can finish a stage. Only the engine or a person picks what comes next.
 
-use crate::factories::{Factory, Finding, LineStage, Stage, StageKind, Waiting, WorkItem};
+use crate::factories::{Factory, Finding, LineStage, Note, Stage, StageKind, Waiting, WorkItem};
+
+/// Notes are for the next roles to read, so each is capped and only the newest are kept.
+const NOTE_CHARS: usize = 4000;
+const NOTES_KEPT: usize = 12;
+/// How many times a stage may hand work on with `st send` before a person is asked, when it sets no limit.
+const SENDS: u32 = 2;
+
+fn now_ms() -> u64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis() as u64)
+}
+
+/// Keeps what a stage wrote for the ones after it.
+fn add_note(w: &mut WorkItem, stage: &LineStage, text: &str) {
+    let text = text.trim();
+    if text.is_empty() {
+        return;
+    }
+    let text: String = if text.chars().count() > NOTE_CHARS { format!("{}…", text.chars().take(NOTE_CHARS).collect::<String>()) } else { text.to_string() };
+    w.notes.push(Note { stage: stage.id.clone(), agent: stage.agent.clone(), text, at: now_ms() });
+    let extra = w.notes.len().saturating_sub(NOTES_KEPT);
+    w.notes.drain(..extra);
+}
 
 /// What the engine has to do now.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -78,6 +100,7 @@ pub fn enter(f: &mut Factory, key: &str, id: &str, note: &str) -> Step {
     match s.kind {
         StageKind::Agent => {
             w.waiting = Waiting::No;
+            w.stage_note = note.to_string();
             Step::Agent {
                 stage: s.id,
                 agent: s.agent,
@@ -137,6 +160,7 @@ pub fn agent_done(f: &mut Factory, key: &str, summary: &str) -> Step {
     }
     if let Some(w) = item(f, key) {
         w.summary = summary.to_string();
+        add_note(w, &s, summary);
     }
     if let Some(back) = send_back_clear_findings(f, key, &s) {
         return back;
@@ -183,6 +207,36 @@ pub fn landing(f: &mut Factory, key: &str) -> bool {
 }
 
 /// The agent stopped: it asked something, or went quiet without saying it was done.
+/// An agent hands the work to another stage, with a message for it. Each stage may do this only so
+/// often before a person is asked, so two roles can't pass a ticket back and forth forever.
+pub fn agent_sends(f: &mut Factory, key: &str, to: &str, message: &str) -> Step {
+    let Some(s) = current(f, key) else {
+        return Step::Nothing;
+    };
+    if s.kind != StageKind::Agent || to == s.id {
+        return Step::Nothing;
+    }
+    let Some(target) = stage(f, to).cloned() else {
+        let text = format!("{key}: {} tried to send the work to {to}, which isn't a stage on this line. It said: {message}", s.id);
+        return agent_stopped(f, key, &text);
+    };
+    let limit = if s.max_loops > 0 { s.max_loops } else { SENDS };
+    let Some(w) = item(f, key) else {
+        return Step::Nothing;
+    };
+    let sent = w.loops.entry(format!("send:{}", s.id)).or_insert(0);
+    if *sent >= limit {
+        let text = format!("{key}: {} wants to send the work to {to} again, after {limit} times. It said: {message}", s.id);
+        return agent_stopped(f, key, &text);
+    }
+    *sent += 1;
+    w.summary = message.to_string();
+    add_note(w, &s, &format!("sent the work to {to}: {message}"));
+    let who = if s.agent.is_empty() { String::new() } else { format!(" ({})", s.agent) };
+    let note = format!("The {} stage{who} sent the work to you, {to}, with this message:\n\n{message}", s.id);
+    enter(f, key, &target.id, &note)
+}
+
 pub fn agent_stopped(f: &mut Factory, key: &str, text: &str) -> Step {
     let Some(s) = current(f, key) else {
         return Step::Nothing;
@@ -338,7 +392,13 @@ fn brief_body(prompt: &str, w: &WorkItem, skills: &[(String, String, String)]) -
             out.push_str(extra.trim());
         }
     }
-    if !w.summary.trim().is_empty() {
+    if !w.notes.is_empty() {
+        out.push_str("\n\nNotes from the stages before this one, oldest first:");
+        for n in &w.notes {
+            let who = if n.agent.is_empty() { String::new() } else { format!(", {}", n.agent) };
+            out.push_str(&format!("\n\n[{}{who}] {}", n.stage, n.text.trim()));
+        }
+    } else if !w.summary.trim().is_empty() {
         out.push_str("\n\nThe stage before this one said: ");
         out.push_str(w.summary.trim());
     }
@@ -351,20 +411,26 @@ fn brief_body(prompt: &str, w: &WorkItem, skills: &[(String, String, String)]) -
     out
 }
 
-pub fn brief(prompt: &str, w: &WorkItem, skills: &[(String, String, String)], st: &str) -> String {
+/// `others` are the stages this one can hand work to with `st send`.
+pub fn brief(prompt: &str, w: &WorkItem, skills: &[(String, String, String)], st: &str, others: &[String]) -> String {
     let finding = if prompt.contains("st finding") {
         format!("\n\nTo report a finding, run: {st} finding --file a.rs --line 9 --severity high --kind clear \"what's wrong and the fix\"")
     } else {
         String::new()
     };
+    let send = if others.is_empty() {
+        String::new()
+    } else {
+        format!(" To hand the work to another stage with a message instead, run: {st} send <stage> \"what it needs to know\". The stages: {}.", others.join(", "))
+    };
     format!(
-        "{}{finding}\n\nIf your role changes files, commit them. If it says not to, leave every file alone. When you've finished, run: {st} done \"one line on what you did\". If you need a person, run: {st} ask \"your question\".",
+        "{}{finding}\n\nIf your role changes files, commit them. If it says not to, leave every file alone. When you've finished, run: {st} done \"your note\". The stages after you read it, so say what you did, what you aren't sure of, and what they should check. For a long note, pipe it in: {st} done - < note.md.{send} If you need a person, run: {st} ask \"your question\".",
         brief_body(prompt, w, skills)
     )
 }
 
 /// A scorer changes nothing, and its score is what ends its stage.
-pub fn scorer_brief(prompt: &str, w: &WorkItem, skills: &[(String, String, String)], st: &str) -> String {
+pub fn scorer_brief(prompt: &str, w: &WorkItem, skills: &[(String, String, String)], st: &str, _others: &[String]) -> String {
     format!(
         "{}\n\nDon't change or commit anything. Look at this work, then give it a score from 0 to 10 as your last step: {st} score 7 \"one line on why\"",
         brief_body(prompt, w, skills)
@@ -594,6 +660,52 @@ mod tests {
     }
 
     #[test]
+    fn every_stage_after_reads_the_notes_of_the_ones_before() {
+        let mut f = factory();
+        begin(&mut f, "A");
+        agent_done(&mut f, "A", "planned three steps. unsure about the migration");
+        person(&mut f, "A", Action::Approve);
+        agent_done(&mut f, "A", "built steps 1 and 2");
+        let notes: Vec<&str> = f.work[0].notes.iter().map(|n| n.stage.as_str()).collect();
+        assert_eq!(notes, ["plan", "build"]);
+        let text = brief("You review.", &f.work[0], &[], "st", &[]);
+        assert!(text.contains("[plan, plan-agent] planned three steps") && text.contains("[build, build-agent] built steps 1 and 2"), "{text}");
+        assert!(text.find("[plan,").unwrap() < text.find("[build,").unwrap());
+    }
+
+    #[test]
+    fn a_stage_sends_work_to_another_with_a_message_until_its_limit() {
+        let mut f = factory();
+        begin(&mut f, "A");
+        agent_done(&mut f, "A", "plan");
+        person(&mut f, "A", Action::Approve);
+        assert_eq!(at(&f).0, "build");
+        let step = agent_sends(&mut f, "A", "plan", "step 3 needs a migration");
+        let Step::Agent { stage, note, .. } = step else { panic!("{step:?}") };
+        assert_eq!(stage, "plan");
+        assert!(note.contains("The build stage") && note.contains("step 3 needs a migration"), "{note}");
+        assert!(f.work[0].notes.last().unwrap().text.contains("sent the work to plan"));
+        // Back at build, it may send once more, then a person is asked.
+        agent_done(&mut f, "A", "replanned");
+        person(&mut f, "A", Action::Approve);
+        assert!(matches!(agent_sends(&mut f, "A", "plan", "again"), Step::Agent { .. }));
+        agent_done(&mut f, "A", "replanned again");
+        person(&mut f, "A", Action::Approve);
+        let Step::Person { why, text, .. } = agent_sends(&mut f, "A", "plan", "once more") else { panic!() };
+        assert_eq!(why, Waiting::Question);
+        assert!(text.contains("again, after 2 times"), "{text}");
+    }
+
+    #[test]
+    fn sending_to_a_stage_that_isnt_there_asks_a_person() {
+        let mut f = factory();
+        begin(&mut f, "A");
+        assert_eq!(agent_sends(&mut f, "A", "plan", "self"), Step::Nothing);
+        let Step::Person { text, .. } = agent_sends(&mut f, "A", "deploy", "ship it") else { panic!() };
+        assert!(text.contains("isn't a stage on this line"), "{text}");
+    }
+
+    #[test]
     fn the_brief_has_the_role_the_ticket_the_skills_and_how_to_report() {
         let f = factory();
         let text = brief(
@@ -601,8 +713,10 @@ mod tests {
             &f.work[0],
             &[("crash".into(), "Investigate a crash".into(), "/d/skills/crash/SKILL.md".into())],
             "/h/bin/st",
+            &["review".to_string()],
         );
         assert!(text.starts_with("You build.\n\nA: Fix it"), "{text}");
+        assert!(text.contains("/h/bin/st send <stage>") && text.contains("The stages: review."), "{text}");
         assert!(text.contains("/d/skills/crash/SKILL.md"));
         assert!(text.contains("/h/bin/st done"));
         assert!(text.contains("/h/bin/st ask"));

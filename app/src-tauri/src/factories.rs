@@ -430,6 +430,11 @@ pub struct WorkItem {
     pub findings: Vec<Finding>,
     /// What the last stage to report said.
     pub summary: String,
+    /// What each stage wrote when it finished or handed the work on, oldest first. Every brief has them.
+    pub notes: Vec<Note>,
+    /// Why the work came to the stage it's at, kept until that stage's agent has been told. Whatever
+    /// starts the agent, the line or a restart, tells it.
+    pub stage_note: String,
     /// The commit it started from.
     pub base: String,
     /// What scorers said. Shown at handoff and never decides anything.
@@ -440,6 +445,17 @@ pub struct WorkItem {
     pub merging: String,
     /// Why the last merge didn't happen.
     pub merge_error: String,
+}
+
+/// What a stage's agent wrote for the ones after it: what it did, what it isn't sure of, what to check.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct Note {
+    pub stage: String,
+    pub agent: String,
+    pub text: String,
+    /// When, in milliseconds.
+    pub at: u64,
 }
 
 /// A scorer's opinion of a piece of work.
