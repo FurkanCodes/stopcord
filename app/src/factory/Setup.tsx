@@ -36,7 +36,7 @@ function Text({ id, label, value, onChange, placeholder, list: options }: { id: 
   );
 }
 
-function Pick({ id, label, value, options, onChange }: { id: string; label: string; value: string; options: [string, string][]; onChange: (v: string) => void }) {
+function Pick({ id, label, value, options, onChange, hint }: { id: string; label: string; value: string; options: [string, string][]; onChange: (v: string) => void; hint?: string }) {
   return (
     <FieldRow id={id} label={label} width="14ch">
       <select id={id} className="t-field" value={value} onChange={(e) => onChange(e.currentTarget.value)}>
@@ -44,6 +44,7 @@ function Pick({ id, label, value, options, onChange }: { id: string; label: stri
           <option key={v} value={v}>{words}</option>
         ))}
       </select>
+      {hint && <span className="t-dim" style={{ fontSize: 12 }}>{hint}</span>}
     </FieldRow>
   );
 }
@@ -681,14 +682,15 @@ function RolePane({ id, title, noun, empty, fallback, items, taken, runners, onR
   const edit = (i: number, patch: Partial<Agent>) => onChange(items.map((a, j) => (j === i ? { ...a, ...patch } : a)));
   const profiles = useHarnessProfiles();
   return (
-    <Pane id={id} title={title} heading={3} right={<Key size="xs" onClick={() => onChange([...items, { id: uniq(noun, taken), description: '', harness: '', runner: '', prompt: '' }])}>add {noun}</Key>} style={paneStyle}>
+    <Pane id={id} title={title} heading={3} right={<Key size="xs" onClick={() => onChange([...items, { id: uniq(noun, taken), description: '', harness: '', runner: '', prompt: '', once: false }])}>add {noun}</Key>} style={paneStyle}>
       {items.length === 0 && <p className="t-dim">{empty}</p>}
       {items.map((a, i) => (
-        <Fold key={i} title={a.id} logo={a.harness || fallback} hint={[runsOn(profiles, a.harness || fallback || ''), a.description].filter(Boolean).join(' · ')}>
+        <Fold key={i} title={a.id} logo={a.harness || fallback} hint={[runsOn(profiles, a.harness || fallback || ''), a.once ? 'answers once' : '', a.description].filter(Boolean).join(' · ')}>
           <NameField id={`${noun}-id-${i}`} label="name" value={a.id} taken={taken} onCommit={(id) => onRename(i, id)} />
           <Text id={`${noun}-d-${i}`} label="what it does" value={a.description} onChange={(description) => edit(i, { description })} />
           <HarnessFields id={`${noun}-${i}`} command={a.harness} fallback={fallback} placeholder={fallback ? `empty uses the default, ${fallback}` : 'empty uses the default'} onChange={(harness) => edit(i, { harness })} />
-          <Pick id={`${noun}-r-${i}`} label="sandbox" value={a.runner} options={runners} onChange={(r) => edit(i, { runner: r })} />
+          <Pick id={`${noun}-how-${i}`} label="how it runs" value={a.once ? 'once' : 'terminal'} options={[['terminal', 'in a terminal'], ['once', 'answers once']]} onChange={(how) => edit(i, { once: how === 'once' })} hint={a.once ? `one question to its harness, with no terminal, files or tools. it reads the ticket, the notes and the diff, and its answer is its note${noun === 'scorer' ? ', ending in its score' : ''}. cheap enough to run on everything` : undefined} />
+          {!a.once && <Pick id={`${noun}-r-${i}`} label="sandbox" value={a.runner} options={runners} onChange={(r) => edit(i, { runner: r })} />}
           <FieldRow id={`${noun}-p-${i}`} label="role prompt" width="14ch" top>
             <textarea id={`${noun}-p-${i}`} className="t-field" spellCheck={false} rows={5} value={a.prompt} onChange={(e) => edit(i, { prompt: e.currentTarget.value })} />
           </FieldRow>

@@ -234,8 +234,83 @@ impl Engine {
         if !self.state.lock().unwrap().stepping.insert(guard.clone()) {
             return;
         }
-        self.run_agent_inner(factory, key, stage, agent_id, note);
+        let once = self.store.get(factory).ok().is_some_and(|f| f.agents.iter().chain(&f.scorers).any(|a| a.id == agent_id && a.once));
+        let steps = if once {
+            self.answer_once(factory, key, stage, agent_id, note)
+        } else {
+            self.run_agent_inner(factory, key, stage, agent_id, note);
+            Vec::new()
+        };
         self.state.lock().unwrap().stepping.remove(&guard);
+        // Only now: the next stage may be this same agent's again, and it needs the guard free.
+        for step in steps {
+            self.step(factory, key, step);
+        }
+    }
+
+    /// A role that answers once: no terminal, one question to its harness, and its answer read as
+    /// the reports `st` would have sent. They're saved here, and the steps they lead to returned.
+    fn answer_once(self: &Arc<Self>, factory: &str, key: &str, stage: &str, agent_id: &str, note: &str) -> Vec<Step> {
+        let Ok(f) = self.store.get(factory) else { return Vec::new() };
+        let Some(w) = item_of(&f, key).cloned() else { return Vec::new() };
+        let Some(agent) = f.agents.iter().chain(&f.scorers).find(|a| a.id == agent_id).cloned() else { return Vec::new() };
+        let is_scorer = f.scorers.iter().any(|s| s.id == agent_id);
+        let kept = w.stage_note.clone();
+        let note = if note.is_empty() && w.line_stage == stage { kept.as_str() } else { note };
+        let swapped = w.bench.as_ref().filter(|b| b.agent == agent_id && !b.candidate.is_empty()).map(|b| b.candidate.clone());
+        let command = swapped.unwrap_or_else(|| self.harness_for(&f, Some(&agent)));
+        if command.trim().is_empty() {
+            self.fail_step(factory, key, format!("{key} needs a harness for {stage}. Set one on the agent or in the factory's defaults."));
+            return Vec::new();
+        }
+        // It can't look at the branch itself, so it's shown what changed there.
+        let dir = if w.worktree.is_empty() { f.path.clone() } else { w.worktree.clone() };
+        let diff = if w.base.is_empty() {
+            String::new()
+        } else {
+            worktree::git(Path::new(&dir), &["diff", &format!("{}..HEAD", w.base)]).unwrap_or_default()
+        };
+        let brief = line::once_brief(&agent.prompt, &w, is_scorer, &diff);
+        let prompt = if note.is_empty() { brief } else { format!("{brief}\n\n{note}") };
+        let _ = self.store.update(factory, |fa| {
+            if let Some(i) = fa.work.iter_mut().find(|i| i.ticket.key == key && i.line_stage == stage) {
+                i.stage_note.clear();
+            }
+        });
+        self.log(factory, Run::new("line", format!("{key}: {agent_id} is answering once on {stage}")).ok(true).work(&w.id).by("engine"));
+        let answer = match self.one_shot(&f, &command, &prompt) {
+            Ok(answer) => answer,
+            Err(why) => {
+                self.fail_step(factory, key, format!("{key}: {agent_id} couldn't answer on {stage}. {why}"));
+                return Vec::new();
+            }
+        };
+        // A person may have moved the work while it was answering. Then the answer is for nothing.
+        let still = self.store.get(factory).ok().and_then(|f| item_of(&f, key).map(|i| i.line_stage == stage && i.waiting == Waiting::No && i.stage == Stage::Running)).unwrap_or(false);
+        if !still {
+            self.log(factory, Run::new("line", format!("{key} moved on while {agent_id} answered, so its answer was dropped")).work(&w.id).by("engine"));
+            return Vec::new();
+        }
+        let reports = match crate::oneshot::read_answer(&answer, is_scorer) {
+            Ok(reports) => reports,
+            Err(why) => {
+                self.fail_step(factory, key, format!("{key}: {agent_id}'s answer on {stage} couldn't be read: {why}. It said: {}", runs::last_lines(&answer, 5)));
+                return Vec::new();
+            }
+        };
+        let mut steps = Vec::new();
+        for raw in reports {
+            let Ok(report) = sawtooth_daemon::confine::clean_report(&raw.to_string()) else { continue };
+            match self.report_step(factory, key, None, &report) {
+                Some(Step::Nothing) => {}
+                Some(step) => steps.push(step),
+                None => return steps,
+            }
+        }
+        if is_scorer {
+            self.learn_from_scores(factory);
+        }
+        steps
     }
 
     fn run_agent_inner(self: &Arc<Self>, factory: &str, key: &str, stage: &str, agent_id: &str, note: &str) {
@@ -688,49 +763,65 @@ impl Engine {
             }
             return;
         };
-        let work_id = self.store.get(&factory).ok().and_then(|f| item_of(&f, &key).map(|w| w.id.clone())).unwrap_or_default();
-        self.log(&factory, Run::new("agent", format!("{verb}: {text}")).terminal(Some(terminal)).work(&work_id).by("agent"));
+        if let Some(step) = self.report_step(&factory, &key, Some(terminal), report) {
+            self.step(&factory, &key, step);
+        }
+        if verb == "score" {
+            self.learn_from_scores(&factory);
+        }
+    }
+
+    /// What one report does to a work item, whether `st` sent it from a terminal or it was read out
+    /// of a role's one answer. The caller takes the step. `None` means it has failed the step already.
+    fn report_step(self: &Arc<Self>, factory: &str, key: &str, terminal: Option<&str>, report: &Value) -> Option<Step> {
+        let verb = report["verb"].as_str().unwrap_or_default();
+        let text = report["text"].as_str().unwrap_or_default().to_string();
+        let work_id = self.store.get(factory).ok().and_then(|f| item_of(&f, key).map(|w| w.id.clone())).unwrap_or_default();
+        self.log(factory, Run::new("agent", format!("{verb}: {text}")).terminal(terminal).work(&work_id).by("agent"));
+        // A terminal's work comes back from its VM or copy first. A role that answers once has none.
+        let collect = |what: &str| -> bool {
+            let Some(terminal) = terminal else { return true };
+            if let Err(why) = self.mirror_vm(factory, terminal) {
+                self.fail_step(factory, key, format!("{key} {what}, but its work couldn't come back from the VM: {why}"));
+                return false;
+            }
+            if let Err(why) = self.finish_copy(factory, key) {
+                self.fail_step(factory, key, format!("{key} {what}, but its copy couldn't be collected: {why}"));
+                return false;
+            }
+            true
+        };
         let step = match verb {
             "done" => {
-                if let Err(why) = self.mirror_vm(&factory, terminal) {
-                    self.fail_step(&factory, &key, format!("{key} finished, but its work couldn't come back from the VM: {why}"));
-                    return;
+                if !collect("finished") {
+                    return None;
                 }
-                if let Err(why) = self.finish_copy(&factory, &key) {
-                    self.fail_step(&factory, &key, format!("{key} finished, but its copy couldn't be collected: {why}"));
-                    return;
-                }
-                self.store.update(&factory, |f| line::agent_done(f, &key, &text))
+                self.store.update(factory, |f| line::agent_done(f, key, &text))
             }
             "send" => {
                 let to = report["to"].as_str().unwrap_or_default().to_string();
                 // The work the sender did comes along, as with done.
-                if let Err(why) = self.mirror_vm(&factory, terminal) {
-                    self.fail_step(&factory, &key, format!("{key} was sent to {to}, but its work couldn't come back from the VM: {why}"));
-                    return;
+                if !collect(&format!("was sent to {to}")) {
+                    return None;
                 }
-                if let Err(why) = self.finish_copy(&factory, &key) {
-                    self.fail_step(&factory, &key, format!("{key} was sent to {to}, but its copy couldn't be collected: {why}"));
-                    return;
-                }
-                self.store.update(&factory, |f| line::agent_sends(f, &key, &to, &text))
+                self.store.update(factory, |f| line::agent_sends(f, key, &to, &text))
             }
-            "ask" => self.store.update(&factory, |f| {
-                let question = line::question_text(f, &key, &text);
-                line::agent_stopped(f, &key, &question)
+            "ask" => self.store.update(factory, |f| {
+                let question = line::question_text(f, key, &text);
+                line::agent_stopped(f, key, &question)
             }),
             "score" => {
                 let score = report["score"].as_u64().unwrap_or(0) as u32;
-                self.store.update(&factory, |f| {
+                self.store.update(factory, |f| {
                     let Some(i) = f.work.iter_mut().find(|i| i.ticket.key == key) else {
                         return Step::Nothing;
                     };
                     i.scores.push(Score { stage: i.line_stage.clone(), score, why: text.clone() });
                     let summary = i.summary.clone();
-                    let on_scorer = stage_of(f, item_of(f, &key).expect("just found")).is_some_and(|s| f.scorers.iter().any(|a| a.id == s.agent));
+                    let on_scorer = stage_of(f, item_of(f, key).expect("just found")).is_some_and(|s| f.scorers.iter().any(|a| a.id == s.agent));
                     if on_scorer {
                         // The last stage's summary stays: a score is an opinion about it, not a report.
-                        line::agent_done(f, &key, &summary)
+                        line::agent_done(f, key, &summary)
                     } else {
                         Step::Nothing
                     }
@@ -745,20 +836,15 @@ impl Engine {
                     stage: String::new(),
                     kind: report["kind"].as_str().unwrap_or("judgment").to_string(),
                 };
-                self.store.update(&factory, |f| {
-                    let stage = item_of(f, &key).map(|w| w.line_stage.clone()).unwrap_or_default();
-                    line::add_finding(f, &key, Finding { stage, ..finding.clone() });
+                self.store.update(factory, |f| {
+                    let stage = item_of(f, key).map(|w| w.line_stage.clone()).unwrap_or_default();
+                    line::add_finding(f, key, Finding { stage, ..finding.clone() });
                     Step::Nothing
                 })
             }
             _ => Ok(Step::Nothing),
         };
-        if let Ok(step) = step {
-            self.step(&factory, &key, step);
-        }
-        if verb == "score" {
-            self.learn_from_scores(&factory);
-        }
+        step.ok()
     }
 
     fn terminal_factory(&self, terminal: &str) -> Option<String> {

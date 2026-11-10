@@ -437,6 +437,32 @@ pub fn scorer_brief(prompt: &str, w: &WorkItem, skills: &[(String, String, Strin
     )
 }
 
+/// The longest diff a role that answers once is shown. Past it, it's told the rest was cut.
+pub const ONCE_DIFF_CHARS: usize = 60_000;
+
+/// A role that answers once can't run anything, so it gets the diff instead, and its answer is its report.
+pub fn once_brief(prompt: &str, w: &WorkItem, scorer: bool, diff: &str) -> String {
+    let mut out = brief_body(prompt, w, &[]);
+    if diff.trim().is_empty() {
+        out.push_str("\n\nNothing has changed on this work's branch yet.");
+    } else {
+        let cut: String = diff.chars().take(ONCE_DIFF_CHARS).collect();
+        let more = if cut.len() < diff.len() { "\n[the rest of the diff was cut]" } else { "" };
+        out.push_str(&format!("\n\nThe changes so far, against where this work started:\n<diff>\n{}{more}\n</diff>", cut.trim_end()));
+    }
+    out.push_str(
+        "\n\nYou can't run anything or open files, so answer from what's here. Your answer is your note: the stages after you read it, so say what you found, what you aren't sure of, and what they should check.\n\nPut each problem on its own line, like this: FINDING clear high src/a.rs:9 what's wrong and the fix. Write clear when the fix is obvious and judgment when a person should decide, then high, medium or low.",
+    );
+    if scorer {
+        out.push_str("\n\nEnd with one line that scores the work from 0 to 10, like this: score 7 one line on why");
+    }
+    // A role prompt written for a terminal says to run st. Here the lines above stand in for it.
+    if ["done", "finding", "score", "ask", "send"].iter().any(|v| prompt.contains(&format!("st {v}"))) {
+        out.push_str("\n\nWhere your role says to run st, don't: write the line above instead, and this answer is your report.");
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -478,6 +504,18 @@ mod tests {
             }],
             ..Factory::default()
         }
+    }
+
+    #[test]
+    fn a_role_that_answers_once_gets_the_diff_and_answers_instead_of_running_st() {
+        let w = &factory().work[0];
+        let b = once_brief("Review it. Report each problem using st finding.", w, true, "diff --git a/x b/x\n+y\n");
+        assert!(b.contains("<diff>\ndiff --git a/x b/x\n+y\n</diff>") && b.contains("FINDING clear high"), "{b}");
+        assert!(b.contains("score 7") && b.contains("Where your role says to run st, don't"), "{b}");
+        let plain = once_brief("Read it first and judge.", w, false, "");
+        assert!(plain.contains("Nothing has changed") && !plain.contains("score 7") && !plain.contains("run st, don't"), "{plain}");
+        let long = once_brief("", w, false, &"x".repeat(ONCE_DIFF_CHARS + 10));
+        assert!(long.contains("[the rest of the diff was cut]"));
     }
 
     fn at(f: &Factory) -> (&str, Waiting) {

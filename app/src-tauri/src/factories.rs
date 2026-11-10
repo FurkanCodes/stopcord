@@ -217,6 +217,9 @@ pub struct Agent {
     /// The runner it uses. Empty means the factory's default.
     pub runner: String,
     pub prompt: String,
+    /// It answers once, with no terminal, files or tools: it reads the work and the diff, and its
+    /// answer is its report. Cheap, so judges and scorers can run on every item.
+    pub once: bool,
 }
 
 /// `SKILL.md`: instructions an agent reads when it needs them.

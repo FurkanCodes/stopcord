@@ -225,11 +225,17 @@ pub fn model_of(harness: Option<&Harness>, command: &str) -> Option<String> {
     None
 }
 
-/// The one-shot command for a prompt, keeping the model the start command picked.
+/// The one-shot command for a prompt, keeping the program and the model the start command picked.
 pub fn one_shot_line(harness: &Harness, command: &str, quoted_prompt: &str) -> String {
     let model = model_of(Some(harness), command).map_or(String::new(), |m| format!("{} {}", harness.model_flag, crate::shell::quote(&m)));
     // The model goes in before the prompt, so a prompt that happens to say {model} stays as it is.
     let line = if model.is_empty() { harness.one_shot.replace(" {model}", "").replace("{model}", "") } else { harness.one_shot.replace("{model}", &model) };
+    // `/opt/bin/claude` asks that claude, not whichever one is first on the PATH.
+    let program = command.split_whitespace().next().unwrap_or_default();
+    let line = match line.split_once(' ') {
+        Some((first, rest)) if program != first && Path::new(program).file_name().is_some_and(|n| n == first) => format!("{program} {rest}"),
+        _ => line,
+    };
     line.replace("{prompt}", quoted_prompt)
 }
 
@@ -295,6 +301,7 @@ mod tests {
         assert_eq!(model_of(None, "aider --model x"), None);
         assert_eq!(one_shot_line(claude, "claude --model haiku", "'hi'"), "claude --model 'haiku' -p 'hi'");
         assert_eq!(one_shot_line(claude, "claude", "'two\n  lines'"), "claude -p 'two\n  lines'");
+        assert_eq!(one_shot_line(claude, "/opt/bin/claude --model haiku", "'hi'"), "/opt/bin/claude --model 'haiku' -p 'hi'");
         let codex = find(&all, "codex").unwrap();
         assert!(one_shot_line(codex, "codex --model gpt-5", "'hi'").starts_with("codex exec --model 'gpt-5' --skip-git-repo-check"));
     }

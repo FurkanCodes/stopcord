@@ -32,6 +32,7 @@ TESTS = [
     ('oauth', []),
     ('templates', []),
     ('roles_talk', []),
+    ('answers_once', []),
     ('terminal', []),
 ]
 ON_REQUEST = [('real_answer', [])]

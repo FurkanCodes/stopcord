@@ -11,6 +11,7 @@ fn agent(id: &str, description: &str, harness: &str, prompt: &str) -> Agent {
         harness: harness.into(),
         runner: String::new(),
         prompt: prompt.into(),
+        once: false,
     }
 }
 

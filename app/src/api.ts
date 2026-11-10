@@ -111,6 +111,8 @@ export interface Agent {
   harness: string;
   runner: string;
   prompt: string;
+  /** Answers once, with no terminal, files or tools. */
+  once: boolean;
 }
 
 export interface Skill {

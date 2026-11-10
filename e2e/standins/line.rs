@@ -8,6 +8,28 @@ use std::time::{Duration, Instant};
 fn say(s: &str) { print!("{s}"); std::io::stdout().flush().ok(); }
 fn spinner(n: u64) { say(&format!("\u{2733} Thinking\u{2026} ({n}s \u{b7} esc to interrupt)\r\n")); }
 fn main() {
+    // `claude -p <prompt>` answers once: ROOT_PATH/answer.sh <role> prints the answer. The sandbox lets it
+    // write only where it runs, the factory's one-shot folder, so the prompt is logged there.
+    let args: Vec<String> = std::env::args().collect();
+    if let Some(i) = args.iter().position(|a| a == "-p") {
+        let prompt = args.get(i + 1).cloned().unwrap_or_default();
+        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open("oneshot.log") {
+            let _ = writeln!(f, "=== asked once\n{prompt}");
+        }
+        let role = prompt.lines().find_map(|l| l.trim().strip_prefix("ROLE=")).unwrap_or("unknown").trim().to_string();
+        let mut child = Command::new("/bin/sh")
+            .arg("ROOT_PATH/answer.sh")
+            .arg(&role)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        // The script reads the prompt on stdin, to answer each round differently.
+        let _ = child.stdin.take().unwrap().write_all(prompt.as_bytes());
+        let out = child.wait_with_output().unwrap();
+        say(&String::from_utf8_lossy(&out.stdout));
+        return;
+    }
     let count = Arc::new(AtomicU64::new(0));
     let text = Arc::new(Mutex::new(String::new()));
     let (c, t) = (count.clone(), text.clone());

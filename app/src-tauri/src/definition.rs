@@ -131,6 +131,9 @@ struct AgentMeta {
     harness: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     runner: String,
+    /// `once: true` answers once instead of working in a terminal.
+    #[serde(default, skip_serializing_if = "is_false")]
+    once: bool,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -358,6 +361,7 @@ pub fn load(dir: &Path) -> Result<Factory> {
             harness: meta.harness,
             runner: meta.runner,
             prompt,
+            once: meta.once,
         });
     }
 
@@ -366,7 +370,7 @@ pub fn load(dir: &Path) -> Result<Factory> {
         let file = dir.join("scorers").join(&id).join("scorer.md");
         if file.exists() {
             let (meta, prompt): (AgentMeta, String) = read_md(&file)?;
-            scorers.push(Agent { id, description: meta.description, harness: meta.harness, runner: meta.runner, prompt });
+            scorers.push(Agent { id, description: meta.description, harness: meta.harness, runner: meta.runner, prompt, once: meta.once });
         }
     }
 
@@ -617,6 +621,7 @@ fn render(f: &Factory) -> Result<BTreeMap<PathBuf, String>> {
             description: a.description.clone(),
             harness: a.harness.clone(),
             runner: a.runner.clone(),
+            once: a.once,
         };
         files.insert(
             Path::new("agents").join(&a.id).join("agent.md"),
@@ -628,6 +633,7 @@ fn render(f: &Factory) -> Result<BTreeMap<PathBuf, String>> {
             description: a.description.clone(),
             harness: a.harness.clone(),
             runner: a.runner.clone(),
+            once: a.once,
         };
         files.insert(Path::new("scorers").join(&a.id).join("scorer.md"), with_frontmatter(&meta, &a.prompt)?);
     }
@@ -852,6 +858,7 @@ mod tests {
                 harness: "codex".into(),
                 runner: "contained".into(),
                 prompt: "You build the change.".into(),
+                once: true,
             }],
             skills: vec![
                 Skill {
