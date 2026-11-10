@@ -452,7 +452,10 @@ export const api = {
   setSecret: (name: string, value: string) => invoke<void>('set_secret', { name, value }),
   /** Which of these secrets have a value. Never the values themselves. */
   secretsSet: (names: string[]) => invoke<string[]>('secrets_set', { names }),
-  setVmSecret: (name: string, value: string) => invoke<void>('set_vm_secret', { name, value }),
+  /** A VM sandbox's secret, kept for that factory and sandbox only. An empty value removes it. */
+  setVmSecret: (factory: string, runner: string, name: string, value: string) => invoke<void>('set_vm_secret', { factory, runner, name, value }),
+  /** Which of a VM sandbox's secrets have a value. Never the values themselves. */
+  vmSecretsSet: (factory: string, runner: string, names: string[]) => invoke<string[]>('vm_secrets_set', { factory, runner, names }),
   /** A ticket source's key, kept for that factory and source only. An empty value removes it. */
   setSourceKey: (factory: string, source: string, name: string, value: string) => invoke<void>('set_source_key', { factory, source, name, value }),
   /** Which of a ticket source's keys have a value. Never the values themselves. */

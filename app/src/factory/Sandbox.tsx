@@ -351,10 +351,10 @@ function SandboxCard({ index: i, factory, runner: r, info, onInfo, startOpen, on
                   id={`sb-sec-${i}`}
                   names={r.secrets ?? []}
                   onChange={(secrets) => onChange({ secrets })}
-                  load={api.secretsSet}
-                  store={api.setVmSecret}
+                  load={(names) => api.vmSecretsSet(factory.id, r.id, names)}
+                  store={(name, value) => api.setVmSecret(factory.id, r.id, name, value)}
                   suggest={harnesses.map((h) => ({ label: `${h.id} can use`, names: h.loginEnv, hint: h.loginHint }))}
-                  note="values stay in sawtooth's secrets and can't be shown again. every agent in this vm can read them, so use tokens you can cancel"
+                  note="kept for this sandbox only, and can't be shown again. every agent in it can read them, so use tokens you can cancel"
                 />
               </Row>
               <Row label="logins">

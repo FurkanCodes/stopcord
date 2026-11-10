@@ -274,6 +274,8 @@ fn test_vm(store: &Store, bridge: &Bridge, factory: &Factory, runner: &Runner, a
 fn vm_spec(store: &Store, info: &Value, factory: &Factory, dir: &Path, runner: &Runner, command: String, base: String, exclude: Vec<String>, knowledge: Option<PathBuf>, env: Vec<(String, String)>) -> vm::Spec {
     vm::Spec {
         home: vm::home_volume(store.home(), &factory.id, &runner.id),
+        factory: factory.id.clone(),
+        runner: runner.id.clone(),
         token: info["token"].as_str().unwrap_or_default().to_string(),
         dir: dir.to_path_buf(),
         store: store.home().to_path_buf(),

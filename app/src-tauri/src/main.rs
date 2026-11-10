@@ -811,11 +811,17 @@ fn secrets_set(app: State<'_, App>, names: Vec<String>) -> Vec<String> {
     names.into_iter().filter(|n| settings::get_secret(app.store.home(), n).is_some()).collect()
 }
 
-/// Checks a secret's name for a VM, then stores it like any other secret.
+/// Stores one of a VM sandbox's secrets, for that sandbox only. An empty value removes it.
 #[tauri::command(async)]
-fn set_vm_secret(app: State<'_, App>, name: String, value: String) -> Result<(), Failure> {
+fn set_vm_secret(app: State<'_, App>, factory: String, runner: String, name: String, value: String) -> Result<(), Failure> {
     vm::secret_name(&name).map_err(|why| Failure::new("secret", why))?;
-    settings::set_secret(app.store.home(), &name, value.trim()).map_err(fail)
+    settings::set_secret(app.store.home(), &settings::vm_key(&factory, &runner, &name), value.trim()).map_err(fail)
+}
+
+/// Which of a VM sandbox's secrets have a value. Never the values themselves.
+#[tauri::command(async)]
+fn vm_secrets_set(app: State<'_, App>, factory: String, runner: String, names: Vec<String>) -> Vec<String> {
+    names.into_iter().filter(|n| settings::get_secret(app.store.home(), &settings::vm_key(&factory, &runner, n)).is_some()).collect()
 }
 
 /// Stores one of a ticket source's keys. An empty value removes it.
@@ -980,6 +986,7 @@ fn main() {
             sandbox_info,
             secrets_set,
             set_vm_secret,
+            vm_secrets_set,
             set_source_key,
             source_keys_set,
             open_docker_page,

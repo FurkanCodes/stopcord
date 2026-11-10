@@ -109,11 +109,15 @@ try:
     check('setup offers the harness its login names', 'CLAUDE_CODE_OAUTH_TOKEN' in t and 'claude setup-token' in t, t[:1200])
     press('1'); time.sleep(0.5)
 
-    said = bridge("return await window.__TAURI_INTERNALS__.invoke('set_vm_secret',{name:'HTTPS_PROXY',value:'http://evil:1'}).then(()=>'stored').catch(e=>JSON.stringify(e))")
+    f = factory(); runner = f['runners'][0]['id']
+    said = bridge(f"return await window.__TAURI_INTERNALS__.invoke('set_vm_secret',{{factory:'p',runner:{json.dumps(runner)},name:'HTTPS_PROXY',value:'http://evil:1'}}).then(()=>'stored').catch(e=>JSON.stringify(e))")
     check('a secret named like the proxy is refused', 'set by Sawtooth' in said, said)
-    inv('set_vm_secret', name='E2E_TOKEN', value=SECRET)
-    check('the window learns which secrets are set, not their values', inv('secrets_set', names=['E2E_TOKEN', 'GEMINI_API_KEY']) == ['E2E_TOKEN'])
-    f = factory(); f['runners'][0]['vmImage'] = STANDIN_IMAGE; f['runners'][0]['secrets'] = ['E2E_TOKEN', 'GEMINI_API_KEY']; inv('save_factory', factory=f); time.sleep(0.5)
+    inv('set_vm_secret', factory='p', runner=runner, name='E2E_TOKEN', value=SECRET)
+    check('the window learns which secrets are set, not their values', inv('vm_secrets_set', factory='p', runner=runner, names=['E2E_TOKEN', 'GEMINI_API_KEY']) == ['E2E_TOKEN'])
+    # Sawtooth's own secrets have bare names, and a sandbox naming one gets nothing.
+    inv('set_secret', name='SLACK_BOT_TOKEN', value='e2e-bot-token-not-for-vms')
+    check("a sandbox can't ask for sawtooth's own secrets", inv('vm_secrets_set', factory='p', runner=runner, names=['SLACK_BOT_TOKEN']) == [])
+    f['runners'][0]['vmImage'] = STANDIN_IMAGE; f['runners'][0]['secrets'] = ['E2E_TOKEN', 'GEMINI_API_KEY']; inv('save_factory', factory=f); time.sleep(0.5)
     inv('feed_tickets', id='p', tickets=[{'key': 'T-1', 'title': 'a ticket', 'body': 'do the thing', 'url': ''}])
     must('T-1 reaches approval', lambda: item('T-1')['waiting'] == 'approve', 120)
     time.sleep(1)

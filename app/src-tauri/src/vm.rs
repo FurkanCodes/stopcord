@@ -60,10 +60,10 @@ pub fn secret_name(name: &str) -> Result<(), String> {
 }
 
 /// The values of a terminal's secrets, read on the Mac, and the names that have none.
-pub fn secret_values(store: &Path, names: &[String]) -> (Vec<(String, String)>, Vec<String>) {
+pub fn secret_values(spec: &Spec) -> (Vec<(String, String)>, Vec<String>) {
     let (mut found, mut missing) = (Vec::new(), Vec::new());
-    for name in names.iter().filter(|n| secret_name(n).is_ok()) {
-        match crate::settings::get_secret(store, name) {
+    for name in spec.secrets.iter().filter(|n| secret_name(n).is_ok()) {
+        match crate::settings::get_secret(&spec.store, &crate::settings::vm_key(&spec.factory, &spec.runner, name)) {
             Some(value) => found.push((name.clone(), value)),
             None => missing.push(name.clone()),
         }
@@ -550,6 +550,9 @@ pub struct Spec {
     pub secrets: Vec<String>,
     /// The volume that's the agent's home: its sandbox's, from `home_volume`.
     pub home: String,
+    /// The factory and sandbox this terminal runs in, whose secrets it gets.
+    pub factory: String,
+    pub runner: String,
 }
 
 impl Spec {
@@ -897,7 +900,7 @@ pub fn main(args: &[String]) -> i32 {
         return fail(markers.as_ref(), &why);
     }
     let image = if spec.image.trim().is_empty() { tag } else { spec.image.trim().to_string() };
-    let (secrets, missing) = secret_values(&spec.store, &spec.secrets);
+    let (secrets, missing) = secret_values(&spec);
     if !missing.is_empty() {
         say(&format!("{} has no value in sawtooth's secrets, so the VM doesn't get it", missing.join(", ")));
     }
@@ -1454,11 +1457,15 @@ mod tests {
     #[test]
     fn secrets_go_to_docker_by_name_and_their_values_stay_on_the_mac() {
         let store = tempfile::tempdir().unwrap();
-        crate::settings::set_secret(store.path(), "OPENAI_API_KEY", "sk-very-secret").unwrap();
+        crate::settings::set_secret(store.path(), &crate::settings::vm_key("f", "strangers", "OPENAI_API_KEY"), "sk-very-secret").unwrap();
+        // Sawtooth's own secret, under its bare name, as the Slack token is kept.
+        crate::settings::set_secret(store.path(), "SLACK_BOT_TOKEN", "xoxb-mine").unwrap();
         let spec = Spec {
             token: "c1".into(),
             store: store.path().into(),
-            secrets: vec!["OPENAI_API_KEY".into(), "GEMINI_API_KEY".into(), "HTTPS_PROXY".into()],
+            factory: "f".into(),
+            runner: "strangers".into(),
+            secrets: vec!["OPENAI_API_KEY".into(), "GEMINI_API_KEY".into(), "HTTPS_PROXY".into(), "SLACK_BOT_TOKEN".into()],
             ..Spec::default()
         };
         let args = agent_args(&spec, "a", "img");
@@ -1466,9 +1473,11 @@ mod tests {
         assert!(args.windows(2).any(|w| w[0] == "-e" && w[1] == "OPENAI_API_KEY"), "{line}");
         assert!(!line.contains("sk-very-secret") && !serde_json::to_string(&spec).unwrap().contains("sk-very-secret"));
         assert!(!args.windows(2).any(|w| w[0] == "-e" && w[1] == "HTTPS_PROXY"), "a reserved name is never passed: {line}");
-        let (found, missing) = secret_values(store.path(), &spec.secrets);
+        let (found, missing) = secret_values(&spec);
         assert_eq!(found, vec![("OPENAI_API_KEY".to_string(), "sk-very-secret".to_string())]);
-        assert_eq!(missing, vec!["GEMINI_API_KEY".to_string()]);
+        assert_eq!(missing, vec!["GEMINI_API_KEY".to_string(), "SLACK_BOT_TOKEN".to_string()], "a sandbox can't ask for Sawtooth's own secrets by name");
+        let other = Spec { runner: "trusted".into(), ..spec.clone() };
+        assert!(secret_values(&other).0.is_empty(), "nor for another sandbox's");
     }
 
     #[test]

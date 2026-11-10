@@ -95,6 +95,13 @@ pub fn source_key(factory: &str, source: &str, name: &str) -> String {
     format!("source.{factory}.{source}.{name}")
 }
 
+/// Where a VM sandbox's secret is kept: per factory and sandbox. A bare name would be shared with
+/// every other sandbox, and with Sawtooth's own secrets such as the Slack tokens, so an untrusted
+/// sandbox could ask for those by name.
+pub fn vm_key(factory: &str, runner: &str, name: &str) -> String {
+    format!("vm.{factory}.{runner}.{name}")
+}
+
 /// What a source's command gets in its environment: each of its keys that has a value.
 pub fn source_env(home: &Path, factory: &str, source: &str, names: &[String]) -> Vec<(String, String)> {
     names.iter().filter_map(|n| get_secret(home, &source_key(factory, source, n)).map(|v| (n.clone(), v))).collect()
