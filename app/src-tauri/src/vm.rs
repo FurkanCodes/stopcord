@@ -394,6 +394,16 @@ pub enum State {
     At { head: String, tree: String },
 }
 
+impl State {
+    /// As `sawtooth-sync state` prints it.
+    fn line(&self) -> String {
+        match self {
+            State::Empty => "empty".into(),
+            State::At { head, tree } => format!("{head} {tree}"),
+        }
+    }
+}
+
 fn state(side: &dyn Side, exclude: &[String]) -> Result<State, String> {
     let mut args = vec!["state".to_string(), "--".to_string()];
     args.extend(exclude.iter().cloned());
@@ -469,7 +479,7 @@ impl Mirror<'_> {
                 State::Empty => "-".into(),
             };
             let bundle = self.host.sync(&self.with_exclude(vec!["pack".into(), have, self.base.clone()]), None)?;
-            let mut args = vec!["unpack".to_string()];
+            let mut args = vec!["unpack".to_string(), "--expect".into(), vm.line()];
             if !self.branch.is_empty() {
                 args.extend(["--branch".into(), self.branch.clone()]);
             }
@@ -486,7 +496,7 @@ impl Mirror<'_> {
         }
         if last.as_ref() == Some(&host) {
             let bundle = self.vm.sync(&self.with_exclude(vec!["pack".into(), host_head.clone(), String::new()]), None)?;
-            let mut args = vec!["unpack".to_string()];
+            let mut args = vec!["unpack".to_string(), "--expect".into(), host.line()];
             if !self.throwaway {
                 args.push("--ff-only".into());
             }
@@ -639,6 +649,7 @@ pub fn knowledge_back(vm: &dyn Side, kb: &Path, given: &Path, names: &[String]) 
 /// `knowledge_back` for a terminal's VM. Nothing when the factory has no knowledge base.
 pub fn knowledge(spec: &Spec, docker: &Path) -> Result<bool, String> {
     let _held = hold(&spec.store, &spec.dir)?;
+    let _paused = Paused::agent_of(spec, docker);
     knowledge_held(spec, docker)
 }
 
@@ -666,9 +677,35 @@ fn hold(store: &Path, dir: &Path) -> Result<std::fs::File, String> {
     Ok(file)
 }
 
+/// A terminal's agent container, frozen until this is dropped, so what a sync reads from the VM
+/// is what was there when it looked. An agent keeps running after it says it's done.
+struct Paused {
+    docker: PathBuf,
+    name: String,
+    paused: bool,
+}
+
+impl Paused {
+    /// Nothing when the container isn't running, as before it starts or after it ends.
+    fn agent_of(spec: &Spec, docker: &Path) -> Paused {
+        let name = agent(spec);
+        let paused = run(docker, &["pause", &name]).is_ok();
+        Paused { docker: docker.to_path_buf(), name, paused }
+    }
+}
+
+impl Drop for Paused {
+    fn drop(&mut self) {
+        if self.paused {
+            let _ = run(&self.docker, &["unpause", &self.name]);
+        }
+    }
+}
+
 /// Keeps a terminal's folder and its VM copy in step, whichever way that goes.
 pub fn sync(spec: &Spec, docker: &Path) -> Result<Synced, String> {
     let _held = hold(&spec.store, &spec.dir)?;
+    let _paused = Paused::agent_of(spec, docker);
     sync_held(spec, docker)
 }
 
@@ -1145,6 +1182,80 @@ mod tests {
         assert_eq!(p.sync().unwrap(), Synced::Took);
         assert_eq!(read(&p.h("b.txt")), "from the vm\n");
         assert!(p.h("AGENTS.md").is_symlink());
+    }
+
+    /// A side where someone edits the folder just before work is unpacked into it.
+    struct EditedMidway<'a> {
+        side: Local<'a>,
+        edit: &'a dyn Fn(),
+    }
+
+    impl Side for EditedMidway<'_> {
+        fn sync(&self, args: &[String], input: Option<&[u8]>) -> Result<Vec<u8>, String> {
+            if args.first().is_some_and(|a| a == "unpack") {
+                (self.edit)();
+            }
+            self.side.sync(args, input)
+        }
+    }
+
+    fn mirror<'a>(p: &'a Pair, host: &'a dyn Side, vm: &'a dyn Side) -> Mirror<'a> {
+        Mirror { host, vm, record: p.records.path().join("r.json"), branch: branch_of(p.host.path()), base: String::new(), exclude: vec!["AGENTS.md".into()], throwaway: false }
+    }
+
+    #[test]
+    fn an_edit_on_the_mac_during_a_sync_is_not_overwritten() {
+        let p = Pair::new();
+        p.sync().unwrap();
+        std::fs::write(p.v("b.txt"), "from the vm\n").unwrap();
+        p.commit_in_vm("vm work");
+        let edit = || std::fs::write(p.h("a.txt"), "typed during the sync\n").unwrap();
+        let host = EditedMidway { side: Local { dir: p.host.path() }, edit: &edit };
+        let vm = Local { dir: p.vm.path() };
+        let why = mirror(&p, &host, &vm).sync().unwrap_err();
+        assert!(why.contains("changed during the sync"), "{why}");
+        assert_eq!(read(&p.h("a.txt")), "typed during the sync\n");
+        assert!(!p.h("b.txt").exists(), "the vm's work didn't land on top of it");
+        assert!(git(p.host.path(), &["for-each-ref", "refs/sawtooth"]).unwrap().is_empty(), "no refs left behind");
+        assert!(p.sync().unwrap_err().contains("both"), "and it's now a change on both sides, as it really is");
+    }
+
+    #[test]
+    fn a_write_in_the_vm_during_a_sync_is_not_overwritten() {
+        let p = Pair::new();
+        p.sync().unwrap();
+        std::fs::write(p.h("plan.md"), "the plan\n").unwrap();
+        let edit = || std::fs::write(p.v("a.txt"), "the agent was still writing\n").unwrap();
+        let host = Local { dir: p.host.path() };
+        let vm = EditedMidway { side: Local { dir: p.vm.path() }, edit: &edit };
+        let why = mirror(&p, &host, &vm).sync().unwrap_err();
+        assert!(why.contains("changed during the sync"), "{why}");
+        assert_eq!(read(&p.v("a.txt")), "the agent was still writing\n");
+        assert!(!p.v("plan.md").exists());
+    }
+
+    /// Needs Docker, so it's run by name with the other Docker test.
+    #[test]
+    #[ignore]
+    fn docker_an_agent_is_frozen_while_its_folder_syncs() {
+        let docker = available().unwrap();
+        let store = tempfile::tempdir().unwrap();
+        let tag = ensure_image(&docker, store.path(), true).unwrap();
+        let spec = Spec { token: format!("pause-test-{}", std::process::id()), store: store.path().to_path_buf(), ..Spec::default() };
+        let name = agent(&spec);
+        let started = run(&docker, &["run", "-d", "--rm", "--name", &name, &tag, "sleep", "60"]);
+        let state = || run(&docker, &["inspect", "-f", "{{.State.Paused}}", &name]).unwrap_or_default().trim().to_string();
+        let during = {
+            let _paused = Paused::agent_of(&spec, &docker);
+            state()
+        };
+        let after = state();
+        let _ = run(&docker, &["rm", "-f", &name]);
+        started.unwrap();
+        assert_eq!(during, "true");
+        assert_eq!(after, "false");
+        let gone = Paused::agent_of(&spec, &docker);
+        assert!(!gone.paused, "a container that isn't there isn't paused");
     }
 
     #[test]

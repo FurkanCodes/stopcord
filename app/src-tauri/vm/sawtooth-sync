@@ -11,9 +11,10 @@
 #       branch. Commits BASE already has are left out when this side has BASE. A bundle drops a
 #       branch the other side already has, but never the state, so the state's parent is the
 #       commit to be on.
-#   sawtooth-sync unpack [--ff-only] [--branch NAME] [--set-base NAME] -- EXCLUDED... < bundle
+#   sawtooth-sync unpack [--ff-only] [--expect STATE] [--branch NAME] [--set-base NAME] -- EXCLUDED... < bundle
 #       Makes the folder exactly what the bundle holds. With --ff-only the commit has to follow
-#       on from the folder's own, so history can't be rewritten under it.
+#       on from the folder's own, so history can't be rewritten under it. With --expect, the
+#       folder has to still be at STATE, as `state` printed it, or nothing changes.
 #   sawtooth-sync knowledge NAME < content
 #       Writes a plain copy of the knowledge base, kept out of git, unless the repo tracks NAME.
 #   sawtooth-sync read-knowledge NAME
@@ -133,10 +134,11 @@ undo() {
 forget_in() { g for-each-ref --format='%(refname)' refs/sawtooth/in/ | while read -r r; do g update-ref -d "$r"; done; }
 
 unpack() {
-    ff= branch= setbase=
+    ff= branch= setbase= expect=
     while [ $# -gt 0 ]; do
         case $1 in
             --ff-only) ff=1 ;;
+            --expect) expect=$2; shift ;;
             --branch) branch=$2; shift ;;
             --set-base) setbase=$2; shift ;;
             --) shift; break ;;
@@ -155,6 +157,13 @@ unpack() {
         forget_in
         echo "sawtooth-sync: its history was rewritten, so it doesn't follow on from this folder" >&2
         exit 3
+    fi
+    # The sync decided which way to go from this folder's state a moment ago. If someone has
+    # changed it since, switching would throw their edit away.
+    if [ -n "$expect" ] && [ "$(state -- "$@")" != "$expect" ]; then
+        forget_in
+        echo "sawtooth-sync: the folder changed during the sync, so it wasn't overwritten" >&2
+        exit 4
     fi
     undo_head= undo_branch= undo_state=
     if has_head; then
