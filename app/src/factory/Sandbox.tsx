@@ -47,6 +47,68 @@ function Quiet({ children }: { children: ReactNode }) {
   return <span className="t-muted" style={{ fontSize: 12, padding: '2px 8px' }}>{children}</span>;
 }
 
+/** What to do when Docker isn't ready: install it, or start it, then look again. */
+function DockerHelp({ docker, onInfo }: { docker: SandboxInfo['docker']; onInfo: (info: SandboxInfo) => void }) {
+  const [said, setSaid] = useState('');
+  const [busy, setBusy] = useState(false);
+  const check = () => api.sandboxInfo().then(onInfo, showProblem);
+  const act = async (what: () => Promise<unknown>, after: string) => {
+    setBusy(true);
+    try {
+      await what();
+      setSaid(after);
+    } catch (e) {
+      showProblem(e);
+    } finally {
+      setBusy(false);
+    }
+  };
+  // Docker Desktop takes a while to answer once started, so look again until it does.
+  useEffect(() => {
+    if (!said.startsWith('starting')) return;
+    let tries = 0;
+    const t = setInterval(() => {
+      tries += 1;
+      void api.sandboxInfo().then((i) => {
+        if (i.docker.ok || tries > 30) {
+          clearInterval(t);
+          onInfo(i);
+          if (!i.docker.ok) setSaid('docker still isn\'t answering. open it from applications, then check again');
+        }
+      });
+    }, 3000);
+    return () => clearInterval(t);
+  }, [said]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 6, padding: '0 8px' }} data-docker-help={docker.state}>
+      <span className="t-red">{docker.why.toLowerCase()}</span>
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+        {docker.state === 'missing' && docker.homebrew && (
+          <Key size="xs" disabled={busy} onClick={() => void act(api.installDocker, 'installing in a terminal called "install docker", under terminals. it may ask for your password. docker desktop opens when it\'s done')}>
+            install with homebrew
+          </Key>
+        )}
+        {docker.state === 'missing' && (
+          <Key size="xs" onClick={() => void act(api.openDockerPage, `opened ${docker.installPage}`)}>
+            open the install page
+          </Key>
+        )}
+        {docker.state === 'stopped' && docker.mac && (
+          <Key size="xs" disabled={busy} onClick={() => void act(api.startDocker, 'starting docker desktop. this can take a minute')}>
+            start docker
+          </Key>
+        )}
+        <Key size="xs" onClick={() => void check()}>
+          check again
+        </Key>
+      </div>
+      {said && <Quiet>{said}</Quiet>}
+      {docker.state === 'missing' && docker.mac && <Quiet>docker desktop is free for personal use and small companies. bigger companies need a paid plan. orbstack and colima also give a docker command, though sawtooth has only been tried with docker desktop</Quiet>}
+    </div>
+  );
+}
+
 const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
 /** A VM's secrets: names in the factory, values in sawtooth's secrets, which the window can set but never read. */
@@ -260,7 +322,7 @@ function SandboxCard({ index: i, factory, runner: r, info, onInfo, startOpen, on
 
           {vm && (
             <Group title="the vm">
-              {info && !info.docker.ok && <span className="t-red" style={{ padding: '0 8px' }}>{info.docker.why}</span>}
+              {info && !info.docker.ok && <DockerHelp docker={info.docker} onInfo={onInfo} />}
               <Row label="sees">
                 <Quiet>a copy of its folder, made fresh in a docker volume. none of your mac's files, docker, or the mac itself</Quiet>
                 <Quiet>its work comes back as git commits and changes when it says it's done. a commit that rewrites history doesn't</Quiet>

@@ -9,6 +9,7 @@ planner) echo "1. Make the change." > PLAN.md; echo evil > planner-evil.txt; git
 builder)
   date +%s >> work.txt
   st note "builder-saw users=[$(ls /Users 2>&1 | head -1)] docker=$(test -S /var/run/docker.sock && echo yes || echo no) home=$(ls ~/.ssh 2>&1 | head -1) token-len=${#E2E_TOKEN} missing=[${GEMINI_API_KEY-unset}]"
+  echo "- learned in the vm: work.txt holds the time" >> AGENTS.md
   git add -A; git commit --no-verify -qm "work"; st done "made the change" ;;
 reviewer)
   st note "reviewer-saw head=$(git rev-parse HEAD) branch=$(git branch --show-current)"
@@ -76,6 +77,9 @@ try:
     open(R + '/package.json', 'w').write(json.dumps({'name': 'x', 'version': '1.0.0', 'scripts': {'test': 'true'}}))
     open(R + '/a.txt', 'w').write('x\n'); sh('git', 'add', '-A', cwd=R); sh('git', 'commit', '-qm', 'base', cwd=R)
     build_images()
+    # One of sawtooth's old images, and one of a person's own, to see which the cleanup takes.
+    docker('tag', 'sawtooth-vm:latest', 'sawtooth-vm:000000000000')
+    docker('tag', 'sawtooth-vm:latest', 'sawtooth-vm:mine')
     launch()
     info = inv('sandbox_info')
     check('the app finds docker and its image', info['docker']['ok'] and info['docker']['built'], info['docker'])
@@ -93,6 +97,9 @@ try:
     for name in ('sees your mac\'s home folder', 'reaches the mac', 'goes around the web filter', 'reaches a site on no list', 'reaches api.anthropic.com, which it needs', 'reports back to sawtooth'):
         check(f'the vm probe tries: {name}', name in c, list(c))
     check('the probe leaves no containers', not containers(), containers())
+    tags = docker('image', 'ls', 'sawtooth-vm', '--format', '{{.Tag}}').stdout.split()
+    check("sawtooth's old images go and a person's own stay", '000000000000' not in tags and 'mine' in tags, tags)
+    docker('image', 'rm', 'sawtooth-vm:mine')
     time.sleep(1); open_work(); press('6'); time.sleep(1)
     bridge("const k=document.querySelector('[data-sandbox] button[aria-expanded]');if(k.getAttribute('aria-expanded')!=='true')k.click();return 1"); time.sleep(0.5)
     bridge("[...document.querySelectorAll('[data-sandbox] h4')].find(h=>h.innerText==='the vm').scrollIntoView({block:'start'});return 1"); time.sleep(0.4); shot('vm-settings')
@@ -127,6 +134,10 @@ try:
     check("the secret is in no process's command line", SECRET not in shown and 'E2E_TOKEN' in shown, [l for l in shown.splitlines() if 'E2E_TOKEN' in l][:2])
     check('the secret is in no run log', not any(SECRET in r for r in runs(200)))
     check('the run log says when work came back', any('brought back the work from the VM' in r for r in runs()), runs(20))
+    kb = open(factory()['knowledgePath']).read()
+    check("the vm's knowledge-base note came back", 'learned in the vm: work.txt holds the time' in kb, kb[-300:])
+    check('and it waits for review', factory()['knowledgeChanged'] and any('waiting for review' in r for r in runs()), runs(20))
+    check('the note came back once', kb.count('learned in the vm') == 1, kb[-300:])
     worktree = item('T-1')['worktree']
     copies = [os.path.join(dp, d) for dp, ds, _ in os.walk(f'{H}/worktrees/p/.copies') for d in ds if os.path.isdir(os.path.join(dp, d, '.git'))]
     ours = [volume_of(p) for p in [worktree] + copies]
@@ -144,6 +155,30 @@ try:
     bridge("document.querySelector('[data-secrets]').scrollIntoView({block:'center'});return 1"); time.sleep(0.4); shot('vm-secrets')
     rows = bridge("return document.querySelector('[data-secrets]').innerText")
     check('setup shows which secrets have a value', 'E2E_TOKEN' in rows and '\nset' in rows and 'no value' in rows and SECRET not in rows, rows)
+
+    # With no Docker, setup says how to get it, and a VM terminal won't start.
+    stop()
+    env['SAWTOOTH_DOCKER'] = '/nonexistent/docker'
+    launch(); time.sleep(1); open_work(); press('6'); time.sleep(1)
+    bridge("const k=document.querySelector('[data-sandbox] button[aria-expanded]');if(k.getAttribute('aria-expanded')!=='true')k.click();return 1"); time.sleep(0.6)
+    bridge("document.querySelector('[data-docker-help]')?.scrollIntoView({block:'center'});return 1"); time.sleep(0.4); shot('vm-no-docker')
+    help_ = bridge("const h=document.querySelector('[data-docker-help]');return h?h.dataset.dockerHelp+' | '+h.innerText:''")
+    print('no docker:', help_[:300], flush=True)
+    check('setup says docker is missing and how to get it', help_.startswith('missing') and "isn't installed" in help_ and 'open the install page' in help_ and 'check again' in help_, help_)
+    has_brew = os.path.exists('/opt/homebrew/bin/brew') or os.path.exists('/usr/local/bin/brew')
+    check('it offers homebrew when there is homebrew', ('install with homebrew' in help_) == has_brew, help_)
+    said = bridge("return await window.__TAURI_INTERNALS__.invoke('start_terminal',{factoryId:'p',name:'no docker'}).then(()=>'started').catch(e=>JSON.stringify(e))")
+    check("a vm terminal won't start without docker, and says why", "isn't installed" in said, said)
+
+    # Installed but not answering: a docker whose engine is down.
+    stop()
+    open(ROOT + '/bin/docker', 'w').write('#!/bin/sh\necho "Cannot connect to the Docker daemon" >&2\nexit 1\n'); os.chmod(ROOT + '/bin/docker', 0o755)
+    env['SAWTOOTH_DOCKER'] = ROOT + '/bin/docker'
+    launch(); time.sleep(1); open_work(); press('6'); time.sleep(1)
+    bridge("const k=document.querySelector('[data-sandbox] button[aria-expanded]');if(k.getAttribute('aria-expanded')!=='true')k.click();return 1"); time.sleep(0.6)
+    help_ = bridge("const h=document.querySelector('[data-docker-help]');return h?h.dataset.dockerHelp+' | '+h.innerText:''")
+    print('stopped docker:', help_[:200], flush=True)
+    check('setup says docker is stopped and offers to start it', help_.startswith('stopped') and "isn't running" in help_ and 'start docker' in help_ and 'install with homebrew' not in help_ and 'open the install page' not in help_, help_)
     print('EXIT', FAILS, flush=True)
 except SystemExit as e:
     print('STOPPED', e, FAILS, flush=True)

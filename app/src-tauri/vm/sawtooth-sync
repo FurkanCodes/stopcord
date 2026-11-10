@@ -16,6 +16,9 @@
 #       on from the folder's own, so history can't be rewritten under it.
 #   sawtooth-sync knowledge NAME < content
 #       Writes a plain copy of the knowledge base, kept out of git, unless the repo tracks NAME.
+#   sawtooth-sync read-knowledge NAME
+#       "copy" and that copy as it is now, or "none" when NAME isn't a plain copy: tracked, a link,
+#       missing, or too big to be notes.
 #
 # EXCLUDED names belong to Sawtooth, such as knowledge-base links: they never cross and are
 # never touched. Hooks never run, here or on the Mac.
@@ -137,6 +140,14 @@ knowledge() {
     grep -qxF "/$name" "$exclude" 2>/dev/null || echo "/$name" >> "$exclude"
 }
 
+read_knowledge() {
+    name=$1
+    if [ -L "$name" ] || [ ! -f "$name" ] || [ -n "$(g ls-files -- "$name")" ]; then echo none; return; fi
+    if [ "$(wc -c < "$name")" -gt 1048576 ]; then echo none; return; fi
+    echo copy
+    cat "$name"
+}
+
 cmd=${1-}
 [ $# -gt 0 ] && shift
 case $cmd in
@@ -144,5 +155,6 @@ case $cmd in
     pack) pack "$@" ;;
     unpack) unpack "$@" ;;
     knowledge) knowledge "$@" ;;
+    read-knowledge) read_knowledge "$@" ;;
     *) echo "usage: sawtooth-sync state|pack|unpack|knowledge ..." >&2; exit 2 ;;
 esac

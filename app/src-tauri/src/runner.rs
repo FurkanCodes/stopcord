@@ -256,6 +256,7 @@ pub fn test(store: &Store, bridge: &Bridge, factory: &Factory, runner: &Runner, 
 fn test_vm(store: &Store, bridge: &Bridge, factory: &Factory, runner: &Runner, at: u64) -> Result<TestReport, Failure> {
     let docker = vm::available().map_err(fail)?;
     let tag = vm::ensure_image(&docker, store.home(), true).map_err(fail)?;
+    vm::prune_old(&docker);
     let (harnesses, _) = harness::load(&store.home().join("harnesses"));
     let harness = harness::find(&harnesses, &factory.defaults.harness);
     let site = harness.and_then(|h| h.domains.first()).map(|d| format!("api.{d}")).unwrap_or_default();
@@ -302,6 +303,26 @@ fn git_identity(dir: &Path) -> Vec<(String, String)> {
     env
 }
 
+/// Whether the VM runner can work here, and what the window can offer to fix it.
+fn docker_info() -> Value {
+    let state = vm::docker_state();
+    let (name, built) = match &state {
+        vm::Docker::Ready(docker) => ("ready", vm::has_image(docker, &vm::image())),
+        vm::Docker::Stopped(_) => ("stopped", false),
+        vm::Docker::Missing => ("missing", false),
+    };
+    json!({
+        "ok": name == "ready",
+        "state": name,
+        "why": vm::why(&state),
+        "image": vm::LATEST,
+        "built": built,
+        "installPage": vm::install_page(),
+        "homebrew": vm::homebrew().is_some(),
+        "mac": cfg!(target_os = "macos"),
+    })
+}
+
 /// What the settings screen shows that isn't in a factory: built-in blocks, locked escapes, what
 /// listed reads always include, and the sites each harness needs.
 pub fn info(store: &Store) -> Value {
@@ -324,10 +345,7 @@ pub fn info(store: &Store) -> Value {
             .iter()
             .map(|h| json!({ "id": h.id, "sites": h.domains, "quiet": h.quiet_domains, "ownSandbox": !h.own_sandbox_args.trim().is_empty(), "loginEnv": h.login_env, "loginHint": h.login_hint }))
             .collect::<Vec<_>>(),
-        "docker": match vm::available() {
-            Ok(docker) => json!({ "ok": true, "why": "", "image": vm::LATEST, "built": vm::has_image(&docker, &vm::image()) }),
-            Err(why) => json!({ "ok": false, "why": why, "image": vm::LATEST, "built": false }),
-        },
+        "docker": docker_info(),
     })
 }
 

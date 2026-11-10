@@ -24,7 +24,7 @@ The probe behind "test this sandbox" checks these from inside the container, wit
 - Both changed: nothing is overwritten, and the person is told.
 - No record: the VM's copy can't be shown to come from this folder, so it's replaced.
 
-Work crosses as a git bundle. Commits coming back must follow on from the folder's own, except in a throwaway copy, where only kept files go anywhere. Fetches run with `fsck`, which refuses a tree containing `.git`, so a VM can't plant a hook on the Mac. Sawtooth's own files, the knowledge-base links, never cross. The VM gets a plain copy of the knowledge base instead.
+Work crosses as a git bundle. Commits coming back must follow on from the folder's own, except in a throwaway copy, where only kept files go anywhere. Fetches run with `fsck`, which refuses a tree containing `.git`, so a VM can't plant a hook on the Mac. Sawtooth's own files, the knowledge-base links, never cross. The VM gets a plain copy of the knowledge base instead. What agents write to that copy comes back on every sync. It's merged with what changed on the Mac meanwhile, keeping every line either side added (`git merge-file --union`), into the factory's knowledge file. The knowledge review then shows it like any agent's edit. A link, a file the project tracks, or anything over 1 MB isn't read back.
 
 The engine syncs when an agent says it's done, when a person treats work as done, before the next round in the same terminal, and when a terminal that isn't on the line ends. Volumes and containers go when the work ends.
 
@@ -40,11 +40,17 @@ The engine syncs when an agent says it's done, when a person treats work as done
 
 Copying a harness's login from the Mac doesn't work generally. Each harness keeps it somewhere else (Claude Code in the Keychain, Codex in a file), and most logins renew by cancelling the old key, so a copy shared with the Mac logs one side out. What every harness accepts is an environment variable, so a VM gets its own token or key, which can be cancelled alone. The profile's suggested names are data, so a harness Sawtooth doesn't know works by typing its variable's name.
 
+## Docker
+
+Sawtooth doesn't install Docker. When it's missing, the sandbox settings say so and offer Docker's install page, or, on a Mac with Homebrew, `brew install --cask docker` in a terminal the person watches. When it's installed but stopped, they offer to start it and keep looking until it answers. `SAWTOOTH_DOCKER` names the `docker` program outright.
+
+The image is built on first use and named by a hash of its files. After a build, older images of Sawtooth's own, named by a hash, are removed, but not forcibly, so one a running container uses stays. `latest` and a person's own tags are never touched.
+
 ## Limits
 
 - On Linux, Docker shares the kernel, so the wall is thinner than a real VM. The Linux relay, which mounts the filter's and report's Unix sockets, hasn't been run.
 - Any agent in a VM can read the secrets it's given, since its harness needs them. Use a token made for the VM, which can be cancelled alone. Keeping keys out of the VM entirely would mean the filter adding them to requests, which needs it to open TLS.
 - Every VM agent shares `sawtooth-home`. An agent could change a harness's settings there for later agents. They're still inside the VM.
-- The knowledge base is read-only in the VM: what an agent writes to it there doesn't come back.
+- A knowledge-base edit from the VM is live for every agent before a person reviews it, as any agent's edit is. For untrusted work that's a way to reach trusted agents, and closing it means agents reading only the approved copy.
 - The image installs Claude Code, Codex, opencode and Gemini CLI from npm. A real harness has only been started with `--version`. Logging in and working inside the VM have been tested only with a stand-in agent.
 - Codex's browser login listens on localhost inside the container, which the Mac's browser can't reach. Use its device login or an API key.

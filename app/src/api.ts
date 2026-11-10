@@ -82,7 +82,7 @@ export interface SandboxInfo {
   alwaysReads: string[];
   harnesses: { id: string; sites: string[]; quiet: string[]; ownSandbox: boolean; loginEnv: string[]; loginHint: string }[];
   /** Whether the VM runner can work here, and what to do if not. */
-  docker: { ok: boolean; why: string; image: string; built: boolean };
+  docker: { ok: boolean; state: 'ready' | 'stopped' | 'missing'; why: string; image: string; built: boolean; installPage: string; homebrew: boolean; mac: boolean };
 }
 
 export interface SandboxCheck {
@@ -449,6 +449,10 @@ export const api = {
   /** Which of these secrets have a value. Never the values themselves. */
   secretsSet: (names: string[]) => invoke<string[]>('secrets_set', { names }),
   setVmSecret: (name: string, value: string) => invoke<void>('set_vm_secret', { name, value }),
+  openDockerPage: () => invoke<void>('open_docker_page'),
+  startDocker: () => invoke<void>('start_docker'),
+  /** Installs Docker Desktop with Homebrew in a terminal of its own. */
+  installDocker: () => invoke<unknown>('install_docker'),
   harnesses: () => invoke<HarnessProfile[]>('harnesses'),
   saveHarness: (harness: HarnessProfile) => invoke<void>('save_harness', { harness }),
   nearbyFolders: () => invoke<FolderSuggestion[]>('nearby_folders'),

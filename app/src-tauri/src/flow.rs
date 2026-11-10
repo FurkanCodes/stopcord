@@ -374,11 +374,19 @@ impl Engine {
         let Some(spec) = t.as_ref().and_then(crate::vm::spec_of) else { return Ok(()) };
         let docker = crate::vm::available()?;
         let what = match crate::vm::sync(&spec, &docker)? {
-            crate::vm::Synced::Took => "brought back the work from the VM",
-            crate::vm::Synced::Sent => "copied the work into the VM",
-            crate::vm::Synced::Same => return Ok(()),
+            crate::vm::Synced::Took => Some("brought back the work from the VM"),
+            crate::vm::Synced::Sent => Some("copied the work into the VM"),
+            crate::vm::Synced::Same => None,
         };
-        self.log(factory, Run::new("vm", format!("{what} for {}", spec.dir.display())).terminal(Some(terminal)).by("engine"));
+        if let Some(what) = what {
+            self.log(factory, Run::new("vm", format!("{what} for {}", spec.dir.display())).terminal(Some(terminal)).by("engine"));
+        }
+        // The knowledge base isn't in git, so it comes back on its own, into the review.
+        match crate::vm::knowledge(&spec, &docker) {
+            Ok(true) => self.log(factory, Run::new("knowledge", "An agent in the VM changed the knowledge base, so the edit is waiting for review").terminal(Some(terminal)).by("engine")),
+            Ok(false) => {}
+            Err(why) => self.log(factory, Run::new("knowledge", format!("Knowledge-base edits stayed in the VM: {why}")).ok(false).terminal(Some(terminal)).by("engine")),
+        }
         Ok(())
     }
 

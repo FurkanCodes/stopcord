@@ -126,8 +126,16 @@ fn agent(spec: &Spec) -> String {
 }
 
 /// Docker's command line tool. An app started from the Dock has a short PATH, so the usual
-/// places are looked at too.
+/// places are looked at too. `SAWTOOTH_DOCKER` names it outright.
 pub fn docker() -> Option<PathBuf> {
+    find_docker(std::env::var_os("SAWTOOTH_DOCKER"))
+}
+
+fn find_docker(own: Option<std::ffi::OsString>) -> Option<PathBuf> {
+    if let Some(own) = own {
+        let own = PathBuf::from(own);
+        return own.is_file().then_some(own);
+    }
     let mut places: Vec<PathBuf> = std::env::var_os("PATH").map(|p| std::env::split_paths(&p).collect()).unwrap_or_default();
     if let Some(home) = std::env::var_os("HOME") {
         places.push(PathBuf::from(home).join(".docker/bin"));
@@ -136,14 +144,65 @@ pub fn docker() -> Option<PathBuf> {
     places.into_iter().map(|p| p.join("docker")).find(|p| p.is_file())
 }
 
+/// Whether the VM runner can work here.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Docker {
+    Ready(PathBuf),
+    /// Installed, but its engine isn't answering.
+    Stopped(PathBuf),
+    Missing,
+}
+
+pub fn docker_state() -> Docker {
+    let Some(docker) = docker() else { return Docker::Missing };
+    let out = Command::new(&docker).args(["version", "--format", "{{.Server.Version}}"]).output();
+    if out.is_ok_and(|o| o.status.success()) { Docker::Ready(docker) } else { Docker::Stopped(docker) }
+}
+
+/// What a person has to do when Docker isn't ready, in a sentence.
+pub fn why(state: &Docker) -> String {
+    match state {
+        Docker::Ready(_) => String::new(),
+        Docker::Stopped(_) if cfg!(target_os = "macos") => "Docker is installed but isn't running. Start Docker Desktop, then try again.".into(),
+        Docker::Stopped(_) => "Docker is installed but its engine isn't running. Start it, for example with `sudo systemctl start docker`, then try again.".into(),
+        Docker::Missing if cfg!(target_os = "macos") => "The VM runner needs Docker, and it isn't installed. Docker Desktop is the usual way on a Mac.".into(),
+        Docker::Missing => "The VM runner needs Docker Engine, and it isn't installed.".into(),
+    }
+}
+
 /// Docker, if it's installed and running. Otherwise what the person has to do.
 pub fn available() -> Result<PathBuf, String> {
-    let docker = docker().ok_or("The VM runner needs Docker: Docker Desktop on a Mac, or Docker Engine on Linux. It isn't installed.")?;
-    let out = Command::new(&docker).args(["version", "--format", "{{.Server.Version}}"]).output();
-    match out {
-        Ok(o) if o.status.success() => Ok(docker),
-        _ => Err("Docker is installed but isn't running. Start Docker Desktop, then try again.".to_string()),
+    match docker_state() {
+        Docker::Ready(docker) => Ok(docker),
+        other => Err(why(&other)),
     }
+}
+
+/// Where to get Docker for this system.
+pub fn install_page() -> &'static str {
+    if cfg!(target_os = "macos") { "https://docs.docker.com/desktop/setup/install/mac-install/" } else { "https://docs.docker.com/engine/install/" }
+}
+
+/// Homebrew, which can install Docker Desktop on a Mac, if it's here.
+pub fn homebrew() -> Option<PathBuf> {
+    if !cfg!(target_os = "macos") {
+        return None;
+    }
+    ["/opt/homebrew/bin/brew", "/usr/local/bin/brew"].iter().map(PathBuf::from).find(|p| p.is_file())
+}
+
+/// Sawtooth's images other than the current one, by tag. Only its own: a tag named by a hash,
+/// never latest or a tag a person made.
+fn stale_tags(tags: &[String], current: &str) -> Vec<String> {
+    let current = current.strip_prefix("sawtooth-vm:").unwrap_or(current);
+    tags.iter().filter(|t| t.as_str() != current && t.len() == 12 && t.chars().all(|c| c.is_ascii_hexdigit())).cloned().collect()
+}
+
+/// Removes Sawtooth's old images, which pile up as it changes. An image still in use stays,
+/// since nothing here forces. Returns the tags that went.
+pub fn prune_old(docker: &Path) -> Vec<String> {
+    let tags: Vec<String> = run(docker, &["image", "ls", "sawtooth-vm", "--format", "{{.Tag}}"]).unwrap_or_default().lines().map(str::to_string).collect();
+    stale_tags(&tags, &image()).into_iter().filter(|t| run(docker, &["image", "rm", &format!("sawtooth-vm:{t}")]).is_ok()).collect()
 }
 
 fn run(docker: &Path, args: &[&str]) -> Result<String, String> {
@@ -185,6 +244,7 @@ pub fn ensure_image(docker: &Path, store_home: &Path, quiet: bool) -> Result<Str
     if !ok {
         return Err("building the VM image failed. Docker's output is above.".to_string());
     }
+    prune_old(docker);
     Ok(tag)
 }
 
@@ -414,6 +474,90 @@ pub fn record(store: &Path, dir: &Path) -> PathBuf {
     store.join("vm").join("records").join(format!("{}.json", key(dir)))
 }
 
+/// The knowledge base as a folder's VM was last given it, to tell what agents there changed.
+fn knowledge_given(store: &Path, dir: &Path) -> PathBuf {
+    store.join("vm").join("records").join(format!("{}.knowledge.md", key(dir)))
+}
+
+fn write_atomically(path: &Path, text: &str) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    let tmp = path.with_extension("sawtooth-write");
+    std::fs::write(&tmp, text).and_then(|_| std::fs::rename(&tmp, path)).map_err(|e| format!("couldn't write {}: {e}", path.display()))
+}
+
+/// Gives each of Sawtooth's names in the VM a plain copy of the knowledge base, and remembers what it gave.
+pub fn knowledge_in(vm: &dyn Side, kb: &Path, given: &Path, names: &[String]) -> Result<(), String> {
+    let text = std::fs::read_to_string(kb).map_err(|e| format!("couldn't read the knowledge base: {e}"))?;
+    for name in names {
+        vm.sync(&["knowledge".to_string(), name.clone()], Some(text.as_bytes()))?;
+    }
+    write_atomically(given, &text)
+}
+
+/// Three lines of history for one file: ours changed it, theirs changed it, both from base. Every
+/// line either side added is kept, since the knowledge base is notes and losing one is worse than
+/// a repeat. A person reviews the result anyway.
+fn merge_notes(ours: &str, base: &str, theirs: &str) -> Result<String, String> {
+    if ours == base || ours == theirs {
+        return Ok(theirs.to_string());
+    }
+    if theirs == base {
+        return Ok(ours.to_string());
+    }
+    let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
+    let dir = std::env::temp_dir().join(format!("sawtooth-merge-{}-{nanos}", std::process::id()));
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let (o, b, t) = (dir.join("ours"), dir.join("base"), dir.join("theirs"));
+    for (path, text) in [(&o, ours), (&b, base), (&t, theirs)] {
+        std::fs::write(path, text).map_err(|e| e.to_string())?;
+    }
+    let out = Command::new("git").args(["merge-file", "-p", "--union"]).arg(&o).arg(&b).arg(&t).output();
+    let _ = std::fs::remove_dir_all(&dir);
+    let out = out.map_err(|e| format!("couldn't run git: {e}"))?;
+    // It exits with the number of conflicts, which --union settles, or below zero on an error.
+    if out.status.code().is_none_or(|c| !(0..=127).contains(&c)) {
+        return Err(format!("couldn't merge the knowledge base: {}", String::from_utf8_lossy(&out.stderr).trim()));
+    }
+    Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+}
+
+/// Brings back what agents in the VM wrote to the knowledge base, merged with what changed on the
+/// Mac meanwhile, into the file the knowledge review watches. Returns whether anything came back.
+pub fn knowledge_back(vm: &dyn Side, kb: &Path, given: &Path, names: &[String]) -> Result<bool, String> {
+    let Ok(base) = std::fs::read_to_string(given) else { return Ok(false) };
+    let mut versions: Vec<String> = Vec::new();
+    for name in names {
+        let out = vm.sync(&["read-knowledge".to_string(), name.clone()], None)?;
+        let out = String::from_utf8_lossy(&out);
+        if let Some(copy) = out.strip_prefix("copy\n")
+            && copy != base
+            && !versions.iter().any(|v| v == copy)
+        {
+            versions.push(copy.to_string());
+        }
+    }
+    if versions.is_empty() {
+        return Ok(false);
+    }
+    let mut text = std::fs::read_to_string(kb).unwrap_or_default();
+    for version in &versions {
+        text = merge_notes(&text, &base, version)?;
+    }
+    write_atomically(kb, &text)?;
+    // The VM gets the merged text, so its next edits are measured from what's really there.
+    knowledge_in(vm, kb, given, names)?;
+    Ok(true)
+}
+
+/// `knowledge_back` for a terminal's VM. Nothing when the factory has no knowledge base.
+pub fn knowledge(spec: &Spec, docker: &Path) -> Result<bool, String> {
+    let Some(kb) = &spec.knowledge else { return Ok(false) };
+    let vm = Volume { docker: docker.to_path_buf(), image: image(), volume: volume(&spec.dir) };
+    knowledge_back(&vm, kb, &knowledge_given(&spec.store, &spec.dir), &spec.exclude)
+}
+
 /// The branch a folder is on, or nothing.
 fn branch_of(dir: &Path) -> String {
     crate::worktree::git(dir, &["branch", "--show-current"]).unwrap_or_default()
@@ -517,6 +661,7 @@ pub fn cleanup(docker: &Path, spec: &Spec) {
 /// Forgets a folder's VM copy, once its work is over.
 pub fn forget(store: &Path, dir: &Path) {
     let _ = std::fs::remove_file(record(store, dir));
+    let _ = std::fs::remove_file(knowledge_given(store, dir));
     if let Some(docker) = docker() {
         let _ = run(&docker, &["volume", "rm", "-f", &volume(dir)]);
     }
@@ -581,12 +726,16 @@ pub fn main(args: &[String]) -> i32 {
         Ok(Synced::Same) => {}
         Err(why) => return fail(markers.as_ref(), &format!("{why}. The VM's copy is in the Docker volume {}.", volume(&spec.dir))),
     }
-    if let Some(kb) = &spec.knowledge
-        && let Ok(content) = std::fs::read(kb)
-    {
+    if let Some(kb) = &spec.knowledge {
+        // What the last container wrote comes back before the new one gets a fresh copy.
+        match knowledge(&spec, &docker) {
+            Ok(true) => say("brought back knowledge-base edits from the VM, for your review"),
+            Ok(false) => {}
+            Err(why) => say(&format!("couldn't bring back knowledge-base edits: {why}")),
+        }
         let vm = Volume { docker: docker.clone(), image: tag.clone(), volume: volume(&spec.dir) };
-        for name in &spec.exclude {
-            let _ = vm.sync(&["knowledge".to_string(), name.clone()], Some(&content));
+        if let Err(why) = knowledge_in(&vm, kb, &knowledge_given(&spec.store, &spec.dir), &spec.exclude) {
+            say(&format!("the VM has no knowledge base: {why}"));
         }
     }
     if let Err(why) = open_network(&docker, &spec, &tag) {
@@ -870,6 +1019,73 @@ mod tests {
         assert_eq!(git(host.path(), &["log", "-1", "--format=%s"]).unwrap(), "from the vm");
         assert_eq!(read(&host.path().join("loose.txt")), "loose\n");
         assert_eq!(read(&host.path().join("new.txt")), "in\n");
+    }
+
+    /// A VM folder and a knowledge base given to it, as vm-run leaves them.
+    fn given_knowledge(text: &str) -> (Pair, PathBuf, PathBuf, Vec<String>) {
+        let p = Pair::new();
+        p.sync().unwrap();
+        let kb = p.records.path().join("knowledge.md");
+        std::fs::write(&kb, text).unwrap();
+        let given = p.records.path().join("given.md");
+        let names = vec!["AGENTS.md".to_string(), "CLAUDE.md".to_string()];
+        knowledge_in(&Local { dir: p.vm.path() }, &kb, &given, &names).unwrap();
+        (p, kb, given, names)
+    }
+
+    #[test]
+    fn what_an_agent_in_the_vm_writes_to_the_knowledge_base_comes_back() {
+        let (p, kb, given, names) = given_knowledge("# notes\n- one\n");
+        assert_eq!(read(&p.v("AGENTS.md")), "# notes\n- one\n");
+        assert!(git(p.vm.path(), &["status", "--porcelain"]).unwrap().is_empty(), "the copy is kept out of git");
+        let vm = Local { dir: p.vm.path() };
+        assert!(!knowledge_back(&vm, &kb, &given, &names).unwrap(), "nothing changed, nothing comes back");
+        std::fs::write(p.v("AGENTS.md"), "# notes\n- one\n- learned in the vm\n").unwrap();
+        assert!(knowledge_back(&vm, &kb, &given, &names).unwrap());
+        assert_eq!(read(&kb), "# notes\n- one\n- learned in the vm\n");
+        assert_eq!(read(&p.v("CLAUDE.md")), read(&kb), "every copy gets the merged text");
+        assert!(!knowledge_back(&vm, &kb, &given, &names).unwrap(), "and it doesn't come back twice");
+    }
+
+    #[test]
+    fn notes_from_the_vm_and_the_mac_are_both_kept() {
+        let (p, kb, given, names) = given_knowledge("# notes\n- one\n\n## later\n- two\n");
+        std::fs::write(&kb, "# notes\n- one\n- from the mac\n\n## later\n- two\n").unwrap();
+        std::fs::write(p.v("AGENTS.md"), "# notes\n- one\n\n## later\n- two\n- from the vm\n").unwrap();
+        std::fs::write(p.v("CLAUDE.md"), "# notes\n- one\n- also from the vm\n\n## later\n- two\n").unwrap();
+        assert!(knowledge_back(&Local { dir: p.vm.path() }, &kb, &given, &names).unwrap());
+        let merged = read(&kb);
+        for line in ["- from the mac", "- from the vm", "- also from the vm", "- two"] {
+            assert!(merged.contains(line), "{line} is missing from:\n{merged}");
+        }
+        assert!(!merged.contains("<<<<<<<"), "no conflict markers: {merged}");
+    }
+
+    #[test]
+    fn a_link_or_a_tracked_file_is_not_read_back() {
+        let (p, kb, given, names) = given_knowledge("# notes\n");
+        std::fs::remove_file(p.v("AGENTS.md")).unwrap();
+        std::os::unix::fs::symlink("/etc/hosts", p.v("AGENTS.md")).unwrap();
+        std::fs::remove_file(p.v("CLAUDE.md")).unwrap();
+        std::fs::write(p.v("CLAUDE.md"), "# tracked by the project\n").unwrap();
+        git(p.vm.path(), &["add", "-f", "CLAUDE.md"]).unwrap();
+        assert!(!knowledge_back(&Local { dir: p.vm.path() }, &kb, &given, &names).unwrap());
+        assert_eq!(read(&kb), "# notes\n");
+    }
+
+    #[test]
+    fn only_sawtooths_own_old_images_are_removed() {
+        let tags: Vec<String> = ["5d8d9961cb77", "6bf14d99f7c8", "latest", "mine", "0123456789abcdef"].map(String::from).to_vec();
+        assert_eq!(stale_tags(&tags, "sawtooth-vm:6bf14d99f7c8"), vec!["5d8d9961cb77".to_string()]);
+    }
+
+    #[test]
+    fn docker_named_outright_is_used_or_missing_never_guessed() {
+        assert_eq!(find_docker(Some("/nonexistent/sawtooth-docker".into())), None, "a named docker that isn't there isn't swapped for another");
+        let real = tempfile::NamedTempFile::new().unwrap();
+        assert_eq!(find_docker(Some(real.path().into())), Some(real.path().to_path_buf()));
+        assert!(why(&Docker::Missing).contains("isn't installed"));
+        assert!(why(&Docker::Stopped("/d".into())).contains("isn't running"));
     }
 
     #[test]

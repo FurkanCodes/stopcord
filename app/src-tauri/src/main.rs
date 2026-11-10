@@ -768,6 +768,43 @@ fn set_secret(app: State<'_, App>, name: String, value: String) -> Result<(), Fa
     settings::set_secret(app.store.home(), &name, &value).map_err(fail)
 }
 
+/// Opens Docker's install page in the browser. Only that page: the window can't open others.
+#[tauri::command(async)]
+fn open_docker_page() -> Result<(), Failure> {
+    let opener = if cfg!(target_os = "macos") { "open" } else { "xdg-open" };
+    std::process::Command::new(opener).arg(vm::install_page()).spawn().map(|_| ()).map_err(|e| Failure::new("docker", format!("couldn't open {}: {e}", vm::install_page())))
+}
+
+/// Starts Docker Desktop, which can take a minute before its engine answers.
+#[tauri::command(async)]
+fn start_docker() -> Result<(), Failure> {
+    if !cfg!(target_os = "macos") {
+        return Err(Failure::new("docker", "Start Docker's engine yourself, for example with `sudo systemctl start docker`."));
+    }
+    let ok = std::process::Command::new("open").args(["-a", "Docker"]).status().is_ok_and(|s| s.success());
+    if ok { Ok(()) } else { Err(Failure::new("docker", "Docker Desktop couldn't be started. Open it from Applications.")) }
+}
+
+/// Installs Docker Desktop with Homebrew in a terminal of its own, on the Mac, where the person
+/// watches it and types their password if it asks. Then starts it.
+#[tauri::command(async)]
+fn install_docker(app: State<'_, App>, bridge: State<'_, Bridge>) -> Result<Value, Failure> {
+    let brew = vm::homebrew().ok_or_else(|| Failure::new("docker", "Homebrew isn't installed, so install Docker Desktop from its page."))?;
+    let home = std::env::var("HOME").map_err(|_| Failure::new("docker", "couldn't find the home folder"))?;
+    let brew = shell::quote(&brew.display().to_string());
+    engine::start_terminal(
+        &app.store,
+        &bridge,
+        &app.program,
+        engine::StartRequest {
+            cwd: Some(home),
+            command: Some(format!("{brew} install --cask docker && open -a Docker")),
+            name: Some("install docker".into()),
+            ..engine::StartRequest::default()
+        },
+    )
+}
+
 /// Which of these secrets have a value. Never the values: the window can't read a secret back.
 #[tauri::command(async)]
 fn secrets_set(app: State<'_, App>, names: Vec<String>) -> Vec<String> {
@@ -930,6 +967,9 @@ fn main() {
             sandbox_info,
             secrets_set,
             set_vm_secret,
+            open_docker_page,
+            start_docker,
+            install_docker,
             benchmark_results,
             suggest_start,
             answer_proposal,
