@@ -48,6 +48,8 @@ export interface Part {
   network?: boolean;
   every?: string;
   autoStart?: boolean;
+  /** Ticket source: environment variables its command gets from sawtooth's secrets. Names only. */
+  keys?: string[];
 }
 
 export type Level = 'worktree' | 'contained' | 'vm' | 'harness';
@@ -315,6 +317,8 @@ export interface SourceTemplate {
   command: string;
   every: string;
   needs: string;
+  /** The keys its command reads. */
+  keys: string[];
 }
 
 export interface HarnessProfile {
@@ -449,6 +453,10 @@ export const api = {
   /** Which of these secrets have a value. Never the values themselves. */
   secretsSet: (names: string[]) => invoke<string[]>('secrets_set', { names }),
   setVmSecret: (name: string, value: string) => invoke<void>('set_vm_secret', { name, value }),
+  /** A ticket source's key, kept for that factory and source only. An empty value removes it. */
+  setSourceKey: (factory: string, source: string, name: string, value: string) => invoke<void>('set_source_key', { factory, source, name, value }),
+  /** Which of a ticket source's keys have a value. Never the values themselves. */
+  sourceKeysSet: (factory: string, source: string, names: string[]) => invoke<string[]>('source_keys_set', { factory, source, names }),
   openDockerPage: () => invoke<void>('open_docker_page'),
   startDocker: () => invoke<void>('start_docker'),
   /** Installs Docker Desktop with Homebrew in a terminal of its own. */

@@ -16,27 +16,30 @@ use crate::shell;
 const TIMEOUT: Duration = Duration::from_secs(60);
 
 /// Runs a ticket source's command, the first one if none is named, and reads the tickets it prints.
-pub fn run(factory: &Factory, source: Option<&str>) -> Result<Vec<Ticket>> {
+pub fn run(home: &Path, factory: &Factory, source: Option<&str>) -> Result<Vec<Ticket>> {
     let part = source
         .and_then(|id| factory.parts.iter().find(|p| p.kind == Kind::Tickets && p.id == id))
         .or_else(|| factory.tickets())
         .ok_or_else(|| anyhow!("This factory has no ticket source. Add one from Add parts."))?;
-    run_part(factory, part)
+    run_part(home, factory, part)
 }
 
-/// Runs one source's command and reads the tickets it prints.
-pub fn run_part(factory: &Factory, part: &Part) -> Result<Vec<Ticket>> {
+/// Runs one source's command, with its keys from Sawtooth's secrets, and reads the tickets it prints.
+pub fn run_part(home: &Path, factory: &Factory, part: &Part) -> Result<Vec<Ticket>> {
     if part.command.trim().is_empty() {
         bail!("The ticket source has no command yet. Give it one that prints tickets as JSON.");
     }
-    let output = run_in_login_shell(&part.command, Path::new(&factory.path), TIMEOUT)?;
+    let env = crate::settings::source_env(home, &factory.id, &part.id, &part.keys);
+    let output = run_in_login_shell(&part.command, Path::new(&factory.path), &env, TIMEOUT)?;
     parse(&output)
 }
 
 /// Runs `command` in the person's login shell, in `cwd`. Returns stdout, or stderr as the error.
-pub fn run_in_login_shell(command: &str, cwd: &Path, timeout: Duration) -> Result<String> {
+/// `env` goes in the environment, never the command line, where `ps` would show a key to anyone.
+pub fn run_in_login_shell(command: &str, cwd: &Path, env: &[(String, String)], timeout: Duration) -> Result<String> {
     let mut child = Command::new(shell::user_shell())
         .args(["-l", "-c", command])
+        .envs(env.iter().map(|(k, v)| (k, v)))
         .current_dir(cwd)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -180,8 +183,10 @@ mod tests {
             path: dir.path().display().to_string(),
             ..Factory::default()
         };
+        let home = tempfile::tempdir().unwrap();
+        let home = home.path();
         assert!(
-            run(&f, None)
+            run(home, &f, None)
                 .unwrap_err()
                 .to_string()
                 .contains("no ticket source")
@@ -191,8 +196,27 @@ mod tests {
             command: "cat t.json".into(),
             ..Part::default()
         });
-        assert_eq!(run(&f, None).unwrap()[0].key, "A-1");
+        assert_eq!(run(home, &f, None).unwrap()[0].key, "A-1");
         f.parts[0].command = "echo nope >&2; exit 3".into();
-        assert!(run(&f, None).unwrap_err().to_string().contains("nope"));
+        assert!(run(home, &f, None).unwrap_err().to_string().contains("nope"));
+    }
+
+    #[test]
+    fn a_source_gets_its_keys_in_its_environment() {
+        let home = tempfile::tempdir().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let f = Factory { id: "web".into(), path: dir.path().display().to_string(), ..Factory::default() };
+        let part = Part {
+            id: "linear".into(),
+            kind: Kind::Tickets,
+            keys: vec!["LINEAR_API_KEY".into()],
+            command: r#"printf '[{"key":"%s","title":"t"}]' "${LINEAR_API_KEY:-none}""#.into(),
+            ..Part::default()
+        };
+        assert_eq!(run_part(home.path(), &f, &part).unwrap()[0].key, "none", "nothing set yet");
+        crate::settings::set_secret(home.path(), &crate::settings::source_key("web", "linear", "LINEAR_API_KEY"), "lin_123").unwrap();
+        assert_eq!(run_part(home.path(), &f, &part).unwrap()[0].key, "lin_123");
+        let other = Factory { id: "api".into(), ..f.clone() };
+        assert_eq!(run_part(home.path(), &other, &part).unwrap()[0].key, "none", "another factory's source has its own keys");
     }
 }

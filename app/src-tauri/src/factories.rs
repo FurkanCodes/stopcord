@@ -96,6 +96,9 @@ pub struct Part {
     pub every: String,
     /// Ticket source: start new items with no person. Off by default, since outside text reaches an agent.
     pub auto_start: bool,
+    /// Ticket source: environment variables its command gets from Sawtooth's secrets, such as
+    /// SENTRY_AUTH_TOKEN. Names only: the values are kept per factory and source, never here.
+    pub keys: Vec<String>,
 }
 
 /// How much an agent is confined.

@@ -152,8 +152,8 @@ try:
     wait('the containers go too', lambda: not containers(), 20)
     press('6'); time.sleep(1)
     bridge("const k=document.querySelector('[data-sandbox] button[aria-expanded]');if(k.getAttribute('aria-expanded')!=='true')k.click();return 1"); time.sleep(0.6)
-    bridge("document.querySelector('[data-secrets]').scrollIntoView({block:'center'});return 1"); time.sleep(0.4); shot('vm-secrets')
-    rows = bridge("return document.querySelector('[data-secrets]').innerText")
+    bridge("document.querySelector('[data-secrets^=sb-sec]').scrollIntoView({block:'center'});return 1"); time.sleep(0.4); shot('vm-secrets')
+    rows = bridge("return document.querySelector('[data-secrets^=sb-sec]').innerText")
     check('setup shows which secrets have a value', 'E2E_TOKEN' in rows and '\nset' in rows and 'no value' in rows and SECRET not in rows, rows)
 
     # With no Docker, setup says how to get it, and a VM terminal won't start.

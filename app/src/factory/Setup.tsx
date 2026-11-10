@@ -6,7 +6,7 @@ import { Logo } from '../tui/Logo';
 import { Markdown } from '../tui/Markdown';
 import { FactoryHeader } from './FactoryHeader';
 import { LineStrip } from './LineStrip';
-import { SandboxPane } from './Sandbox';
+import { SandboxPane, Secrets } from './Sandbox';
 
 const uniq = (base: string, taken: string[]) => {
   let id = base;
@@ -218,7 +218,7 @@ function Sources({ factory, sources, part, set }: { factory: Factory; sources: P
   }, []);
   function add(t?: SourceTemplate) {
     const id = uniq(t?.id ?? 'source', factory.parts.map((p) => p.id));
-    const blank: Part = { id, kind: 'tickets', name: t?.name ?? 'Source', readAs: [], folder: '', command: t?.command ?? '', runsOn: 'commit', when: 'quiet', schedule: '', runsIn: 'same', prompt: '', harness: '', atOnce: 0, every: t?.every ?? '', autoStart: false };
+    const blank: Part = { id, kind: 'tickets', name: t?.name ?? 'Source', readAs: [], folder: '', command: t?.command ?? '', runsOn: 'commit', when: 'quiet', schedule: '', runsIn: 'same', prompt: '', harness: '', atOnce: 0, every: t?.every ?? '', autoStart: false, keys: t?.keys ?? [] };
     set({ parts: [...factory.parts, blank] });
   }
   return (
@@ -236,7 +236,18 @@ function Sources({ factory, sources, part, set }: { factory: Factory; sources: P
     >
       {sources.length === 0 && <Empty style={{ padding: 0 }}>no sources. press w on [1] work to write a ticket by hand</Empty>}
       {sources.map((p) => (
-        <SourceCard key={p.id} p={p} part={part} needs={templates.find((t) => p.id.startsWith(t.id))?.needs} remove={() => set({ parts: factory.parts.filter((x) => x.id !== p.id) })} />
+        <SourceCard
+          key={p.id}
+          factory={factory.id}
+          p={p}
+          part={part}
+          template={templates.find((t) => p.id.startsWith(t.id))}
+          remove={() => {
+            // Its keys go with it, so a source added later under the same name starts empty.
+            for (const k of p.keys ?? []) void api.setSourceKey(factory.id, p.id, k, '').catch(() => {});
+            set({ parts: factory.parts.filter((x) => x.id !== p.id) });
+          }}
+        />
       ))}
     </Pane>
   );
@@ -343,7 +354,8 @@ function BenchPane({ factory, set }: { factory: Factory; set: (patch: Partial<Fa
   );
 }
 
-function SourceCard({ p, part, needs, remove }: { p: Part; part: (id: string, patch: Partial<Part>) => void; needs?: string; remove: () => void }) {
+function SourceCard({ factory, p, part, template, remove }: { factory: string; p: Part; part: (id: string, patch: Partial<Part>) => void; template?: SourceTemplate; remove: () => void }) {
+  const needs = template?.needs;
   return (
     <Fold title={p.name} logo={p.id} hint={p.every || 'by hand'}>
       <Text id={`src-n-${p.id}`} label="name" value={p.name} onChange={(name) => part(p.id, { name })} />
@@ -351,6 +363,17 @@ function SourceCard({ p, part, needs, remove }: { p: Part; part: (id: string, pa
         <textarea id={`src-c-${p.id}`} className="t-field" spellCheck={false} rows={2} value={p.command} onChange={(e) => part(p.id, { command: e.currentTarget.value })} />
       </FieldRow>
       {needs && <span className="t-muted" style={{ fontSize: 12 }}>{needs}</span>}
+      <FieldRow id={`src-k-${p.id}-add`} label="keys" width="14ch" top>
+        <Secrets
+          id={`src-k-${p.id}`}
+          names={p.keys ?? []}
+          onChange={(keys) => part(p.id, { keys })}
+          load={(names) => api.sourceKeysSet(factory, p.id, names)}
+          store={(name, value) => api.setSourceKey(factory, p.id, name, value)}
+          suggest={template && template.keys.length > 0 ? [{ label: `${template.name.toLowerCase()} reads`, names: template.keys }] : []}
+          note="the pull command gets these as environment variables. values stay in sawtooth's secrets, for this source only, and can't be shown again"
+        />
+      </FieldRow>
       <Text id={`src-e-${p.id}`} label="pull every" value={p.every ?? ''} placeholder="every 5 minutes. empty pulls by hand" onChange={(every) => part(p.id, { every })} />
       <Check id={`src-as-${p.id}`} checked={!!p.autoStart} onChange={(autoStart) => part(p.id, { autoStart })}>
         start items by itself. outside text will reach an agent with no one looking

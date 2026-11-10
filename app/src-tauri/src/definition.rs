@@ -91,6 +91,8 @@ struct SourceDoc {
     every: String,
     #[serde(default, skip_serializing_if = "is_false")]
     auto_start: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    keys: Vec<String>,
 }
 
 /// `factory.yaml`.
@@ -305,6 +307,7 @@ pub fn load(dir: &Path) -> Result<Factory> {
         at_once: s.at_once,
         every: s.every,
         auto_start: s.auto_start,
+        keys: s.keys,
         ..Part::default()
     }));
     let autos = dir.join("automations");
@@ -580,6 +583,7 @@ fn render(f: &Factory) -> Result<BTreeMap<PathBuf, String>> {
                 at_once: p.at_once,
                 every: p.every.clone(),
                 auto_start: p.auto_start,
+                keys: p.keys.clone(),
             })
             .collect(),
         line: f.line.clone(),
@@ -819,6 +823,7 @@ mod tests {
                     command: "gh issue list --json number".into(),
                     harness: "codex".into(),
                     at_once: 3,
+                    keys: vec!["GH_TOKEN".into()],
                     ..Part::default()
                 },
                 Part {

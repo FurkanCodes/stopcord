@@ -73,7 +73,7 @@ impl Engine {
             .find(|p| p.kind == Kind::Tickets && p.id == part_id)
             .cloned()
             .ok_or_else(|| format!("there's no source {part_id}"))?;
-        match tickets::run_part(&f, &part) {
+        match tickets::run_part(self.store.home(), &f, &part) {
             Ok(tickets) => {
                 self.clear_alert(factory, &format!("pull:{}", part.id));
                 Ok(self.propose(factory, &part, tickets))

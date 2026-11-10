@@ -27,6 +27,7 @@ TESTS = [
     ('vm', []),
     ('markdown', []),
     ('logos', []),
+    ('source_keys', []),
     ('terminal', []),
 ]
 ON_REQUEST = [('real_answer', [])]

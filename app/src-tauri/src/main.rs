@@ -621,7 +621,7 @@ fn write_file(app: State<'_, App>, id: String, path: String, text: String) -> Re
 #[tauri::command(async)]
 fn list_tickets(app: State<'_, App>, id: String, source: Option<String>) -> Result<Vec<Ticket>, Failure> {
     let factory = app.store.get(&id).map_err(fail)?;
-    tickets::run(&factory, source.as_deref()).map_err(|e| Failure::new("tickets", format!("{e:#}")))
+    tickets::run(app.store.home(), &factory, source.as_deref()).map_err(|e| Failure::new("tickets", format!("{e:#}")))
 }
 
 #[tauri::command(async)]
@@ -818,6 +818,19 @@ fn set_vm_secret(app: State<'_, App>, name: String, value: String) -> Result<(),
     settings::set_secret(app.store.home(), &name, value.trim()).map_err(fail)
 }
 
+/// Stores one of a ticket source's keys. An empty value removes it.
+#[tauri::command(async)]
+fn set_source_key(app: State<'_, App>, factory: String, source: String, name: String, value: String) -> Result<(), Failure> {
+    vm::secret_name(&name).map_err(|why| Failure::new("secret", why))?;
+    settings::set_secret(app.store.home(), &settings::source_key(&factory, &source, &name), value.trim()).map_err(fail)
+}
+
+/// Which of a ticket source's keys have a value. Never the values themselves.
+#[tauri::command(async)]
+fn source_keys_set(app: State<'_, App>, factory: String, source: String, names: Vec<String>) -> Vec<String> {
+    names.into_iter().filter(|n| settings::get_secret(app.store.home(), &settings::source_key(&factory, &source, n)).is_some()).collect()
+}
+
 #[tauri::command(async)]
 fn harnesses(app: State<'_, App>) -> Vec<harness::Harness> {
     harness::load(&app.store.home().join("harnesses")).0
@@ -967,6 +980,8 @@ fn main() {
             sandbox_info,
             secrets_set,
             set_vm_secret,
+            set_source_key,
+            source_keys_set,
             open_docker_page,
             start_docker,
             install_docker,

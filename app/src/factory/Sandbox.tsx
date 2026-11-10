@@ -111,15 +111,33 @@ function DockerHelp({ docker, onInfo }: { docker: SandboxInfo['docker']; onInfo:
 
 const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
-/** A VM's secrets: names in the factory, values in sawtooth's secrets, which the window can set but never read. */
-function Secrets({ index: i, names, harnesses, onChange }: { index: number; names: string[]; harnesses: SandboxInfo['harnesses']; onChange: (names: string[]) => void }) {
+/** Names to suggest adding, with what they're for. */
+export interface Suggestion {
+  label: string;
+  names: string[];
+  hint?: string;
+}
+
+/**
+ * Secrets by name: the names live in the factory, the values in sawtooth's secrets, which the
+ * window can set but never read. `load` says which names have a value and `store` sets one.
+ */
+export function Secrets({ id, names, onChange, load, store, suggest = [], note }: {
+  id: string;
+  names: string[];
+  onChange: (names: string[]) => void;
+  load: (names: string[]) => Promise<string[]>;
+  store: (name: string, value: string) => Promise<void>;
+  suggest?: Suggestion[];
+  note: string;
+}) {
   const [set, setSet] = useState<string[]>([]);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [adding, setAdding] = useState('');
   const [problem, setProblem] = useState('');
   const key = names.join(' ');
   const refresh = () => {
-    api.secretsSet(names).then(setSet, () => {});
+    load(names).then(setSet, () => {});
   };
   useEffect(refresh, [key]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -135,7 +153,7 @@ function Secrets({ index: i, names, harnesses, onChange }: { index: number; name
     const value = drafts[name] ?? '';
     if (!value.trim()) return;
     try {
-      await api.setVmSecret(name, value);
+      await store(name, value);
       setDrafts((d) => ({ ...d, [name]: '' }));
       setProblem('');
       refresh();
@@ -143,10 +161,10 @@ function Secrets({ index: i, names, harnesses, onChange }: { index: number; name
       setProblem((e as { message?: string }).message ?? String(e));
     }
   };
-  const offers = harnesses.filter((h) => h.loginEnv.some((n) => !names.includes(n)));
+  const offers = suggest.map((o) => ({ ...o, names: o.names.filter((n) => !names.includes(n)) })).filter((o) => o.names.length > 0);
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }} data-secrets>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }} data-secrets={id}>
       {names.map((name) => {
         const has = set.includes(name);
         return (
@@ -154,7 +172,7 @@ function Secrets({ index: i, names, harnesses, onChange }: { index: number; name
             <span style={{ width: '26ch', flexShrink: 0, overflow: 'hidden', textOverflow: 'ellipsis' }}>{name}</span>
             <span className={has ? 't-muted' : 't-red'} style={{ width: '9ch', flexShrink: 0 }}>{has ? 'set' : 'no value'}</span>
             <input
-              id={`sb-sec-${i}-${name}`}
+              id={`${id}-${name}`}
               aria-label={`value for ${name}`}
               type="password"
               autoComplete="off"
@@ -176,7 +194,7 @@ function Secrets({ index: i, names, harnesses, onChange }: { index: number; name
         );
       })}
       <input
-        id={`sb-sec-add-${i}`}
+        id={`${id}-add`}
         className="t-field"
         spellCheck={false}
         value={adding}
@@ -186,21 +204,19 @@ function Secrets({ index: i, names, harnesses, onChange }: { index: number; name
           if (e.key === 'Enter') add(adding);
         }}
       />
-      {offers.map((h) => (
-        <div key={h.id} style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap', padding: '0 8px' }}>
-          <span className="t-muted">{h.id} can use</span>
-          {h.loginEnv
-            .filter((n) => !names.includes(n))
-            .map((n) => (
-              <Key key={n} size="xs" onClick={() => add(n)}>
-                + {n}
-              </Key>
-            ))}
-          {h.loginHint && <span className="t-dim">{h.loginHint}</span>}
+      {offers.map((o) => (
+        <div key={o.label} style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap', padding: '0 8px' }}>
+          <span className="t-muted">{o.label}</span>
+          {o.names.map((n) => (
+            <Key key={n} size="xs" onClick={() => add(n)}>
+              + {n}
+            </Key>
+          ))}
+          {o.hint && <span className="t-dim">{o.hint}</span>}
         </div>
       ))}
       {problem && <span className="t-red" style={{ padding: '0 8px' }}>{problem}</span>}
-      <Quiet>values stay in ~/.sawtooth/secrets and can't be shown again. every agent in this vm can read them, so use tokens you can cancel</Quiet>
+      <Quiet>{note}</Quiet>
     </div>
   );
 }
@@ -331,7 +347,15 @@ function SandboxCard({ index: i, factory, runner: r, info, onInfo, startOpen, on
                 <input id={`sb-img-${i}`} className="t-field" spellCheck={false} value={r.vmImage ?? ''} placeholder={`sawtooth's own${info && !info.docker.built ? ', built on first use (a few minutes)' : ''}. yours must start FROM ${info?.docker.image ?? 'sawtooth-vm:latest'}`} onChange={(e) => onChange({ vmImage: e.currentTarget.value })} />
               </Row>
               <Row label="secrets">
-                <Secrets index={i} names={r.secrets ?? []} harnesses={harnesses} onChange={(secrets) => onChange({ secrets })} />
+                <Secrets
+                  id={`sb-sec-${i}`}
+                  names={r.secrets ?? []}
+                  onChange={(secrets) => onChange({ secrets })}
+                  load={api.secretsSet}
+                  store={api.setVmSecret}
+                  suggest={harnesses.map((h) => ({ label: `${h.id} can use`, names: h.loginEnv, hint: h.loginHint }))}
+                  note="values stay in sawtooth's secrets and can't be shown again. every agent in this vm can read them, so use tokens you can cancel"
+                />
               </Row>
               <Row label="logins">
                 <Quiet>a harness with no secret asks you to log in, once, in its first vm terminal. those logins are kept in a docker volume of this sandbox's own, so agents in another sandbox can't reach them</Quiet>

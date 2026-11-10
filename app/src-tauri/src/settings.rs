@@ -89,6 +89,17 @@ pub fn set_secret(home: &Path, name: &str, value: &str) -> Result<()> {
     Ok(())
 }
 
+/// Where a ticket source's key is kept: per factory and source, so two factories can each have
+/// their own SENTRY_PROJECT.
+pub fn source_key(factory: &str, source: &str, name: &str) -> String {
+    format!("source.{factory}.{source}.{name}")
+}
+
+/// What a source's command gets in its environment: each of its keys that has a value.
+pub fn source_env(home: &Path, factory: &str, source: &str, names: &[String]) -> Vec<(String, String)> {
+    names.iter().filter_map(|n| get_secret(home, &source_key(factory, source, n)).map(|v| (n.clone(), v))).collect()
+}
+
 pub fn get_secret(home: &Path, name: &str) -> Option<String> {
     let text = std::fs::read_to_string(secret_file(home, name).ok()?).ok()?;
     let text = text.trim_end_matches(['\n', '\r']).to_string();
@@ -132,6 +143,16 @@ mod tests {
         assert_eq!(std::fs::metadata(path.parent().unwrap()).unwrap().permissions().mode() & 0o777, 0o700);
         set_secret(home.path(), "SENTRY_HOOK", "").unwrap();
         assert!(get_secret(home.path(), "SENTRY_HOOK").is_none());
+    }
+
+    #[test]
+    fn a_sources_keys_are_its_own() {
+        let home = tempfile::tempdir().unwrap();
+        set_secret(home.path(), &source_key("web", "sentry", "SENTRY_PROJECT"), "web").unwrap();
+        set_secret(home.path(), &source_key("api", "sentry", "SENTRY_PROJECT"), "api").unwrap();
+        let names = vec!["SENTRY_PROJECT".to_string(), "SENTRY_URL".to_string()];
+        assert_eq!(source_env(home.path(), "web", "sentry", &names), vec![("SENTRY_PROJECT".to_string(), "web".to_string())], "a key with no value is left out");
+        assert_eq!(source_env(home.path(), "api", "sentry", &names)[0].1, "api");
     }
 
     #[test]
