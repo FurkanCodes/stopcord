@@ -46,8 +46,15 @@ pub struct Harness {
     /// Flags that turn on the harness's own sandbox, for the harness level. Empty means none Sawtooth knows.
     #[serde(skip_serializing_if = "String::is_empty")]
     pub own_sandbox_args: String,
-    /// How to run a single prompt and exit, with `{prompt}` where the prompt goes. For judges and suggestions.
+    /// How to run a single prompt and exit, with `{prompt}` where the prompt goes and `{model}` where
+    /// the model flag goes, if the start command names a model. For judges and suggestions.
     pub one_shot: String,
+    /// The flag that picks a model, such as `--model`. Empty means Sawtooth doesn't know one.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub model_flag: String,
+    /// Models to offer for it. Any other name can still be typed.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub models: Vec<String>,
     pub trust: Option<Trust>,
     /// Environment variables it can log in with, for a VM, where its login on the Mac isn't there.
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -82,7 +89,9 @@ pub fn builtin() -> Vec<Harness> {
             // Not bypass mode: that shows a confirmation we'd have to edit its settings to skip.
             sandboxed_args: "--permission-mode acceptEdits --allowedTools Bash".into(),
             own_sandbox_args: r#"--permission-mode acceptEdits --settings '{"sandbox":{"enabled":true,"autoAllowBashIfSandboxed":true}}'"#.into(),
-            one_shot: "claude -p {prompt}".into(),
+            one_shot: "claude {model} -p {prompt}".into(),
+            model_flag: "--model".into(),
+            models: strings(&["opus", "sonnet", "haiku"]),
             login_env: strings(&["CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY"]),
             login_hint: "a token from `claude setup-token` on your mac, or an API key".into(),
             trust: Some(Trust {
@@ -105,7 +114,9 @@ pub fn builtin() -> Vec<Harness> {
             // A whole table, because Codex splits a dotted key at every dot, including those in the path.
             sandboxed_args: r#"--sandbox danger-full-access --ask-for-approval never --no-daemon -c 'projects={"{project}"={trust_level="trusted"}}'"#.into(),
             own_sandbox_args: r#"--sandbox workspace-write --ask-for-approval never -c 'projects={"{project}"={trust_level="trusted"}}'"#.into(),
-            one_shot: "codex exec --skip-git-repo-check --sandbox danger-full-access {prompt}".into(),
+            one_shot: "codex exec {model} --skip-git-repo-check --sandbox danger-full-access {prompt}".into(),
+            model_flag: "--model".into(),
+            models: Vec::new(),
             login_env: strings(&["OPENAI_API_KEY", "CODEX_API_KEY"]),
             login_hint: "an OpenAI API key".into(),
             trust: Some(Trust {
@@ -125,7 +136,9 @@ pub fn builtin() -> Vec<Harness> {
             quiet_domains: Vec::new(),
             sandboxed_args: "--yolo".into(),
             own_sandbox_args: String::new(),
-            one_shot: "gemini -p {prompt}".into(),
+            one_shot: "gemini {model} -p {prompt}".into(),
+            model_flag: "--model".into(),
+            models: Vec::new(),
             login_env: strings(&["GEMINI_API_KEY"]),
             login_hint: "a Gemini API key from Google AI Studio".into(),
             trust: None,
@@ -140,7 +153,9 @@ pub fn builtin() -> Vec<Harness> {
             quiet_domains: Vec::new(),
             sandboxed_args: "--auto".into(),
             own_sandbox_args: String::new(),
-            one_shot: "opencode run {prompt}".into(),
+            one_shot: "opencode run {model} {prompt}".into(),
+            model_flag: "--model".into(),
+            models: Vec::new(),
             login_env: strings(&["OPENROUTER_API_KEY", "ANTHROPIC_API_KEY", "OPENAI_API_KEY"]),
             login_hint: "the API key of the provider you use with it".into(),
             trust: None,
@@ -195,6 +210,29 @@ pub fn find<'a>(all: &'a [Harness], command: &str) -> Option<&'a Harness> {
     all.iter().find(|h| h.commands.iter().any(|c| c == program))
 }
 
+/// The model a start command names with the harness's flag, as in `claude --model haiku` or `--model=haiku`.
+pub fn model_of(harness: Option<&Harness>, command: &str) -> Option<String> {
+    let flag = harness.map(|h| h.model_flag.as_str()).filter(|f| !f.is_empty())?;
+    let mut words = command.split_whitespace();
+    while let Some(w) = words.next() {
+        if w == flag {
+            return words.next().map(|m| m.trim_matches(|c| c == '\'' || c == '"').to_string()).filter(|m| !m.is_empty());
+        }
+        if let Some(m) = w.strip_prefix(flag).and_then(|r| r.strip_prefix('=')) {
+            return Some(m.trim_matches(|c| c == '\'' || c == '"').to_string()).filter(|m| !m.is_empty());
+        }
+    }
+    None
+}
+
+/// The one-shot command for a prompt, keeping the model the start command picked.
+pub fn one_shot_line(harness: &Harness, command: &str, quoted_prompt: &str) -> String {
+    let model = model_of(Some(harness), command).map_or(String::new(), |m| format!("{} {}", harness.model_flag, crate::shell::quote(&m)));
+    // The model goes in before the prompt, so a prompt that happens to say {model} stays as it is.
+    let line = if model.is_empty() { harness.one_shot.replace(" {model}", "").replace("{model}", "") } else { harness.one_shot.replace("{model}", &model) };
+    line.replace("{prompt}", quoted_prompt)
+}
+
 /// Whether a terminal really started inside a sandbox, going by the command the daemon ran.
 /// A harness's own command is one shell string, so mentioning a sandbox doesn't count.
 pub fn in_sandbox(terminal: &serde_json::Value) -> bool {
@@ -245,6 +283,20 @@ mod tests {
         assert!(codex.contains("--sandbox workspace-write") && codex.contains(r"/my '\''p"), "{codex}");
         assert!(own_sandbox_command(find("gemini"), "gemini", "/p").is_none());
         assert!(own_sandbox_command(None, "anything", "/p").is_none());
+    }
+
+    #[test]
+    fn a_model_is_read_from_the_command_and_kept_when_asking_once() {
+        let all = builtin();
+        let claude = find(&all, "claude").unwrap();
+        assert_eq!(model_of(Some(claude), "claude --model haiku").as_deref(), Some("haiku"));
+        assert_eq!(model_of(Some(claude), "/bin/claude --model=opus --verbose").as_deref(), Some("opus"));
+        assert_eq!(model_of(Some(claude), "claude"), None);
+        assert_eq!(model_of(None, "aider --model x"), None);
+        assert_eq!(one_shot_line(claude, "claude --model haiku", "'hi'"), "claude --model 'haiku' -p 'hi'");
+        assert_eq!(one_shot_line(claude, "claude", "'two\n  lines'"), "claude -p 'two\n  lines'");
+        let codex = find(&all, "codex").unwrap();
+        assert!(one_shot_line(codex, "codex --model gpt-5", "'hi'").starts_with("codex exec --model 'gpt-5' --skip-git-repo-check"));
     }
 
     #[test]

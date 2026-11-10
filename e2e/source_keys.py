@@ -50,6 +50,15 @@ try:
     check('a renamed agent keeps the stages it does', f1['agents'][ai]['id'] == 'maker' and any(s.get('agent') == 'maker' for s in f1['line']) and not any(s.get('agent') == name for s in f1['line']), [s.get('agent') for s in f1['line']])
     fill(f'#agent-id-{ai}', name)
     bridge(f"document.querySelector('#agent-id-{ai}').dispatchEvent(new KeyboardEvent('keydown',{{key:'Enter',bubbles:true}}));return 1"); time.sleep(1)
+
+    # A role picks its model, which only writes the harness's model flag, and the line shows it.
+    fill(f'#agent-{ai}-m', 'haiku'); time.sleep(1)
+    harness_now = lambda: next(a for a in next(f for f in inv('factories') if f['id'] == fid)['agents'] if a['id'] == name)['harness']
+    check('picking a model writes it into the role\'s command', harness_now() == 'claude --model haiku', harness_now())
+    strip = bridge("return document.querySelector('ol[aria-label=\"The line\"]')?.innerText||''")
+    check('and the line shows which model does that stage', 'claude · haiku' in strip, strip)
+    fill(f'#agent-{ai}-m', ''); time.sleep(1)
+    check('clearing it leaves the harness alone', harness_now() == 'claude', harness_now())
     bridge(f"[...document.querySelectorAll('#tuning-agents button[aria-expanded]')][{ai}].click();return 1"); time.sleep(0.3)
 
     bridge("[...document.querySelectorAll('button')].find(b=>b.innerText.trim()==='sentry').click();return 1"); time.sleep(1.2)

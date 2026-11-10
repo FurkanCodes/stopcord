@@ -1,4 +1,5 @@
 import type { Factory, LineStage, WorkItem } from '../api';
+import { runsOn, useHarnessProfiles } from '../harness';
 import { Empty } from '../tui/kit';
 import { Logo } from '../tui/Logo';
 
@@ -18,6 +19,7 @@ export function stageHarness(factory: Factory, stage: LineStage): string | undef
 
 /** The factory's line, left to right, with what's at each stage now. */
 export function LineStrip({ factory, onPick, selected, onSelect }: { factory: Factory; onPick?: (key: string) => void; selected?: number; onSelect?: (index: number) => void }) {
+  const profiles = useHarnessProfiles();
   if (factory.line.length === 0) return <Empty>this factory has no line. add one in setup</Empty>;
   return (
     <ol aria-label="The line" style={{ display: 'flex', flexWrap: 'nowrap', overflowX: 'auto', alignItems: 'stretch', gap: '6px 0', listStyle: 'none', margin: 0, padding: '0 12px' }}>
@@ -46,7 +48,8 @@ export function LineStrip({ factory, onPick, selected, onSelect }: { factory: Fa
               <div style={{ fontWeight: 600, color: 'var(--ink)' }}>{s.id}</div>
               <div className="t-muted" style={{ fontSize: 12 }}>
                 <Logo name={stageHarness(factory, s)} size={12} style={{ marginRight: 5 }} />
-                {who[s.kind]}
+                {/* An agent stage says what it runs on, model and all, so the line shows which model does what. */}
+                {s.kind === 'agent' && stageHarness(factory, s) ? runsOn(profiles, stageHarness(factory, s)!) : who[s.kind]}
                 {s.maxLoops ? ` · up to ${s.maxLoops} loops` : ''}
               </div>
               <div style={{ fontSize: 12, display: 'flex', flexWrap: 'wrap', gap: '0 6px' }}>

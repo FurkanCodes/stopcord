@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { api, failureText, REPORT_EVENTS, type Agent, type BenchResult, type BenchTask, type Choice, type Connection, type Factory, type LineStage, type Part, type PullStatus, type Report, type Skill, type SourceTemplate, type Suite } from '../api';
 import { ConnectionState } from '../Connections';
+import { modelChoices, modelOf, profileFor, runsOn, useHarnessProfiles, withModel } from '../harness';
 import { FactoryIntegrations } from '../Integrations';
 import { changeFactory, go, refreshFactories, showProblem, useStore } from '../store';
 import { ArmedKey, Check, FieldRow, Key, ListInput, Pane, Screen, Sep } from '../tui/kit';
@@ -168,6 +169,46 @@ function SectionIndex({ onTuning }: { onTuning: (pane: string) => void }) {
   );
 }
 
+/**
+ * What a role runs on: a harness command, and the model in it. Picking a model only rewrites the
+ * command's model flag, so a typed command always wins. An empty command uses `fallback`.
+ */
+function HarnessFields({ id, command, fallback, placeholder, onChange }: { id: string; command: string; fallback?: string; placeholder: string; onChange: (command: string) => void }) {
+  const profiles = useHarnessProfiles();
+  const installed = useStore((s) => s.installed) ?? [];
+  const factories = useStore((s) => s.factories);
+  const effective = command.trim() || fallback?.trim() || '';
+  const profile = profileFor(profiles, effective);
+  const model = modelOf(profile, effective);
+  const choices = modelChoices(profiles, profile, factories);
+  return (
+    <>
+      <FieldRow id={`${id}-h`} label="harness" width="14ch">
+        <input id={`${id}-h`} className="t-field" spellCheck={false} list={`${id}-h-list`} value={command} placeholder={placeholder} onChange={(e) => onChange(e.currentTarget.value)} />
+        <datalist id={`${id}-h-list`}>
+          {installed.map((h) => <option key={h} value={h} />)}
+        </datalist>
+      </FieldRow>
+      <FieldRow id={`${id}-m`} label="model" width="14ch">
+        <input
+          id={`${id}-m`}
+          className="t-field"
+          spellCheck={false}
+          list={`${id}-m-list`}
+          disabled={!profile?.modelFlag}
+          value={model}
+          placeholder={!effective ? 'pick a harness first' : profile?.modelFlag ? `the harness's own choice${choices.length ? `, or ${choices.slice(0, 3).join(', ')}` : ''}` : `sawtooth doesn't know how ${profile?.id ?? effective.split(/\s+/)[0]} picks a model. put it in the command`}
+          onChange={(e) => onChange(withModel(profile, command.trim() || effective, e.currentTarget.value))}
+        />
+        <datalist id={`${id}-m-list`}>
+          {choices.map((m) => <option key={m} value={m} />)}
+        </datalist>
+        {effective && <span className="t-dim" style={{ fontSize: 12 }}>{command.trim() ? 'runs' : 'uses the default'}: {effective}</span>}
+      </FieldRow>
+    </>
+  );
+}
+
 /** change ⇄ done: opens a need's fields under it. */
 function ChangeKey({ open, onToggle, what }: { open: boolean; onToggle: () => void; what: string }) {
   return (
@@ -319,6 +360,7 @@ function Readiness({ factory, sources }: { factory: Factory; sources: number }) 
 function RunsWith({ factory, set }: { factory: Factory; set: (patch: Partial<Factory>) => void }) {
   const [open, setOpen] = useState(false);
   const installed = useStore((s) => s.installed) ?? [];
+  const profiles = useHarnessProfiles();
   const harness = factory.defaults.harness?.trim() ?? '';
   const own = factory.agents.filter((a) => a.harness.trim()).length;
   const atOnce = factory.defaults.atOnce ?? 1;
@@ -328,7 +370,7 @@ function RunsWith({ factory, set }: { factory: Factory; set: (patch: Partial<Fac
       label="runs with"
       value={
         <span style={{ display: 'inline-flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
-          {harness ? <><Logo name={harness} size={12} />{harness}</> : <span className="t-red">no harness yet</span>}
+          {harness ? <><Logo name={harness} size={12} />{runsOn(profiles, harness)}</> : <span className="t-red">no harness yet</span>}
           <span className="t-muted">· {atOnce} ticket{atOnce === 1 ? '' : 's'} at once{own > 0 ? ` · ${own} agent${own === 1 ? ' has its' : 's have their'} own` : ''}</span>
         </span>
       }
@@ -336,13 +378,8 @@ function RunsWith({ factory, set }: { factory: Factory; set: (patch: Partial<Fac
     >
       {(open || !harness) && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-          <FieldRow id="def-harness" label="harness" width="14ch">
-            <input id="def-harness" className="t-field" spellCheck={false} list="def-harness-installed" value={factory.defaults.harness ?? ''} placeholder="claude, codex, gemini, opencode, or any command" onChange={(e) => set({ defaults: { ...factory.defaults, harness: e.currentTarget.value } })} />
-            <datalist id="def-harness-installed">
-              {installed.map((h) => <option key={h} value={h} />)}
-            </datalist>
-            <span className="t-dim" style={{ fontSize: 12 }}>{installed.length > 0 ? `on this machine: ${installed.join(', ')}. ` : ''}agents with no harness of their own use this one</span>
-          </FieldRow>
+          <HarnessFields id="def" command={factory.defaults.harness ?? ''} placeholder="claude, codex, gemini, opencode, or any command" onChange={(h) => set({ defaults: { ...factory.defaults, harness: h } })} />
+          <span className="t-dim" style={{ fontSize: 12, paddingLeft: 'calc(14ch + 12px)' }}>{installed.length > 0 ? `on this machine: ${installed.join(', ')}. ` : ''}agents with no harness of their own use this one</span>
           <FieldRow id="def-once" label="at once" width="14ch">
             <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               <input id="def-once" type="number" min={1} className="t-field" style={{ width: '8ch' }} value={atOnce} onChange={(e) => set({ defaults: { ...factory.defaults, atOnce: Number(e.currentTarget.value) || 1 } })} />
@@ -605,14 +642,15 @@ function Fold({ title, hint, logo, startOpen = false, children }: { title: strin
 
 function RolePane({ id, title, noun, empty, fallback, items, taken, runners, onRename, onChange }: { id: string; title: string; noun: string; empty: string; fallback?: string; items: Agent[]; taken: string[]; runners: [string, string][]; onRename: (i: number, id: string) => void; onChange: (next: Agent[]) => void }) {
   const edit = (i: number, patch: Partial<Agent>) => onChange(items.map((a, j) => (j === i ? { ...a, ...patch } : a)));
+  const profiles = useHarnessProfiles();
   return (
     <Pane id={id} title={title} heading={3} right={<Key size="xs" onClick={() => onChange([...items, { id: uniq(noun, taken), description: '', harness: '', runner: '', prompt: '' }])}>add {noun}</Key>} style={paneStyle}>
       {items.length === 0 && <p className="t-dim">{empty}</p>}
       {items.map((a, i) => (
-        <Fold key={i} title={a.id} logo={a.harness || fallback} hint={a.description}>
+        <Fold key={i} title={a.id} logo={a.harness || fallback} hint={[runsOn(profiles, a.harness || fallback || ''), a.description].filter(Boolean).join(' · ')}>
           <NameField id={`${noun}-id-${i}`} label="name" value={a.id} taken={taken} onCommit={(id) => onRename(i, id)} />
           <Text id={`${noun}-d-${i}`} label="what it does" value={a.description} onChange={(description) => edit(i, { description })} />
-          <Text id={`${noun}-h-${i}`} label="harness" value={a.harness} placeholder="empty uses the default" onChange={(harness) => edit(i, { harness })} />
+          <HarnessFields id={`${noun}-${i}`} command={a.harness} fallback={fallback} placeholder={fallback ? `empty uses the default, ${fallback}` : 'empty uses the default'} onChange={(harness) => edit(i, { harness })} />
           <Pick id={`${noun}-r-${i}`} label="sandbox" value={a.runner} options={runners} onChange={(r) => edit(i, { runner: r })} />
           <FieldRow id={`${noun}-p-${i}`} label="role prompt" width="14ch" top>
             <textarea id={`${noun}-p-${i}`} className="t-field" spellCheck={false} rows={5} value={a.prompt} onChange={(e) => edit(i, { prompt: e.currentTarget.value })} />

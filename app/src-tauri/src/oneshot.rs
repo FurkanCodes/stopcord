@@ -31,7 +31,7 @@ impl Engine {
         if h.one_shot.is_empty() {
             return Err(format!("{} has no one-shot command set", h.id));
         }
-        let line = h.one_shot.replace("{prompt}", &shell::quote(prompt));
+        let line = harness::one_shot_line(h, command, &shell::quote(prompt));
         let dir = self.store.state_dir(&f.id).join("oneshot");
         std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
         let info = self.bridge.call("confine.prepare", json!({ "allow": h.domains })).map_err(|e| e.message)?;

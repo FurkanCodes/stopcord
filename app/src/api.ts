@@ -408,6 +408,10 @@ export interface HarnessProfile {
   quietDomains: string[];
   sandboxedArgs: string;
   oneShot: string;
+  /** The flag that picks a model, such as --model. Missing when Sawtooth doesn't know one. */
+  modelFlag?: string;
+  /** Models to offer. Any other name can be typed. */
+  models?: string[];
   trust: { contains: string; answer: string; auto: boolean } | null;
 }
 
