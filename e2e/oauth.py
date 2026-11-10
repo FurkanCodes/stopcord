@@ -83,10 +83,10 @@ try:
     secret = lambda name: os.path.exists(f'{H}/secrets/{name}')
 
     # Sentry: one press, a code to check, approve, and it's signed in.
-    wait('sentry offers to sign in in the browser', lambda: 'sign in with Sentry' in card('sentry'))
+    wait('sentry offers to sign in in the browser', lambda: 'sign in with sentry' in card('sentry'))
     check('pasting a token is offered right beside it', 'or paste a token' in card('sentry'), card('sentry')[:300])
     check('the token field is put away until asked for', not bridge("return !!document.querySelector('#ig-sentry-SENTRY_AUTH_TOKEN')"))
-    click_in('sentry', 'sign in with Sentry')
+    click_in('sentry', 'sign in with sentry')
     wait('it shows the code to check against the browser', lambda: 'ABCD-EFGH' in card('sentry'))
     time.sleep(1.5)
     check('it waits while the code is not approved', 'approve it in your browser' in card('sentry'), card('sentry')[:300])
@@ -99,8 +99,8 @@ try:
     shot('oauth-sentry')
 
     # Linear: one press, the browser comes back to sawtooth, and the code needs the right verifier.
-    wait('linear offers to sign in in the browser', lambda: 'sign in with Linear' in card('linear'))
-    click_in('linear', 'sign in with Linear')
+    wait('linear offers to sign in in the browser', lambda: 'sign in with linear' in card('linear'))
+    click_in('linear', 'sign in with linear')
     wait('it waits for the browser', lambda: 'approve it in your browser' in card('linear'))
     url = inv('oauth_signing', connection='linear')['url']
     q = dict(urllib.parse.parse_qsl(urllib.parse.urlsplit(url).query))
@@ -109,7 +109,7 @@ try:
     bad = urllib.request.urlopen(f"{q['redirect_uri']}?code=lin-code&state=not-ours", timeout=10).read().decode()
     check('an answer with the wrong state is refused', "didn't sign in" in bad, bad[:200])
     wait('and says why', lambda: "didn't come from the sign-in" in card('linear'))
-    click_in('linear', 'sign in with Linear')
+    click_in('linear', 'sign in with linear')
     wait('signing in again waits again', lambda: 'approve it in your browser' in card('linear'))
     q = dict(urllib.parse.parse_qsl(urllib.parse.urlsplit(inv('oauth_signing', connection='linear')['url']).query))
     state['challenge'] = q['code_challenge']
@@ -123,7 +123,7 @@ try:
 
     bridge("[...document.querySelectorAll('[data-integration=\"linear\"] [data-step=\"1\"] button')].find(b=>b.innerText.trim()==='change').click();return 1"); time.sleep(0.4)
     click_in('linear', 'sign out')
-    wait('signing out goes back to the sign-in button', lambda: 'sign in with Linear' in card('linear'))
+    wait('signing out goes back to the sign-in button', lambda: 'sign in with linear' in card('linear'))
     check('and forgets the tokens', not secret('connection.linear.oauth.access') and not secret('connection.linear.oauth.refresh'))
     # Either way stays open: switch Sentry from the browser sign-in to a pasted token.
     bridge("[...document.querySelectorAll('[data-integration=\"sentry\"] [data-step=\"1\"] button')].find(b=>b.innerText.trim()==='change').click();return 1"); time.sleep(0.4)

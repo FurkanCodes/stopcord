@@ -202,9 +202,9 @@ textarea::placeholder {
 .t-body:focus {
   outline: none;
 }
-/* Jumping to a pane leaves room for its title and the sticky index above it. */
+/* Jumping to a pane leaves room for its title, which sits above its border. */
 .t-body .t-pane {
-  scroll-margin-top: 48px;
+  scroll-margin-top: 16px;
 }
 
 .t-message {
@@ -448,6 +448,36 @@ textarea::placeholder {
 .t-solid:disabled {
   background: oklch(0.24 0.008 260);
   color: var(--ink-3);
+}
+
+/* ---- A factory's setup: one row per thing it needs -------------------------- */
+
+.t-need {
+  display: grid;
+  grid-template-columns: 14ch minmax(0, 1fr);
+  column-gap: 16px;
+  row-gap: 6px;
+  padding: 12px 0;
+}
+.t-need + .t-need {
+  border-top: 1px solid var(--line-soft);
+}
+.t-need-label {
+  margin: 0;
+  padding-top: 3px;
+  font: inherit;
+  color: var(--ink-2);
+}
+.t-need-body {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+@media (max-width: 640px) {
+  .t-need {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 /* Rows in lists: hover wash, the picked one in the selection colour. */

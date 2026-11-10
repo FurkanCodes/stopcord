@@ -6,11 +6,27 @@ import { ArmedKey, Check, FieldRow, Key, ListInput, Pane, Radio } from '../tui/k
 const LEVELS: [Level, string, string][] = [
   ['contained', "sawtooth's sandbox", 'limits files and sites, and asks you about a blocked site'],
   ['harness', "the harness's own", "turns on the harness's sandbox. sawtooth's web filter and asking are off, and it can't be tested here"],
-  ['worktree', 'none', 'its own folder and branch, and nothing else'],
+  ['worktree', 'no sandbox', 'its own folder and branch, and nothing else'],
   ['vm', 'a linux vm', "a fresh linux container in docker for each terminal. it works on a copy and never sees your mac. for work you don't trust"],
 ];
 
-const levelName = (l: Level) => LEVELS.find(([v]) => v === l)?.[1] ?? l;
+export const levelName = (l: Level) => LEVELS.find(([v]) => v === l)?.[1] ?? l;
+
+/** A sandbox in plain words: where it runs, what it reads, and what's opened up. */
+export function sandboxSummary(r: Runner): string {
+  const contained = r.level === 'contained';
+  const vm = r.level === 'vm' && !(r.vmCommand ?? '').trim();
+  const unblock = r.unblock ?? [];
+  const allow = r.networkAllow ?? [];
+  return [
+    levelName(r.level),
+    contained && (r.reads === 'listed' ? "reads only what's listed" : 'reads everything'),
+    contained && unblock.length > 0 && `${unblock.length} block${unblock.length === 1 ? '' : 's'} off`,
+    vm && (r.vmImage ? r.vmImage : "sawtooth's image"),
+    (contained || vm) && allow.length > 0 && `${allow.length} more site${allow.length === 1 ? '' : 's'}`,
+    (contained || vm) && (r.otherSites === 'block' ? 'blocks other sites' : 'asks about other sites'),
+  ].filter(Boolean).join(' · ');
+}
 
 const uniq = (base: string, taken: string[]) => {
   let id = base;
@@ -239,7 +255,7 @@ export function Secrets({ id, names, onChange, load, store, suggest = [], note, 
 }
 
 /** Where agents run, and everything their sandbox lets them touch. */
-export function SandboxPane({ factory, set, style }: { factory: Factory; set: (patch: Partial<Factory>) => void; style: CSSProperties }) {
+export function SandboxPane({ id, factory, set, style }: { id?: string; factory: Factory; set: (patch: Partial<Factory>) => void; style: CSSProperties }) {
   const [info, setInfo] = useState<SandboxInfo | null>(null);
   useEffect(() => {
     api.sandboxInfo().then(setInfo, showProblem);
@@ -247,19 +263,20 @@ export function SandboxPane({ factory, set, style }: { factory: Factory; set: (p
   const edit = (i: number, patch: Partial<Runner>) => set({ runners: factory.runners.map((r, j) => (j === i ? { ...r, ...patch } : r)) });
   const add = () => set({ runners: [...factory.runners, { id: uniq('sandbox', factory.runners.map((r) => r.id)), level: 'contained' }] });
   return (
-    <Pane title="sandbox" right={<Key size="xs" onClick={add}>add sandbox</Key>} style={style}>
+    <Pane id={id} title="sandboxes" heading={3} right={<Key size="xs" onClick={add}>add sandbox</Key>} style={style}>
       <p className="t-muted" style={{ margin: 0 }}>
-        where agents run. the factory uses {factory.defaults.runner || 'none'} unless an agent picks another.
+        where agents run, and what they can touch. agents use {factory.defaults.runner || 'no sandbox'} unless they pick another.
       </p>
+      {factory.runners.length === 0 && <p className="t-dim" style={{ margin: 0 }}>none yet. add one to limit what agents can read, write and reach.</p>}
       {factory.runners.map((r, i) => (
-        <SandboxCard key={i} index={i} factory={factory} runner={r} info={info} onInfo={setInfo} startOpen={factory.runners.length === 1} onChange={(patch) => edit(i, patch)} onRemove={() => set({ runners: factory.runners.filter((_, j) => j !== i) })} />
+        <SandboxCard key={i} index={i} factory={factory} runner={r} info={info} onInfo={setInfo} onChange={(patch) => edit(i, patch)} onRemove={() => set({ runners: factory.runners.filter((_, j) => j !== i) })} />
       ))}
     </Pane>
   );
 }
 
-function SandboxCard({ index: i, factory, runner: r, info, onInfo, startOpen, onChange, onRemove }: { index: number; factory: Factory; runner: Runner; info: SandboxInfo | null; onInfo: (info: SandboxInfo) => void; startOpen: boolean; onChange: (patch: Partial<Runner>) => void; onRemove: () => void }) {
-  const [open, setOpen] = useState(startOpen);
+function SandboxCard({ index: i, factory, runner: r, info, onInfo, onChange, onRemove }: { index: number; factory: Factory; runner: Runner; info: SandboxInfo | null; onInfo: (info: SandboxInfo) => void; onChange: (patch: Partial<Runner>) => void; onRemove: () => void }) {
+  const [open, setOpen] = useState(false);
   const [test, setTest] = useState<{ report: SandboxTest; settings: string } | null>(null);
   const [testing, setTesting] = useState(false);
   const contained = r.level === 'contained';
@@ -273,14 +290,7 @@ function SandboxCard({ index: i, factory, runner: r, info, onInfo, startOpen, on
   const held = told.filter((c) => c.held).length;
   const used = harnessesUsed(factory);
   const harnesses = (info?.harnesses ?? []).filter((h) => used.includes(h.id));
-  const summary = [
-    levelName(r.level),
-    contained && (listed ? "reads only what's listed" : 'reads everything'),
-    contained && unblock.length > 0 && `${unblock.length} block${unblock.length === 1 ? '' : 's'} off`,
-    vm && (r.vmImage ? r.vmImage : "sawtooth's image"),
-    (contained || vm) && (r.networkAllow ?? []).length > 0 && `${r.networkAllow!.length} more site${r.networkAllow!.length === 1 ? '' : 's'}`,
-    test && !stale && told.length > 0 && `${held} of ${told.length} as set`,
-  ].filter(Boolean).join(' · ');
+  const summary = [sandboxSummary(r), test && !stale && told.length > 0 && `${held} of ${told.length} as set`].filter(Boolean).join(' · ');
 
   async function runTest() {
     setTesting(true);

@@ -10,11 +10,35 @@ try:
     inv('create_factory', path=os.path.realpath(R), name='keys', template='line', readAs=['AGENTS.md'], harness='claude', reviewer='claude', level='worktree')
     fid = inv('factories')[0]['id']
     stop(); launch(); time.sleep(1.5)
-    to_setup = lambda: (bridge("[...document.querySelectorAll('[data-card]')][0].click();return 1"), time.sleep(1), press('6'), time.sleep(1), bridge("[...document.querySelectorAll('button')].find(b=>b.innerText.includes('add or fine-tune sources by hand')).click();return 1"), time.sleep(0.5))
+    to_setup = lambda: (bridge("[...document.querySelectorAll('[data-card]')][0].click();return 1"), time.sleep(1), press('6'), time.sleep(1), open_tuning())
+    # Tuning starts folded, so setup opens on the few things a factory needs.
+    bridge("[...document.querySelectorAll('[data-card]')][0].click();return 1"); time.sleep(1)
+    bridge("try{localStorage.removeItem('sawtooth.setup.tuning')}catch(e){};return 1"); press('6'); time.sleep(1)
+    needs = bridge("return [...document.querySelectorAll('[data-need]')].map(e=>e.dataset.need)")
+    check('setup opens with what the factory needs, in order', needs == ['sources', 'harness', 'sandbox', 'line', 'reports'], needs)
+    check('and the rest is folded under tuning', bridge("return document.querySelector('#tuning-title button').getAttribute('aria-expanded')") == 'false' and not bridge("return !!document.querySelector('#tuning-agents')"))
+    ready = bridge("return document.querySelector('[data-setup-summary] [role=status]')?.innerText||''")
+    check('it says what is still to do', 'pick where work comes from' in ready, ready)
+    check("work comes from has one row per service, for this factory", bridge("return [...document.querySelectorAll('[data-factory-integrations] [data-integration]')].map(e=>e.dataset.integration).join()") == 'github,sentry,linear,slack')
+    shot('setup-summary')
+    press('Escape'); time.sleep(0.6)
     to_setup()
-    order = bridge("return [...document.querySelectorAll('.t-body .t-pane-title')].map(e=>e.textContent.trim())")
-    check("a factory's sources start with the integration cards, for this factory", bridge("return [...document.querySelectorAll('[data-factory-integrations] [data-integration]')].map(e=>e.dataset.integration).join()") == 'github,sentry,linear,slack')
-    check('sources and reporting back come right after the line', order[1:4] == ['line', 'sources', 'reporting back'], order)
+    check('tuning opens, with sources by hand in it', bridge("return !!document.querySelector('#tuning-sources')"))
+
+    # Renaming a stage takes every stage that points at it along.
+    line0 = next(f for f in inv('factories') if f['id'] == fid)['line']
+    target = next(i for i, s in enumerate(line0) if any(o.get('then') == s['id'] or o.get('onFail') == s['id'] for o in line0))
+    old = line0[target]['id']
+    check('no stage is open for changing until one is clicked', not bridge("return !!document.querySelector('[data-stage-editor]')"))
+    bridge(f"document.querySelectorAll('ol[aria-label=\"The line\"] button')[{target}].click();return 1"); time.sleep(0.4)
+    fill(f'#st-id-{target}', 'renamed')
+    bridge(f"document.querySelector('#st-id-{target}').dispatchEvent(new KeyboardEvent('keydown',{{key:'Enter',bubbles:true}}));return 1"); time.sleep(1)
+    line1 = next(f for f in inv('factories') if f['id'] == fid)['line']
+    pointers = [p for s in line1 for p in (s.get('then'), s.get('onFail')) if p]
+    check('a renamed stage keeps what pointed at it', line1[target]['id'] == 'renamed' and 'renamed' in pointers and old not in pointers, line1)
+    fill(f'#st-id-{target}', old)
+    bridge(f"document.querySelector('#st-id-{target}').dispatchEvent(new KeyboardEvent('keydown',{{key:'Enter',bubbles:true}}));return 1"); time.sleep(1)
+    check('and renaming it back puts it all back', next(f for f in inv('factories') if f['id'] == fid)['line'] == line0, next(f for f in inv('factories') if f['id'] == fid)['line'])
 
     bridge("[...document.querySelectorAll('button')].find(b=>b.innerText.trim()==='sentry').click();return 1"); time.sleep(1.2)
     fac = lambda: next(f for f in inv('factories') if f['id'] == fid)

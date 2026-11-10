@@ -1,14 +1,14 @@
 import { useEffect, useState, type ReactNode } from 'react';
-import { api, failureText, REPORT_EVENTS, type Agent, type BenchResult, type BenchTask, type Connection, type Factory, type LineStage, type Part, type PullStatus, type Report, type Skill, type SourceTemplate, type Suite } from '../api';
+import { api, failureText, REPORT_EVENTS, type Agent, type BenchResult, type BenchTask, type Choice, type Connection, type Factory, type LineStage, type Part, type PullStatus, type Report, type Skill, type SourceTemplate, type Suite } from '../api';
 import { ConnectionState } from '../Connections';
 import { FactoryIntegrations } from '../Integrations';
-import { changeFactory, go, refreshFactories, showProblem } from '../store';
-import { ArmedKey, Check, Empty, FieldRow, Key, ListInput, Pane, Screen } from '../tui/kit';
+import { changeFactory, go, refreshFactories, showProblem, useStore } from '../store';
+import { ArmedKey, Check, FieldRow, Key, ListInput, Pane, Screen } from '../tui/kit';
 import { Logo } from '../tui/Logo';
 import { Markdown } from '../tui/Markdown';
 import { FactoryHeader } from './FactoryHeader';
 import { LineStrip } from './LineStrip';
-import { SandboxPane, Secrets } from './Sandbox';
+import { levelName, SandboxPane, sandboxSummary, Secrets } from './Sandbox';
 import { sourceState, useSourceReady } from './sourceState';
 
 const uniq = (base: string, taken: string[]) => {
@@ -17,6 +17,7 @@ const uniq = (base: string, taken: string[]) => {
   return id;
 };
 const list = (v?: string[]) => (v ?? []).join(', ');
+const count = (n: number, one: string, many = `${one}s`) => `${n === 0 ? 'no' : n} ${n === 1 ? one : many}`;
 
 function ListText({ id, label, ...rest }: { id: string; label: string; value?: string[]; placeholder?: string; separator?: string; onChange: (v: string[]) => void }) {
   return (
@@ -26,10 +27,10 @@ function ListText({ id, label, ...rest }: { id: string; label: string; value?: s
   );
 }
 
-function Text({ id, label, value, onChange, placeholder }: { id: string; label: string; value: string; onChange: (v: string) => void; placeholder?: string }) {
+function Text({ id, label, value, onChange, placeholder, list: options }: { id: string; label: string; value: string; onChange: (v: string) => void; placeholder?: string; list?: string }) {
   return (
     <FieldRow id={id} label={label} width="14ch">
-      <input id={id} className="t-field" spellCheck={false} value={value} placeholder={placeholder} onChange={(e) => onChange(e.currentTarget.value)} />
+      <input id={id} className="t-field" spellCheck={false} value={value} placeholder={placeholder} list={options} onChange={(e) => onChange(e.currentTarget.value)} />
     </FieldRow>
   );
 }
@@ -46,66 +47,121 @@ function Pick({ id, label, value, options, onChange }: { id: string; label: stri
   );
 }
 
-const paneStyle = { padding: '14px 12px 12px', maxWidth: 960, width: '100%', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 10 } as const;
-const sections = ['defaults', 'line', 'sources', 'reporting back', 'agents', 'scorers', 'benchmarks', 'sandbox', 'skills'];
-
-/** Stays at the top of a long page and jumps to a section. */
-function SectionIndex() {
-  const jump = (name: string) => {
-    const title = [...document.querySelectorAll('.t-body .t-pane-title')].find((el) => el.textContent?.trim() === name);
-    title?.closest('.t-pane')?.scrollIntoView({ block: 'start' });
+/**
+ * A name other things point at. It changes on enter or on leaving the field, not on every key, so
+ * whatever points at it follows one rename instead of every half-typed name on the way.
+ */
+function NameField({ id, label, value, taken, onCommit }: { id: string; label: string; value: string; taken: string[]; onCommit: (v: string) => void }) {
+  const [draft, setDraft] = useState(value);
+  useEffect(() => setDraft(value), [value]);
+  const name = draft.trim();
+  const problem = !name ? 'it needs a name' : name !== value && taken.includes(name) ? `there's already a ${name}` : '';
+  const commit = () => {
+    if (problem) return setDraft(value);
+    if (name !== value) onCommit(name);
   };
   return (
-    <nav aria-label="Setup sections" style={{ position: 'sticky', top: -16, zIndex: 5, flexShrink: 0, display: 'flex', flexWrap: 'wrap', gap: 2, maxWidth: 960, width: '100%', margin: '-16px auto -8px', padding: '6px 0', background: 'var(--bg)' }}>
-      {sections.map((name) => (
-        <Key key={name} size="xs" onClick={() => jump(name)}>{name}</Key>
-      ))}
-    </nav>
+    <FieldRow id={id} label={label} width="14ch">
+      <input
+        id={id}
+        className="t-field"
+        spellCheck={false}
+        value={draft}
+        aria-invalid={problem ? true : undefined}
+        onChange={(e) => setDraft(e.currentTarget.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') commit();
+          if (e.key === 'Escape') setDraft(value);
+        }}
+        onBlur={commit}
+      />
+      {problem && draft !== value && <span className="t-red" style={{ fontSize: 12 }}>{problem}. leaving the field keeps {value}</span>}
+    </FieldRow>
   );
 }
 
+const paneStyle = { padding: '14px 12px 12px', maxWidth: 960, width: '100%', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 10 } as const;
 const card = { display: 'flex', flexDirection: 'column', gap: 4, paddingBottom: 10, borderBottom: '1px solid var(--line-soft, var(--line))' } as const;
+
+// Whether tuning is open is kept per window, for convenience only: it starts closed without it.
+const TUNING = 'sawtooth.setup.tuning';
+function tuningWasOpen(): boolean {
+  try {
+    return localStorage.getItem(TUNING) === 'open';
+  } catch {
+    return false;
+  }
+}
+function rememberTuning(open: boolean) {
+  try {
+    localStorage.setItem(TUNING, open ? 'open' : 'closed');
+  } catch {
+    // Nothing kept: it starts closed next time.
+  }
+}
+
+/** One of the few things every factory needs: its name, what it is now, and where to change it. */
+function Need({ id, label, value, action, children }: { id: string; label: string; value?: ReactNode; action?: ReactNode; children?: ReactNode }) {
+  return (
+    <section className="t-need" data-need={id} aria-labelledby={`need-${id}`}>
+      <h2 id={`need-${id}`} className="t-need-label">{label}</h2>
+      <div className="t-need-body">
+        {(value !== undefined || action) && (
+          <div style={{ display: 'flex', gap: '4px 12px', alignItems: 'baseline', flexWrap: 'wrap', minHeight: 26 }}>
+            <span data-need-value={id} style={{ flex: '1 1 240px', minWidth: 0, overflowWrap: 'anywhere' }}>{value}</span>
+            {action && <span style={{ display: 'inline-flex', gap: 6, alignItems: 'baseline', flexWrap: 'wrap' }}>{action}</span>}
+          </div>
+        )}
+        {children}
+      </div>
+    </section>
+  );
+}
+
+/** change ⇄ done: opens a need's fields under it. */
+function ChangeKey({ open, onToggle, what }: { open: boolean; onToggle: () => void; what: string }) {
+  return (
+    <Key size="xs" aria-expanded={open} aria-label={open ? `done changing ${what}` : `change ${what}`} onClick={onToggle}>
+      {open ? 'done' : 'change'}
+    </Key>
+  );
+}
 
 /** Everything a factory is made of, editable where it's shown. Each change is a commit in the definition folder. */
 export function Setup({ factory, onRemove }: { factory: Factory; onRemove: () => void }) {
-  const [at, setAt] = useState(0);
+  const [tuning, setTuningOpen] = useState(tuningWasOpen);
+  const setTuning = (open: boolean) => {
+    setTuningOpen(open);
+    rememberTuning(open);
+  };
+  /** Opens tuning at one of its panes, for a need whose details live there. */
+  const openTuning = (pane: string) => {
+    setTuning(true);
+    setTimeout(() => document.getElementById(pane)?.scrollIntoView({ block: 'start' }), 0);
+  };
   const set = (patch: Partial<Factory>) => changeFactory({ ...factory, ...patch });
-  const agents = [...factory.agents, ...factory.scorers].map((a): [string, string] => [a.id, a.id]);
-  const runners: [string, string][] = [['', 'factory default'], ...factory.runners.map((r): [string, string] => [r.id, `${r.id} (${r.level})`])];
-  const checks = factory.parts.filter((p) => p.kind === 'check');
-  const stageIds: [string, string][] = factory.line.map((s) => [s.id, s.id]);
-
-  const stage = (i: number, patch: Partial<LineStage>) => set({ line: factory.line.map((s, j) => (j === i ? { ...s, ...patch } : s)) });
+  const runners: [string, string][] = [['', 'factory default'], ...factory.runners.map((r): [string, string] => [r.id, `${r.id} · ${levelName(r.level)}`])];
   const skill = (i: number, patch: Partial<Skill>) => set({ skills: factory.skills.map((s, j) => (j === i ? { ...s, ...patch } : s)) });
-  const report = (i: number, patch: Partial<Report>) => set({ reports: factory.reports.map((r, j) => (j === i ? { ...r, ...patch } : r)) });
   const part = (id: string, patch: Partial<Part>) => set({ parts: factory.parts.map((p) => (p.id === id ? { ...p, ...patch } : p)) });
-
-  function addStage() {
-    const id = uniq('stage', factory.line.map((s) => s.id));
-    const last = factory.line[factory.line.length - 1];
-    const firstAgent = factory.agents[0]?.id ?? '';
-    const added: LineStage = firstAgent ? { id, kind: 'agent', agent: firstAgent } : { id, kind: 'human' };
-    set({ line: [...factory.line.map((s) => (s === last ? { ...s, then: id } : s)), added] });
-    setAt(factory.line.length);
-  }
-  function removeStage(i: number) {
-    const id = factory.line[i]!.id;
-    const next = factory.line[i]!.then ?? '';
-    set({ line: factory.line.filter((_, j) => j !== i).map((s) => ({ ...s, then: s.then === id ? next : s.then, onFail: s.onFail === id ? '' : s.onFail })) });
-  }
-
+  const agents = [...factory.agents, ...factory.scorers].map((a): [string, string] => [a.id, a.id]);
   const sources = factory.parts.filter((p) => p.kind === 'tickets');
-  const selected = Math.min(at, Math.max(factory.line.length - 1, 0));
+
+  const tuned = [
+    count(factory.agents.length, 'agent'),
+    count(factory.runners.length, 'sandbox', 'sandboxes'),
+    count(sources.length, 'source'),
+    count(factory.scorers.length, 'scorer'),
+    count(factory.skills.length, 'skill'),
+    count(factory.benchmarks.length, 'benchmark'),
+  ].join(' · ');
 
   return (
     <Screen
       header={<FactoryHeader factory={factory} tab="setup" />}
       bodyStyle={{ overflow: 'auto', padding: '16px 8px 10px', display: 'flex', flexDirection: 'column', gap: 18 }}
-      hints={[['1-6', 'sections'], ['esc', 'every factory']]}
+      hints={[['1-6', 'tabs'], ['esc', 'every factory']]}
       status={{ mode: 'SETUP', path: factory.name, info: 'saved as you type · every change is a commit' }}
     >
-      <SectionIndex />
-
       {factory.proposals.map((p) => (
         <Pane key={p.id} title={`proposed change · ${p.agent}`} style={paneStyle}>
           <Markdown text={p.why} breaks />
@@ -121,110 +177,296 @@ export function Setup({ factory, onRemove }: { factory: Factory; onRemove: () =>
         </Pane>
       ))}
 
-      <Pane title="defaults" heading={1} style={paneStyle}>
-        <Text id="def-harness" label="harness" value={factory.defaults.harness ?? ''} placeholder="claude, codex, gemini, opencode, or any command" onChange={(harness) => set({ defaults: { ...factory.defaults, harness } })} />
-        <Pick id="def-runner" label="sandbox" value={factory.defaults.runner ?? ''} options={[['', 'none'], ...factory.runners.map((r): [string, string] => [r.id, `${r.id} (${r.level})`])]} onChange={(r) => set({ defaults: { ...factory.defaults, runner: r } })} />
-        <FieldRow id="def-once" label="at once" width="14ch">
-          <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <input id="def-once" type="number" min={1} className="t-field" style={{ width: '8ch' }} value={factory.defaults.atOnce ?? 1} onChange={(e) => set({ defaults: { ...factory.defaults, atOnce: Number(e.currentTarget.value) || 1 } })} />
-            <span className="t-muted">tickets</span>
+      <Pane title="this factory" heading={1} style={{ ...paneStyle, gap: 0 }} data-setup-summary>
+        <Readiness factory={factory} sources={sources.length} />
+        <Need id="sources" label="work comes from">
+          <FactoryIntegrations factoryId={factory.id} />
+          <span style={{ display: 'flex', gap: 8, alignItems: 'baseline', flexWrap: 'wrap', paddingLeft: 'calc(10ch + 12px)' }}>
+            <Key size="xs" onClick={() => openTuning('tuning-sources')}>by hand ›</Key>
+            <span className="t-dim" style={{ fontSize: 12 }}>a command of your own, how often each source pulls, starting work by itself</span>
           </span>
-        </FieldRow>
+        </Need>
+        <RunsWith factory={factory} set={set} />
+        <WorksIn factory={factory} set={set} onEdit={() => openTuning('tuning-sandboxes')} />
+        <Line factory={factory} set={set} />
+        <TellsYou factory={factory} set={set} />
       </Pane>
 
-      <Pane title="line" right={<Key size="xs" onClick={addStage}>add stage</Key>} style={paneStyle}>
-        <LineStrip factory={factory} selected={selected} onSelect={setAt} />
-        {factory.line.map((s, i) => i !== selected ? null : (
-          <div key={i} style={card}>
-            <Text id={`st-id-${i}`} label="stage" value={s.id} onChange={(id) => stage(i, { id })} />
-            <Pick id={`st-kind-${i}`} label="done by" value={s.kind} options={[['agent', 'an agent'], ['gate', 'the engine: checks that must pass'], ['human', 'a person']]} onChange={(kind) => stage(i, { kind: kind as LineStage['kind'] })} />
-            {s.kind === 'agent' && <Pick id={`st-ag-${i}`} label="agent" value={s.agent ?? ''} options={[['', 'pick one'], ...agents]} onChange={(a) => stage(i, { agent: a })} />}
-            {s.kind === 'gate' && (
-              <>
-                <FieldRow label="checks" width="14ch">
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-                    {checks.length === 0 && <span className="t-muted">add a check on the map first</span>}
-                    {checks.map((c) => (
-                      <Check key={c.id} id={`st-${i}-c-${c.id}`} checked={(s.checks ?? []).includes(c.id)} onChange={(on) => stage(i, { checks: on ? [...(s.checks ?? []), c.id] : (s.checks ?? []).filter((x) => x !== c.id) })}>
-                        {c.name}
-                      </Check>
-                    ))}
-                  </div>
-                </FieldRow>
-                <ListText id={`st-pr-${i}`} label="protected tests" value={s.protect} placeholder="tests/**, **/*.test.ts" onChange={(v) => stage(i, { protect: v })} />
-              </>
-            )}
-            {s.kind === 'agent' && <Pick id={`st-iso-${i}`} label="works in" value={s.isolated ? 'copy' : ''} options={[['', 'the real branch'], ['copy', 'a throwaway copy']]} onChange={(v) => stage(i, v === 'copy' ? { isolated: true } : { isolated: false, keep: [] })} />}
-            <Pick id={`st-then-${i}`} label="then" value={s.then ?? ''} options={[['', 'end of the line'], ...stageIds]} onChange={(then) => stage(i, { then })} />
-            {s.kind !== 'human' || s.then ? null : <Text id={`st-mg-${i}`} label="merge with" value={s.merge ?? ''} placeholder="empty merges locally, or a command like gh pr create --fill" onChange={(merge) => stage(i, { merge })} />}
-            {s.kind === 'human' && !s.then && s.merge && <Text id={`st-ld-${i}`} label="landed when" value={s.landed ?? ''} placeholder="gh pr view --json state -q .state | grep -qx MERGED" onChange={(landed) => stage(i, { landed })} />}
-            <Pick id={`st-fail-${i}`} label="if it fails" value={s.onFail ?? ''} options={[['', 'ask a person'], ...stageIds]} onChange={(onFail) => stage(i, { onFail })} />
-            {s.onFail && (
-              <FieldRow id={`st-loop-${i}`} label="max loops" width="14ch">
-                <input id={`st-loop-${i}`} type="number" min={1} className="t-field" style={{ width: '8ch' }} value={s.maxLoops ?? 1} onChange={(e) => stage(i, { maxLoops: Number(e.currentTarget.value) || 1 })} />
-              </FieldRow>
-            )}
-            <span><ArmedKey size="xs" onClick={() => removeStage(i)}>remove stage</ArmedKey></span>
-          </div>
-        ))}
-      </Pane>
-
-      <Sources factory={factory} sources={sources} part={part} set={set} />
-
-      <Pane title="reporting back" right={<Key size="xs" onClick={() => set({ reports: [...factory.reports, { id: uniq('report', factory.reports.map((r) => r.id)), on: ['handoff', 'failed', 'merged'], command: '', keys: [], slack: '' }] })}>add report</Key>} style={paneStyle}>
-        {factory.reports.length === 0 && <Empty style={{ padding: 0 }}>nothing reports back yet</Empty>}
-        {factory.reports.map((r, i) => (
-          <ReportCard
-            key={i}
-            i={i}
-            factory={factory.id}
-            r={r}
-            report={report}
-            remove={() => {
-              for (const k of r.keys ?? []) void api.setReportKey(factory.id, r.id, k, '').catch(() => {});
-              set({ reports: factory.reports.filter((_, j) => j !== i) });
-            }}
-          />
-        ))}
-      </Pane>
-
-      <RolePane title="agents" noun="agent" fallback={factory.defaults.harness} items={factory.agents} runners={runners} onChange={(next) => set({ agents: next })} />
-
-      <RolePane title="scorers" noun="scorer" note="an optional line stage that scores work from 0 to 10. the score shows at handoff and never passes or fails anything" fallback={factory.defaults.harness} items={factory.scorers} runners={runners} onChange={(next) => set({ scorers: next })} />
-
-      <BenchPane factory={factory} set={set} />
-
-      <SandboxPane factory={factory} set={set} style={paneStyle} />
-
-      <Pane title="skills" right={<Key size="xs" onClick={() => set({ skills: [...factory.skills, { id: uniq('skill', factory.skills.map((s) => s.id)), agent: '', description: '', body: '' }] })}>add skill</Key>} style={paneStyle}>
-        {factory.skills.length === 0 && <Empty style={{ padding: 0 }}>no skills. agents are told where these are and read them when needed</Empty>}
-        {factory.skills.map((s, i) => (
-          <Fold key={i} title={s.id} hint={s.description}>
-            <Text id={`sk-id-${i}`} label="name" value={s.id} onChange={(id) => skill(i, { id })} />
-            <Pick id={`sk-a-${i}`} label="for" value={s.agent} options={[['', 'every agent'], ...agents]} onChange={(a) => skill(i, { agent: a })} />
-            <Text id={`sk-d-${i}`} label="when to use" value={s.description} onChange={(description) => skill(i, { description })} />
-            <FieldRow id={`sk-b-${i}`} label="instructions" width="14ch" top>
-              <textarea id={`sk-b-${i}`} className="t-field" spellCheck={false} rows={4} value={s.body} onChange={(e) => skill(i, { body: e.currentTarget.value })} />
-            </FieldRow>
-            <span><ArmedKey size="xs" onClick={() => set({ skills: factory.skills.filter((_, j) => j !== i) })}>remove skill</ArmedKey></span>
-          </Fold>
-        ))}
-      </Pane>
-
-      <div style={{ maxWidth: 960, width: '100%', margin: '0 auto' }}>
-        <Key size="sm" title="Take this factory out of Sawtooth. The project folder stays as it is" onClick={onRemove}>remove this factory</Key>
-      </div>
+      <section aria-labelledby="tuning-title" style={{ maxWidth: 960, width: '100%', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 18 }}>
+        <h2 id="tuning-title" style={{ margin: 0, font: 'inherit' }}>
+          <button type="button" className="t-key" aria-expanded={tuning} style={{ width: '100%', justifyContent: 'flex-start', gap: 8, height: 30 }} onClick={() => setTuning(!tuning)}>
+            <span aria-hidden="true">{tuning ? '▾' : '▸'}</span>
+            <span className="t-name">tuning</span>
+            <span className="t-muted" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{tuned}</span>
+          </button>
+        </h2>
+        {tuning && (
+          <>
+            <RolePane id="tuning-agents" title="agents" noun="agent" empty="none yet. a stage done by an agent needs one" fallback={factory.defaults.harness} items={factory.agents} runners={runners} onChange={(next) => set({ agents: next })} />
+            <SandboxPane id="tuning-sandboxes" factory={factory} set={set} style={paneStyle} />
+            <Sources factory={factory} sources={sources} part={part} set={set} />
+            <RolePane id="tuning-scorers" title="scorers" noun="scorer" empty="none. a scorer is an optional line stage that scores work from 0 to 10. the score shows at handoff and never passes or fails anything" fallback={factory.defaults.harness} items={factory.scorers} runners={runners} onChange={(next) => set({ scorers: next })} />
+            <Pane id="tuning-skills" title="skills" heading={3} right={<Key size="xs" onClick={() => set({ skills: [...factory.skills, { id: uniq('skill', factory.skills.map((s) => s.id)), agent: '', description: '', body: '' }] })}>add skill</Key>} style={paneStyle}>
+              {factory.skills.length === 0 && <p className="t-dim">none yet. agents are told where skills are, and read one when its "when to use" fits</p>}
+              {factory.skills.map((s, i) => (
+                <Fold key={i} title={s.id} hint={s.description}>
+                  <Text id={`sk-id-${i}`} label="name" value={s.id} onChange={(id) => skill(i, { id })} />
+                  <Pick id={`sk-a-${i}`} label="for" value={s.agent} options={[['', 'every agent'], ...agents]} onChange={(a) => skill(i, { agent: a })} />
+                  <Text id={`sk-d-${i}`} label="when to use" value={s.description} onChange={(description) => skill(i, { description })} />
+                  <FieldRow id={`sk-b-${i}`} label="instructions" width="14ch" top>
+                    <textarea id={`sk-b-${i}`} className="t-field" spellCheck={false} rows={4} value={s.body} onChange={(e) => skill(i, { body: e.currentTarget.value })} />
+                  </FieldRow>
+                  <span><ArmedKey size="xs" onClick={() => set({ skills: factory.skills.filter((_, j) => j !== i) })}>remove skill</ArmedKey></span>
+                </Fold>
+              ))}
+            </Pane>
+            <BenchPane factory={factory} set={set} />
+            <div style={{ display: 'flex', gap: 10, alignItems: 'baseline', flexWrap: 'wrap', padding: '0 12px' }}>
+              <Key size="sm" onClick={onRemove}>remove this factory</Key>
+              <span className="t-dim" style={{ fontSize: 12 }}>takes it out of sawtooth. the project folder stays as it is</span>
+            </div>
+          </>
+        )}
+      </section>
     </Screen>
   );
 }
 
+/** One line: whether work can flow through this factory, and if not, what's left. */
+function Readiness({ factory, sources }: { factory: Factory; sources: number }) {
+  const harnessed = Boolean(factory.defaults.harness?.trim()) || (factory.agents.length > 0 && factory.agents.every((a) => a.harness.trim()));
+  const todo = [!harnessed && 'name a harness under runs with', factory.line.length === 0 && 'add a stage to the line', sources === 0 && 'pick where work comes from'].filter((x): x is string => Boolean(x));
+  const onlySources = todo.length === 1 && sources === 0;
+  return (
+    <p role="status" data-setup-ready={todo.length === 0 || undefined} style={{ padding: '2px 0 10px', display: 'flex', gap: 10, alignItems: 'baseline', flexWrap: 'wrap' }}>
+      <span aria-hidden="true" style={{ color: 'var(--ink)' }}>{todo.length === 0 ? '✓' : '○'}</span>
+      {todo.length === 0 ? (
+        <span>ready. work comes in by itself, and agents take it down the line</span>
+      ) : (
+        <span>
+          still to do: {todo.join(' · ')}
+          {onlySources && <span className="t-muted">. until then, write tickets by hand in [1] work</span>}
+        </span>
+      )}
+    </p>
+  );
+}
+
+/** The harness agents run with, and how much work runs at once. */
+function RunsWith({ factory, set }: { factory: Factory; set: (patch: Partial<Factory>) => void }) {
+  const [open, setOpen] = useState(false);
+  const installed = useStore((s) => s.installed) ?? [];
+  const harness = factory.defaults.harness?.trim() ?? '';
+  const own = factory.agents.filter((a) => a.harness.trim()).length;
+  const atOnce = factory.defaults.atOnce ?? 1;
+  return (
+    <Need
+      id="harness"
+      label="runs with"
+      value={
+        <span style={{ display: 'inline-flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+          {harness ? <><Logo name={harness} size={12} />{harness}</> : <span className="t-red">no harness yet</span>}
+          <span className="t-muted">· {atOnce} ticket{atOnce === 1 ? '' : 's'} at once{own > 0 ? ` · ${own} agent${own === 1 ? ' has its' : 's have their'} own` : ''}</span>
+        </span>
+      }
+      action={<ChangeKey open={open || !harness} what="the harness" onToggle={() => setOpen(!open)} />}
+    >
+      {(open || !harness) && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          <Text id="def-harness" label="harness" value={factory.defaults.harness ?? ''} list="def-harness-installed" placeholder="claude, codex, gemini, opencode, or any command" onChange={(h) => set({ defaults: { ...factory.defaults, harness: h } })} />
+          <datalist id="def-harness-installed">
+            {installed.map((h) => <option key={h} value={h} />)}
+          </datalist>
+          {installed.length > 0 && <span className="t-dim" style={{ fontSize: 12, paddingLeft: 'calc(14ch + 12px)' }}>on this machine: {installed.join(', ')}. agents with no harness of their own use this one</span>}
+          <FieldRow id="def-once" label="at once" width="14ch">
+            <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <input id="def-once" type="number" min={1} className="t-field" style={{ width: '8ch' }} value={atOnce} onChange={(e) => set({ defaults: { ...factory.defaults, atOnce: Number(e.currentTarget.value) || 1 } })} />
+              <span className="t-muted">tickets on the line at the same time</span>
+            </span>
+          </FieldRow>
+        </div>
+      )}
+    </Need>
+  );
+}
+
+/** The sandbox agents work in, in plain words, picked here and set up under tuning. */
+function WorksIn({ factory, set, onEdit }: { factory: Factory; set: (patch: Partial<Factory>) => void; onEdit: () => void }) {
+  const [open, setOpen] = useState(false);
+  const runner = factory.runners.find((r) => r.id === factory.defaults.runner);
+  const own = factory.agents.filter((a) => a.runner).length;
+  return (
+    <Need
+      id="sandbox"
+      label="works in"
+      value={
+        <span>
+          {runner ? sandboxSummary(runner) : 'no sandbox · its own folder and branch only'}
+          {own > 0 && <span className="t-muted"> · {own} agent{own === 1 ? ' picks its' : 's pick their'} own</span>}
+        </span>
+      }
+      action={<ChangeKey open={open} what="the sandbox" onToggle={() => setOpen(!open)} />}
+    >
+      {open && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          <Pick
+            id="def-runner"
+            label="sandbox"
+            value={factory.defaults.runner ?? ''}
+            options={[['', 'no sandbox: its own folder and branch only'], ...factory.runners.map((r): [string, string] => [r.id, `${r.id} · ${levelName(r.level)}`])]}
+            onChange={(r) => set({ defaults: { ...factory.defaults, runner: r } })}
+          />
+          <span style={{ display: 'flex', gap: 8, alignItems: 'baseline', flexWrap: 'wrap', paddingLeft: 'calc(14ch + 12px)' }}>
+            <Key size="xs" onClick={onEdit}>edit sandboxes ›</Key>
+            <span className="t-dim" style={{ fontSize: 12 }}>what each can read, write and reach, and a test</span>
+          </span>
+        </div>
+      )}
+    </Need>
+  );
+}
+
+/** The line, left to right. A stage opens for changing when it's clicked. */
+function Line({ factory, set }: { factory: Factory; set: (patch: Partial<Factory>) => void }) {
+  const [at, setAt] = useState<number | null>(null);
+  const agents = [...factory.agents, ...factory.scorers].map((a): [string, string] => [a.id, a.id]);
+  const checks = factory.parts.filter((p) => p.kind === 'check');
+  const stageIds: [string, string][] = factory.line.map((s) => [s.id, s.id]);
+  const selected = at !== null && at < factory.line.length ? at : null;
+
+  const stage = (i: number, patch: Partial<LineStage>) => {
+    const old = factory.line[i]!.id;
+    const renamed = patch.id !== undefined && patch.id !== old ? patch.id : null;
+    const line = factory.line.map((s, j) => {
+      const next = j === i ? { ...s, ...patch } : s;
+      // A renamed stage takes the stages and benchmarks that point at it along.
+      if (!renamed) return next;
+      return { ...next, then: next.then === old ? renamed : next.then, onFail: next.onFail === old ? renamed : next.onFail };
+    });
+    set(renamed ? { line, benchmarks: factory.benchmarks.map((b) => (b.startAt === old ? { ...b, startAt: renamed } : b)) } : { line });
+  };
+  function addStage() {
+    const id = uniq('stage', factory.line.map((s) => s.id));
+    const last = factory.line[factory.line.length - 1];
+    const firstAgent = factory.agents[0]?.id ?? '';
+    const added: LineStage = firstAgent ? { id, kind: 'agent', agent: firstAgent } : { id, kind: 'human' };
+    set({ line: [...factory.line.map((s) => (s === last ? { ...s, then: id } : s)), added] });
+    setAt(factory.line.length);
+  }
+  function removeStage(i: number) {
+    const id = factory.line[i]!.id;
+    const next = factory.line[i]!.then ?? '';
+    set({ line: factory.line.filter((_, j) => j !== i).map((s) => ({ ...s, then: s.then === id ? next : s.then, onFail: s.onFail === id ? '' : s.onFail })) });
+    setAt(null);
+  }
+
+  const s = selected !== null ? factory.line[selected] : undefined;
+  const i = selected ?? 0;
+  return (
+    <Need
+      id="line"
+      label="line"
+      value={factory.line.length === 0 ? <span className="t-muted">no stages yet. work goes through them in order, from the first</span> : <span className="t-dim" style={{ fontSize: 12 }}>{s ? `changing ${s.id}. click it again to close` : 'click a stage to change it'}</span>}
+      action={<Key size="xs" onClick={addStage}>add stage</Key>}
+    >
+      {factory.line.length > 0 && (
+        <div style={{ margin: '0 -12px' }}>
+          <LineStrip factory={factory} selected={selected ?? undefined} onSelect={(n) => setAt(n === selected ? null : n)} />
+        </div>
+      )}
+      {s && (
+        <div key={i} data-stage-editor={s.id} style={{ ...card, paddingTop: 6 }}>
+          <NameField id={`st-id-${i}`} label="stage" value={s.id} taken={factory.line.map((x) => x.id)} onCommit={(id) => stage(i, { id })} />
+          <Pick id={`st-kind-${i}`} label="done by" value={s.kind} options={[['agent', 'an agent'], ['gate', 'the engine: checks that must pass'], ['human', 'a person']]} onChange={(kind) => stage(i, { kind: kind as LineStage['kind'] })} />
+          {s.kind === 'agent' && <Pick id={`st-ag-${i}`} label="agent" value={s.agent ?? ''} options={[['', 'pick one'], ...agents]} onChange={(a) => stage(i, { agent: a })} />}
+          {s.kind === 'gate' && (
+            <>
+              <FieldRow label="checks" width="14ch">
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                  {checks.length === 0 && <span className="t-muted">add a check on the map first</span>}
+                  {checks.map((c) => (
+                    <Check key={c.id} id={`st-${i}-c-${c.id}`} checked={(s.checks ?? []).includes(c.id)} onChange={(on) => stage(i, { checks: on ? [...(s.checks ?? []), c.id] : (s.checks ?? []).filter((x) => x !== c.id) })}>
+                      {c.name}
+                    </Check>
+                  ))}
+                </div>
+              </FieldRow>
+              <ListText id={`st-pr-${i}`} label="protected tests" value={s.protect} placeholder="tests/**, **/*.test.ts" onChange={(v) => stage(i, { protect: v })} />
+            </>
+          )}
+          {s.kind === 'agent' && <Pick id={`st-iso-${i}`} label="works in" value={s.isolated ? 'copy' : ''} options={[['', 'the real branch'], ['copy', 'a throwaway copy']]} onChange={(v) => stage(i, v === 'copy' ? { isolated: true } : { isolated: false, keep: [] })} />}
+          <Pick id={`st-then-${i}`} label="then" value={s.then ?? ''} options={[['', 'end of the line'], ...stageIds]} onChange={(then) => stage(i, { then })} />
+          {s.kind !== 'human' || s.then ? null : <Text id={`st-mg-${i}`} label="merge with" value={s.merge ?? ''} placeholder="empty merges locally, or a command like gh pr create --fill" onChange={(merge) => stage(i, { merge })} />}
+          {s.kind === 'human' && !s.then && s.merge && <Text id={`st-ld-${i}`} label="landed when" value={s.landed ?? ''} placeholder="gh pr view --json state -q .state | grep -qx MERGED" onChange={(landed) => stage(i, { landed })} />}
+          <Pick id={`st-fail-${i}`} label="if it fails" value={s.onFail ?? ''} options={[['', 'ask a person'], ...stageIds]} onChange={(onFail) => stage(i, { onFail })} />
+          {s.onFail && (
+            <FieldRow id={`st-loop-${i}`} label="max loops" width="14ch">
+              <input id={`st-loop-${i}`} type="number" min={1} className="t-field" style={{ width: '8ch' }} value={s.maxLoops ?? 1} onChange={(e) => stage(i, { maxLoops: Number(e.currentTarget.value) || 1 })} />
+            </FieldRow>
+          )}
+          <span><ArmedKey size="xs" onClick={() => removeStage(i)}>remove stage</ArmedKey></span>
+        </div>
+      )}
+    </Need>
+  );
+}
+
+/** Where the factory says what happened: a Slack channel, a command, or both, per report. */
+function TellsYou({ factory, set }: { factory: Factory; set: (patch: Partial<Factory>) => void }) {
+  const [added, setAdded] = useState('');
+  const [channels, setChannels] = useState<Choice[] | null>(null);
+  useEffect(() => {
+    // No Slack, or no answer: the channel is typed instead of picked.
+    api.connectionChoices('slack').then(setChannels, () => setChannels(null));
+  }, []);
+  const report = (i: number, patch: Partial<Report>) => set({ reports: factory.reports.map((r, j) => (j === i ? { ...r, ...patch } : r)) });
+  const add = (base: string) => {
+    const id = uniq(base, factory.reports.map((r) => r.id));
+    set({ reports: [...factory.reports, { id, on: ['handoff', 'failed', 'merged'], command: '', keys: [], slack: '' }] });
+    setAdded(id);
+  };
+  return (
+    <Need
+      id="reports"
+      label="tells you"
+      value={factory.reports.length === 0 ? <span className="t-muted">only here. add a channel or a command to hear about work elsewhere</span> : undefined}
+      action={
+        <>
+          <Key size="xs" onClick={() => add('slack')}>+ a slack channel</Key>
+          <Key size="xs" onClick={() => add('command')}>+ a command</Key>
+        </>
+      }
+    >
+      {factory.reports.length > 0 && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 2, margin: '0 -8px' }}>
+          {factory.reports.map((r, i) => (
+            <ReportCard
+              key={i}
+              i={i}
+              factory={factory.id}
+              r={r}
+              channels={channels}
+              startOpen={r.id === added}
+              report={report}
+              remove={() => {
+                for (const k of r.keys ?? []) void api.setReportKey(factory.id, r.id, k, '').catch(() => {});
+                set({ reports: factory.reports.filter((_, j) => j !== i) });
+              }}
+            />
+          ))}
+        </div>
+      )}
+    </Need>
+  );
+}
+
+/** Every source, by hand: its own command, how often it pulls, and whether it starts work by itself. */
 function Sources({ factory, sources, part, set }: { factory: Factory; sources: Part[]; part: (id: string, patch: Partial<Part>) => void; set: (p: Partial<Factory>) => void }) {
   const [templates, setTemplates] = useState<SourceTemplate[]>([]);
   const [connections, setConnections] = useState<Connection[]>([]);
-  const [byHand, setByHand] = useState(false);
   useEffect(() => {
     api.sourceTemplates().then(setTemplates, showProblem);
-    // Connections are set in settings, so look again whenever this window comes back.
+    // Connections are set in integrations, so look again whenever this window comes back.
     const load = () => void api.connections().then(setConnections, () => undefined);
     load();
     window.addEventListener('focus', load);
@@ -236,24 +478,16 @@ function Sources({ factory, sources, part, set }: { factory: Factory; sources: P
     set({ parts: [...factory.parts, blank] });
   }
   return (
-    <Pane title="sources" style={paneStyle}>
-      <p className="t-muted">bring work in from a service: sign in, then tick this factory. signing in counts for every factory on this machine.</p>
-      <FactoryIntegrations factoryId={factory.id} />
-      <button type="button" className="t-key" aria-expanded={byHand} style={{ justifyContent: 'flex-start', gap: 8, marginTop: 4 }} onClick={() => setByHand(!byHand)}>
-        <span className="t-dim" aria-hidden="true">{byHand ? '▾' : '▸'}</span>
-        <span>add or fine-tune sources by hand</span>
-        <span className="t-dim">{sources.length === 0 ? 'a command of your own, how often to pull, starting work by itself' : `${sources.length} here · how often each pulls, its command, starting work by itself`}</span>
-      </button>
-      {byHand && (
-        <span style={{ display: 'flex', gap: 4, flexWrap: 'wrap', paddingLeft: 8 }}>
-          <span className="t-dim">add by hand:</span>
-          {templates.map((t) => (
-            <Key key={t.id} size="xs" onClick={() => add(t)}><Logo name={t.id} size={12} />{t.name.toLowerCase()}</Key>
-          ))}
-          <Key size="xs" title="Any command that prints a JSON list of tickets" onClick={() => add()}>other</Key>
-        </span>
-      )}
-      {byHand && sources.map((p) => (
+    <Pane id="tuning-sources" title="sources, by hand" heading={3} style={paneStyle}>
+      <span style={{ display: 'flex', gap: 4, flexWrap: 'wrap', alignItems: 'baseline' }}>
+        <span className="t-muted">add:</span>
+        {templates.map((t) => (
+          <Key key={t.id} size="xs" onClick={() => add(t)}><Logo name={t.id} size={12} />{t.name.toLowerCase()}</Key>
+        ))}
+        <Key size="xs" title="Any command that prints a JSON list of tickets" onClick={() => add()}>other</Key>
+      </span>
+      {sources.length === 0 && <p className="t-dim">none yet. a source is a command that prints a JSON list of tickets. the services under work comes from make one for you</p>}
+      {sources.map((p) => (
         <SourceCard
           key={p.id}
           factory={factory.id}
@@ -274,8 +508,8 @@ function Sources({ factory, sources, part, set }: { factory: Factory; sources: P
 }
 
 /** One line until it's opened, so a long setup page stays readable. */
-function Fold({ title, hint, logo, children }: { title: string; hint?: ReactNode; logo?: string; children: ReactNode }) {
-  const [open, setOpen] = useState(false);
+function Fold({ title, hint, logo, startOpen = false, children }: { title: string; hint?: ReactNode; logo?: string; startOpen?: boolean; children: ReactNode }) {
+  const [open, setOpen] = useState(startOpen);
   return (
     <div style={open ? card : undefined}>
       <button type="button" className="t-key" aria-expanded={open} style={{ width: '100%', justifyContent: 'flex-start', gap: 8 }} onClick={() => setOpen(!open)}>
@@ -289,12 +523,11 @@ function Fold({ title, hint, logo, children }: { title: string; hint?: ReactNode
   );
 }
 
-function RolePane({ title, noun, note, fallback, items, runners, onChange }: { title: string; noun: string; note?: string; fallback?: string; items: Agent[]; runners: [string, string][]; onChange: (next: Agent[]) => void }) {
+function RolePane({ id, title, noun, empty, fallback, items, runners, onChange }: { id: string; title: string; noun: string; empty: string; fallback?: string; items: Agent[]; runners: [string, string][]; onChange: (next: Agent[]) => void }) {
   const edit = (i: number, patch: Partial<Agent>) => onChange(items.map((a, j) => (j === i ? { ...a, ...patch } : a)));
   return (
-    <Pane title={title} right={<Key size="xs" onClick={() => onChange([...items, { id: uniq(noun, items.map((a) => a.id)), description: '', harness: '', runner: '', prompt: '' }])}>add {noun}</Key>} style={paneStyle}>
-      {note && <p className="t-muted">{note}</p>}
-      {items.length === 0 && <Empty style={{ padding: 0 }}>no {title}</Empty>}
+    <Pane id={id} title={title} heading={3} right={<Key size="xs" onClick={() => onChange([...items, { id: uniq(noun, items.map((a) => a.id)), description: '', harness: '', runner: '', prompt: '' }])}>add {noun}</Key>} style={paneStyle}>
+      {items.length === 0 && <p className="t-dim">{empty}</p>}
       {items.map((a, i) => (
         <Fold key={i} title={a.id} logo={a.harness || fallback} hint={a.description}>
           <Text id={`${noun}-id-${i}`} label="name" value={a.id} onChange={(id) => edit(i, { id })} />
@@ -322,8 +555,8 @@ function BenchPane({ factory, set }: { factory: Factory; set: (patch: Partial<Fa
   const task = (i: number, t: number, patch: Partial<BenchTask>) => edit(i, { tasks: factory.benchmarks[i]!.tasks.map((x, j) => (j === t ? { ...x, ...patch } : x)) });
   const starts: [string, string][] = [['', 'first stage'], ...factory.line.filter((s) => s.kind === 'agent').map((s): [string, string] => [s.id, s.id])];
   return (
-    <Pane title="benchmarks" right={<Key size="xs" onClick={() => set({ benchmarks: [...factory.benchmarks, { id: uniq('suite', factory.benchmarks.map((s) => s.id)), description: '', base: '', startAt: '', tasks: [] }] })}>add suite</Key>} style={paneStyle}>
-      {factory.benchmarks.length === 0 && <Empty style={{ padding: 0 }}>no benchmarks</Empty>}
+    <Pane id="tuning-benchmarks" title="benchmarks" heading={3} right={<Key size="xs" onClick={() => set({ benchmarks: [...factory.benchmarks, { id: uniq('suite', factory.benchmarks.map((s) => s.id)), description: '', base: '', startAt: '', tasks: [] }] })}>add suite</Key>} style={paneStyle}>
+      {factory.benchmarks.length === 0 && <p className="t-dim">none yet. a suite is a few fixed tasks run down the line, to see whether a change to the factory helped</p>}
       {factory.benchmarks.map((s, i) => {
         const latest = results.find((r) => r.suite === s.id)?.run;
         const last = results.filter((r) => r.suite === s.id && r.run === latest);
@@ -375,7 +608,7 @@ function BenchPane({ factory, set }: { factory: Factory; set: (patch: Partial<Fa
 }
 
 /** One report: where it goes, a Slack channel or a command or both, and a test that sends it for real. */
-function ReportCard({ i, factory, r, report, remove }: { i: number; factory: string; r: Report; report: (i: number, patch: Partial<Report>) => void; remove: () => void }) {
+function ReportCard({ i, factory, r, channels, startOpen, report, remove }: { i: number; factory: string; r: Report; channels: Choice[] | null; startOpen: boolean; report: (i: number, patch: Partial<Report>) => void; remove: () => void }) {
   const [tested, setTested] = useState<{ ok: boolean; said: string } | 'testing' | null>(null);
   const shape = JSON.stringify([r.slack, r.command, r.keys, r.on]);
   // A change makes the last test's answer stale.
@@ -391,7 +624,7 @@ function ReportCard({ i, factory, r, report, remove }: { i: number; factory: str
     }
   };
   return (
-    <Fold title={r.id} hint={r.on.length === 0 ? 'never: tick when below' : `${list(r.on)}${where ? ` → ${where}` : ' → nowhere yet'}`}>
+    <Fold title={r.id} startOpen={startOpen} hint={r.on.length === 0 ? 'never: tick when below' : `${list(r.on)}${where ? ` → ${where}` : ' → nowhere yet'}`}>
       {/* Its keys are kept under its name, so the name stays one a file can have. */}
       <Text id={`rp-id-${i}`} label="name" value={r.id} onChange={(id) => report(i, { id: id.replace(/[^A-Za-z0-9_.-]/g, '-') })} />
       <FieldRow id={`rp-on-${i}-handoff`} label="when" width="14ch" top>
@@ -406,14 +639,24 @@ function ReportCard({ i, factory, r, report, remove }: { i: number; factory: str
       </FieldRow>
       <FieldRow id={`rp-s-${i}`} label="slack channel" width="14ch" top>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-          <input id={`rp-s-${i}`} className="t-field" spellCheck={false} value={r.slack ?? ''} placeholder="#eng" onChange={(e) => report(i, { slack: e.currentTarget.value })} />
-          <span className="t-dim" style={{ fontSize: 12 }}>the slack connection's bot posts here. invite it to the channel first with /invite @sawtooth</span>
+          {channels && channels.length > 0 ? (
+            <select id={`rp-s-${i}`} className="t-field" value={r.slack ?? ''} onChange={(e) => report(i, { slack: e.currentTarget.value })}>
+              <option value="">no channel</option>
+              {r.slack && !channels.some((c) => c.id === r.slack) && <option value={r.slack}>{r.slack}</option>}
+              {channels.map((c) => <option key={c.id} value={c.id}>{c.label}</option>)}
+            </select>
+          ) : (
+            <input id={`rp-s-${i}`} className="t-field" spellCheck={false} value={r.slack ?? ''} placeholder="#eng" onChange={(e) => report(i, { slack: e.currentTarget.value })} />
+          )}
+          <span className="t-dim" style={{ fontSize: 12 }}>
+            {channels ? 'the slack bot posts here. invite it to the channel first with /invite @sawtooth' : 'slack has to be set up in integrations first. then pick a channel here'}
+          </span>
         </div>
       </FieldRow>
       <FieldRow id={`rp-c-${i}`} label="command" width="14ch" top>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
           <input id={`rp-c-${i}`} className="t-field" spellCheck={false} value={r.command ?? ''} placeholder="optional. a shell command, such as a webhook with curl" onChange={(e) => report(i, { command: e.currentTarget.value })} />
-          <span className="t-dim" style={{ fontSize: 12 }}>it gets $ST_EVENT $ST_KEY $ST_TITLE $ST_URL $ST_STAGE $ST_BRANCH $ST_SOURCE $ST_TEXT</span>
+          {r.command?.trim() && <span className="t-dim" style={{ fontSize: 12 }}>it gets $ST_EVENT $ST_KEY $ST_TITLE $ST_URL $ST_STAGE $ST_BRANCH $ST_SOURCE $ST_TEXT</span>}
         </div>
       </FieldRow>
       {r.command?.trim() && (

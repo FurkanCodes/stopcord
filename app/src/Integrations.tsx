@@ -1,5 +1,5 @@
 import { useEffect, useState, type CSSProperties, type ReactNode } from 'react';
-import { api, failureText, type Choice, type Connection, type ConnectionField, type Factory, type Knock, type Machine, type Part, type Report, type Settings, type Signing, type SourceTemplate } from './api';
+import { api, failureText, type Choice, type Connection, type ConnectionField, type Factory, type Knock, type Machine, type Part, type Settings, type Signing, type SourceTemplate } from './api';
 import { ConnectionState } from './Connections';
 import { sourceState, useSourceReady } from './factory/sourceState';
 import { go, refreshFactories, saveNow, showProblem, useStore } from './store';
@@ -20,20 +20,15 @@ interface Ctx {
   factories: Factory[];
   /** Every factory, for what's machine-wide, such as Slack's default factory. */
   allFactories: Factory[];
-  /** Inside a factory's setup: blocks instead of panes. */
-  flat: boolean;
+  /** Inside a factory's setup: one row per service, with its steps folded under it. */
+  rows: boolean;
   settings: Settings;
   change: (next: Settings) => Promise<void>;
   refresh: () => void;
 }
 
-/**
- * One place to set up every outside service: sign in once, pick what comes in, and pick the
- * factories it goes to. Each card walks through its steps in order and ticks them off, so nobody
- * needs a guide.
- */
 /** What the cards need, loaded once. `only` narrows the factories to one, for its setup. */
-function useIntegrations(only?: string, flat = false) {
+function useIntegrations(only?: string, rows = false) {
   const all = useStore((s) => s.factories);
   const factories = only ? all.filter((f) => f.id === only) : all;
   const [connections, setConnections] = useState<Connection[]>([]);
@@ -58,7 +53,7 @@ function useIntegrations(only?: string, flat = false) {
     }
   }
   const ready = m && connections.length > 0 && templates.length > 0;
-  const ctx: Ctx | null = ready ? { connections, templates, factories, allFactories: all, settings: m.settings, change, refresh, flat } : null;
+  const ctx: Ctx | null = ready ? { connections, templates, factories, allFactories: all, settings: m.settings, change, refresh, rows } : null;
   return { ctx, message };
 }
 
@@ -113,17 +108,40 @@ export function Integrations() {
 }
 
 /**
- * The same cards inside one factory's setup, offering only that factory. Signing in here signs in
- * for every factory on this machine, and the cards say so.
+ * The same services inside one factory's setup: one row each, with its state and the one thing
+ * to do next. The steps open under a row only when they're needed. Signing in here signs in for
+ * every factory on this machine.
  */
 export function FactoryIntegrations({ factoryId }: { factoryId: string }) {
   const { ctx, message } = useIntegrations(factoryId, true);
   if (!ctx) return <p className="t-dim">loading…</p>;
   return (
-    <div data-factory-integrations style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+    <div data-factory-integrations style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
       <Cards ctx={ctx} />
       {message && <span className="t-red" role="alert">{message}</span>}
     </div>
+  );
+}
+
+/** A key that copies a command, and says so for a moment. */
+function CopyKey({ text, children }: { text: string; children: ReactNode }) {
+  const [copied, setCopied] = useState(false);
+  useEffect(() => {
+    if (!copied) return;
+    const t = setTimeout(() => setCopied(false), 1800);
+    return () => clearTimeout(t);
+  }, [copied]);
+  return (
+    <Key
+      size="xs"
+      title={text}
+      onClick={async () => {
+        await navigator.clipboard?.writeText(text).catch(() => undefined);
+        setCopied(true);
+      }}
+    >
+      {copied ? 'copied ✓' : children}
+    </Key>
   );
 }
 
@@ -131,13 +149,15 @@ export function FactoryIntegrations({ factoryId }: { factoryId: string }) {
 function Step({ n, done, title, summary, current, children }: { n: number; done: boolean; title: string; summary?: ReactNode; current: boolean; children?: ReactNode }) {
   const [open, setOpen] = useState(false);
   const shown = current || open;
+  // A step still to come is quieter, in a colour that still reads: not faded out.
+  const later = !done && !current;
   return (
-    <div data-step={n} data-done={done || undefined} style={{ display: 'flex', flexDirection: 'column', gap: 6, opacity: !done && !current ? 0.55 : 1 }}>
+    <div data-step={n} data-done={done || undefined} style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
       <div style={{ display: 'flex', gap: 10, alignItems: 'baseline', flexWrap: 'wrap' }}>
-        <span aria-hidden="true" className={done ? undefined : current ? undefined : 't-dim'} style={{ width: '3ch', flexShrink: 0, color: done ? 'var(--ink)' : undefined }}>
+        <span aria-hidden="true" style={{ width: '3ch', flexShrink: 0, color: later ? 'var(--ink-3)' : 'var(--ink)' }}>
           {done ? '✓' : `${n}.`}
         </span>
-        <span style={{ color: 'var(--ink)' }}>{title}</span>
+        <span style={{ color: later ? 'var(--ink-3)' : 'var(--ink)' }}>{title}</span>
         {done && summary && <span className="t-muted" style={{ minWidth: 0, overflowWrap: 'anywhere' }}>{summary}</span>}
         {done && children && !current && (
           <Key size="xs" aria-expanded={open} onClick={() => setOpen(!open)}>{open ? 'done' : 'change'}</Key>
@@ -148,28 +168,42 @@ function Step({ n, done, title, summary, current, children }: { n: number; done:
   );
 }
 
-/** The card's frame: its logo and name, and one line that says whether it's working. */
-function Card({ id, name, state, flat, children }: { id: string; name: string; state: ReactNode; flat: boolean; children: ReactNode }) {
-  const body = (
-    <div data-integration={id} style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-      <span role="status" data-integration-state={id}>{state}</span>
-      {children}
-    </div>
-  );
+const NAME_WIDTH = '10ch';
+
+/**
+ * The card's frame: its logo and name, and one line that says whether it's working. As a row, in
+ * a factory's setup, the state and the next action share that line, and the steps open under it.
+ */
+function Card({ id, name, state, rows, action, open, onOpen, children }: { id: string; name: string; state: ReactNode; rows: boolean; action?: ReactNode; open?: boolean; onOpen?: (open: boolean) => void; children?: ReactNode }) {
   const title = (
     <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
       <Logo name={id} size={12} />
       {name.toLowerCase()}
     </span>
   );
-  if (flat) {
+  if (rows) {
     return (
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 8, padding: '10px 0', borderTop: '1px solid var(--line-soft, var(--line))' }}>
-        <span style={{ color: 'var(--ink)' }}>{title}</span>
-        {body}
+      <div data-integration={id} style={{ display: 'flex', flexDirection: 'column', gap: 6, padding: '3px 0' }}>
+        <div style={{ display: 'flex', gap: '4px 12px', alignItems: 'baseline', flexWrap: 'wrap', minHeight: 26 }}>
+          <span style={{ width: NAME_WIDTH, flexShrink: 0, color: 'var(--ink)' }}>{title}</span>
+          <span role="status" data-integration-state={id} style={{ flex: '1 1 220px', minWidth: 0, overflowWrap: 'anywhere' }}>{state}</span>
+          {action && <span style={{ display: 'inline-flex', gap: 8, alignItems: 'baseline', flexWrap: 'wrap' }}>{action}</span>}
+          {onOpen && (
+            <Key size="xs" aria-expanded={Boolean(open)} title={open ? 'Hide the steps' : 'Every step, to change one'} onClick={() => onOpen(!open)}>
+              <span aria-hidden="true">{open ? '▾' : '▸'}</span> steps
+            </Key>
+          )}
+        </div>
+        {open && children && <div style={{ display: 'flex', flexDirection: 'column', gap: 12, padding: `4px 0 8px calc(${NAME_WIDTH} + 12px)` }}>{children}</div>}
       </div>
     );
   }
+  const body = (
+    <div data-integration={id} style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      <span role="status" data-integration-state={id}>{state}</span>
+      {children}
+    </div>
+  );
   return (
     <Pane title={title} style={paneStyle}>
       {body}
@@ -316,6 +350,8 @@ function GitHubCard({ ctx }: { ctx: Ctx }) {
   const t = ctx.templates.find((x) => x.id === 'github');
   const [tested, retest] = useTest(c);
   const [repos, setRepos] = useState<Record<string, string | { error: string }>>({});
+  // Asks again for the repos, after a remote is added.
+  const [look, setLook] = useState(0);
   const signed = tested !== 'testing' && tested?.ok === true;
   useEffect(() => {
     if (!signed) return;
@@ -325,16 +361,52 @@ function GitHubCard({ ctx }: { ctx: Ctx }) {
         (e) => setRepos((r) => ({ ...r, [f.id]: { error: failureText(e) } })),
       );
     }
-  }, [signed, ctx.factories.map((f) => f.id).join()]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [signed, look, ctx.factories.map((f) => f.id).join()]); // eslint-disable-line react-hooks/exhaustive-deps
   if (!c || !t) return null;
   const using = ctx.factories.filter((f) => f.parts.some((p) => p.id === t.id));
+
+  if (ctx.rows) {
+    const here = ctx.factories[0];
+    const repo = here ? repos[here.id] : undefined;
+    const part = here?.parts.find((p) => p.id === t.id);
+    const state = !signed ? (
+      testLine(tested, 'checking gh…')
+    ) : repo === undefined ? (
+      <ConnectionState ok={null}>finding its repo…</ConnectionState>
+    ) : typeof repo === 'object' ? (
+      <ConnectionState ok={null}>{repo.error}</ConnectionState>
+    ) : (
+      <span style={{ display: 'inline-flex', gap: 10, alignItems: 'baseline', flexWrap: 'wrap' }}>
+        <ConnectionState ok={part ? true : null}>{repo}</ConnectionState>
+        {part && here && <PartState f={here} p={part} />}
+      </span>
+    );
+    const action =
+      tested === 'testing' ? null : !signed ? (
+        <>
+          <CopyKey text="gh auth login">copy gh auth login</CopyKey>
+          <Key size="xs" onClick={retest}>check again</Key>
+        </>
+      ) : typeof repo === 'object' ? (
+        <>
+          <CopyKey text="git remote add origin git@github.com:OWNER/REPO.git">copy git remote add origin …</CopyKey>
+          <Key size="xs" onClick={() => setLook((n) => n + 1)}>check again</Key>
+        </>
+      ) : typeof repo === 'string' && here ? (
+        <Check id={`ig-f-${t.id}-${here.id}`} checked={Boolean(part)} onChange={(on) => void setSource(here, t, on ? {} : null)}>
+          bring open issues in
+        </Check>
+      ) : null;
+    return <Card id="github" name="GitHub" rows state={state} action={action} />;
+  }
+
   return (
-    <Card id="github" name="GitHub" flat={ctx.flat} state={signed ? <ConnectionState ok>{said(tested)}{using.length > 0 ? ` · issues go to ${using.map((f) => f.name).join(', ')}` : ''}</ConnectionState> : testLine(tested, 'checking gh…')}>
+    <Card id="github" name="GitHub" rows={false} state={signed ? <ConnectionState ok>{using.length > 0 ? `issues go to ${using.map((f) => f.name).join(', ')}` : 'signed in · pick where its issues go below'}</ConnectionState> : testLine(tested, 'checking gh…')}>
       <Step n={1} done={signed} current={!signed} title="sign in with gh" summary={signed ? said(tested) : undefined}>
         <span className="t-muted">sawtooth uses the gh command as you, so there's no token to paste. in a terminal, run</span>
         <code style={{ userSelect: 'text' }}>gh auth login</code>
         <span>
-          <Key size="xs" onClick={retest}>check again</Key> <Key size="xs" onClick={() => void navigator.clipboard?.writeText('gh auth login')}>copy the command</Key>
+          <Key size="xs" onClick={retest}>check again</Key> <CopyKey text="gh auth login">copy the command</CopyKey>
         </span>
       </Step>
       <Step n={2} done={signed && using.length > 0} current={signed} title="bring open issues into">
@@ -404,7 +476,7 @@ function BrowserSignIn({ c, onDone, other, note }: { c: Connection; onDone: () =
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
       <span style={{ display: 'flex', gap: 10, alignItems: 'baseline', flexWrap: 'wrap' }}>
-        <Key onClick={() => void start()}>sign in with {c.name} ↗</Key>
+        <button type="button" className="t-solid is-xs" onClick={() => void start()}>sign in with {c.name.toLowerCase()} ↗</button>
         {other}
       </span>
       {note && <span className="t-dim">{note}</span>}
@@ -429,7 +501,9 @@ function TrackerCard({ ctx, c }: { ctx: Ctx; c: Connection }) {
   // Both ways stay on offer: sign in in the browser, or paste a key. Whichever was used shows first.
   const pasted = c.set.includes(c.fields.find((f) => f.required)?.name ?? '');
   const [chosen, setWay] = useState<'browser' | 'key' | null>(null);
-  const way = !c.oauth ? 'key' : (chosen ?? (pasted && !c.signedIn ? 'key' : 'browser'));
+  // As a row, signing in in the browser is the row's own button, so the steps hold the pasting.
+  const way = !c.oauth || ctx.rows ? 'key' : (chosen ?? (pasted && !c.signedIn ? 'key' : 'browser'));
+  const [open, setOpen] = useState(false);
   const keyWord = c.id === 'sentry' ? 'a token' : 'an API key';
 
   // What to pull: Sentry's organization then project, Linear's team.
@@ -464,13 +538,46 @@ function TrackerCard({ ctx, c }: { ctx: Ctx; c: Connection }) {
   const picked = levels.every((l) => value(l.name));
   const what = levels.map((l) => value(l.name)).join(' / ');
   const tokenField = secret[0];
+  const pickWord = c.id === 'sentry' ? 'pick the project' : 'pick the team';
+  const bringWord = c.id === 'sentry' ? 'bring its fatal, unresolved issues in' : "bring its issues that aren't started in";
+
+  // As a row: the one factory, what it pulls, and the next thing to do.
+  const here = ctx.rows ? ctx.factories[0] : undefined;
+  const part = here?.parts.find((p) => p.id === t.id);
+  const rowState = !signed ? (
+    testLine(tested, c.missing.length > 0 ? 'not signed in' : 'checking…')
+  ) : !picked ? (
+    <ConnectionState ok={null}>{c.signedIn ? `signed in as ${c.signedIn}` : 'signed in'} · {c.id === 'sentry' ? 'pick a project' : 'pick a team'} to bring in</ConnectionState>
+  ) : (
+    <span style={{ display: 'inline-flex', gap: 10, alignItems: 'baseline', flexWrap: 'wrap' }}>
+      <ConnectionState ok={part ? true : null}>{what}</ConnectionState>
+      {part && here && <PartState f={here} p={part} />}
+    </span>
+  );
+  const rowAction = !here ? null : !signed ? (
+    tested === 'testing' ? null : c.oauth ? (
+      <BrowserSignIn c={c} onDone={saved} other={open ? undefined : <Key size="xs" onClick={() => setOpen(true)}>or paste {keyWord}</Key>} />
+    ) : open ? null : (
+      <button type="button" className="t-solid is-xs" onClick={() => setOpen(true)}>paste {keyWord}</button>
+    )
+  ) : !picked ? (
+    open ? null : <button type="button" className="t-solid is-xs" onClick={() => setOpen(true)}>{pickWord}</button>
+  ) : (
+    <Check id={`ig-f-${t.id}-${here.id}`} checked={Boolean(part)} onChange={(on) => void setSource(here, t, on ? wanted : null)}>
+      {bringWord}
+    </Check>
+  );
+
   return (
     <Card
       id={c.id}
       name={c.name}
-      flat={ctx.flat}
+      rows={ctx.rows}
+      action={rowAction}
+      open={open}
+      onOpen={ctx.rows ? setOpen : undefined}
       state={
-        !signed ? testLine(tested, c.missing.length > 0 ? 'not set up yet' : 'checking…') : using.length > 0 ? <ConnectionState ok>{`${what} · issues go to ${using.map((f) => f.name).join(', ')}`}</ConnectionState> : <ConnectionState ok={null}>signed in · pick where its issues go below</ConnectionState>
+        ctx.rows ? rowState : !signed ? testLine(tested, c.missing.length > 0 ? 'not set up yet' : 'checking…') : using.length > 0 ? <ConnectionState ok>{`${what} · issues go to ${using.map((f) => f.name).join(', ')}`}</ConnectionState> : <ConnectionState ok={null}>signed in · pick where its issues go below</ConnectionState>
       }
     >
       <Step n={1} done={signed} current={!signed} title={`sign in to ${c.name}`} summary={signed ? (c.signedIn ? `signed in as ${c.signedIn}` : said(tested)) : undefined}>
@@ -478,7 +585,7 @@ function TrackerCard({ ctx, c }: { ctx: Ctx; c: Connection }) {
           <span style={{ display: 'flex', gap: 8, alignItems: 'baseline', flexWrap: 'wrap' }}>
             <span className="t-muted">signed in as {c.signedIn}, in the browser</span>
             <Key size="xs" onClick={() => void api.oauthSignOut(c.id).then(saved, showProblem)}>sign out</Key>
-            <Key size="xs" aria-expanded={way === 'key'} onClick={() => setWay(way === 'key' ? 'browser' : 'key')}>use {keyWord} instead</Key>
+            {!ctx.rows && <Key size="xs" aria-expanded={way === 'key'} onClick={() => setWay(way === 'key' ? 'browser' : 'key')}>use {keyWord} instead</Key>}
           </span>
         ) : (
           c.oauth &&
@@ -493,7 +600,7 @@ function TrackerCard({ ctx, c }: { ctx: Ctx; c: Connection }) {
         )}
         {way === 'key' && (
           <>
-            {c.oauth && !c.signedIn && (
+            {c.oauth && !c.signedIn && !ctx.rows && (
               <span>
                 <Key size="xs" onClick={() => setWay('browser')}>or sign in with {c.name} in the browser</Key>
               </span>
@@ -518,7 +625,7 @@ function TrackerCard({ ctx, c }: { ctx: Ctx; c: Connection }) {
         )}
         {more && optional.map((f) => <SecretField key={f.name} c={c} f={f} onSaved={saved} />)}
       </Step>
-      <Step n={2} done={signed && picked} current={signed && !picked} title={c.id === 'sentry' ? 'pick the project' : 'pick the team'} summary={picked ? what : undefined}>
+      <Step n={2} done={signed && picked} current={signed && !picked} title={pickWord} summary={picked ? what : undefined}>
         {levels.map((l) => {
           const list = lists[l.name];
           return (
@@ -546,12 +653,17 @@ function TrackerCard({ ctx, c }: { ctx: Ctx; c: Connection }) {
           );
         })}
       </Step>
-      <Step n={3} done={signed && picked && using.length > 0} current={signed && picked} title={c.id === 'sentry' ? 'bring its fatal, unresolved issues into' : "bring its issues that aren't started into"}>
-        {ctx.factories.map((f) => (
-          <FactoryRow key={f.id} f={f} t={t} wanted={picked ? wanted : undefined} disabled={!picked} onToggle={(on) => void setSource(f, t, on ? wanted : null)} />
-        ))}
-        <span className="t-dim" style={{ fontSize: 12 }}>each one pulls every 5 minutes, and waits for you to start it. change that in the factory's setup.</span>
-      </Step>
+      {ctx.rows ? (
+        // The row has the tick for this factory, so there's no third step here.
+        <span className="t-dim" style={{ fontSize: 12 }}>once ticked, it pulls every 5 minutes, and each issue waits for you to start it. change that under tuning, in sources by hand.</span>
+      ) : (
+        <Step n={3} done={signed && picked && using.length > 0} current={signed && picked} title={c.id === 'sentry' ? 'bring its fatal, unresolved issues into' : "bring its issues that aren't started into"}>
+          {ctx.factories.map((f) => (
+            <FactoryRow key={f.id} f={f} t={t} wanted={picked ? wanted : undefined} disabled={!picked} onToggle={(on) => void setSource(f, t, on ? wanted : null)} />
+          ))}
+          <span className="t-dim" style={{ fontSize: 12 }}>each one pulls every 5 minutes, and waits for you to start it. change that in the factory's setup.</span>
+        </Step>
+      )}
     </Card>
   );
 }
@@ -607,8 +719,20 @@ function SlackCard({ ctx, c }: { ctx: Ctx; c: Connection }) {
     <ConnectionState ok>{`listening · ${allowed.length} ${allowed.length === 1 ? 'person' : 'people'} can send work`}</ConnectionState>
   );
 
+  if (ctx.rows) {
+    // Slack is set up once for the machine. Here it only says what reaches this factory.
+    const here = ctx.factories[0];
+    const working = listening && allowed.length > 0;
+    const rowState = working && here ? (
+      <ConnectionState ok>{`mentions that start with "${here.name}:" come here${s.slack.factory === here.id ? ', and so do ones that name no factory' : ''}`}</ConnectionState>
+    ) : (
+      state
+    );
+    return <Card id="slack" name="Slack" rows state={rowState} action={working ? null : <Key size="xs" onClick={() => go({ screen: 'integrations' })}>set up in integrations</Key>} />;
+  }
+
   return (
-    <Card id="slack" name="Slack" flat={ctx.flat} state={state}>
+    <Card id="slack" name="Slack" rows={false} state={state}>
       <Step n={1} done={bot || app} current={!bot && !app} title="make the Slack app" summary="made">
         <span className="t-muted">copy the manifest, open slack, choose "from a manifest", pick your workspace, paste it, and press create. then press install to workspace and allow.</span>
         <span style={{ display: 'flex', gap: 6 }}>
@@ -660,62 +784,8 @@ function SlackCard({ ctx, c }: { ctx: Ctx; c: Connection }) {
           {ctx.allFactories.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}
         </select>
       </Step>
-      <SlackReports ctx={ctx} current={works} />
+      {/* Posting is one of the ways a factory tells you, so it's set there, with the others. */}
+      <span className="t-dim" style={{ fontSize: 12 }}>to post updates to a channel, open a factory's setup, and pick it under tells you.</span>
     </Card>
-  );
-}
-
-const SLACK_REPORT = 'slack';
-const SLACK_EVENTS = ['question', 'handoff', 'failed', 'merged'];
-
-/** Step 6: a channel per factory that hears when work needs someone, is ready or lands. */
-function SlackReports({ ctx, current }: { ctx: Ctx; current: boolean }) {
-  const [channels, setChannels] = useState<Choice[] | string>('');
-  const [said, setSaid] = useState<Record<string, { ok: boolean; said: string } | 'sending'>>({});
-  useEffect(() => {
-    if (!current) return;
-    setChannels('loading');
-    api.connectionChoices('slack').then(setChannels, (e) => setChannels(failureText(e)));
-  }, [current]);
-  const posting = ctx.factories.filter((f) => f.reports.some((r) => r.id === SLACK_REPORT && r.slack));
-  const set = async (f: Factory, channel: string) => {
-    const report: Report = { id: SLACK_REPORT, on: SLACK_EVENTS, command: '', keys: [], slack: channel };
-    const had = f.reports.some((r) => r.id === SLACK_REPORT);
-    const reports = !channel ? f.reports.filter((r) => r.id !== SLACK_REPORT) : had ? f.reports.map((r) => (r.id === SLACK_REPORT ? { ...r, slack: channel } : r)) : [...f.reports, report];
-    await saveNow({ ...f, reports }).catch(showProblem);
-  };
-  return (
-    <Step n={6} done={posting.length > 0} current={current && posting.length === 0} title="post updates to a channel" summary={posting.map((f) => `${f.name} → ${f.reports.find((r) => r.id === SLACK_REPORT)?.slack}`).join(', ')}>
-      <span className="t-muted">the bot posts when work asks a question, is ready to merge, fails, or merges. invite it to the channel first.</span>
-      {typeof channels === 'string' && channels && <span className={channels === 'loading' ? 't-dim' : 't-red'}>{channels === 'loading' ? 'asking slack for channels…' : channels}</span>}
-      {ctx.factories.map((f) => {
-        const r = f.reports.find((x) => x.id === SLACK_REPORT);
-        const s = said[f.id];
-        return (
-          <span key={f.id} style={{ display: 'flex', gap: 10, alignItems: 'baseline', flexWrap: 'wrap' }}>
-            <span style={{ width: '14ch', flexShrink: 0, color: 'var(--ink)' }}>{f.name}</span>
-            <select id={`ig-sl-r-${f.id}`} className="t-field" style={{ flex: '1 1 200px' }} value={r?.slack ?? ''} onChange={(e) => void set(f, e.currentTarget.value)}>
-              <option value="">no channel</option>
-              {r?.slack && !(Array.isArray(channels) && channels.some((c) => c.id === r.slack)) && <option value={r.slack}>{r.slack}</option>}
-              {Array.isArray(channels) && channels.map((c) => <option key={c.id} value={c.id}>{c.label}</option>)}
-            </select>
-            {r?.slack && (
-              <Key
-                size="xs"
-                disabled={s === 'sending'}
-                onClick={async () => {
-                  setSaid((x) => ({ ...x, [f.id]: 'sending' }));
-                  const out = await api.testReport(f.id, SLACK_REPORT).catch((e) => ({ ok: false, said: failureText(e) }));
-                  setSaid((x) => ({ ...x, [f.id]: out }));
-                }}
-              >
-                {s === 'sending' ? 'sending…' : 'send a test'}
-              </Key>
-            )}
-            {s && s !== 'sending' && <ConnectionState ok={s.ok}>{s.said}</ConnectionState>}
-          </span>
-        );
-      })}
-    </Step>
   );
 }
