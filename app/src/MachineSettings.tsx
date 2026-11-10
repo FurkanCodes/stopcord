@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api, failureText, type HarnessProfile, type Machine, type Settings } from './api';
-import { go, showProblem, useStore } from './store';
-import { ConnectionsPane } from './Connections';
+import { go, showProblem } from './store';
 import { Brand, Check, Key, Pane, Screen, Sep } from './tui/kit';
 import { useKeys } from './tui/keys';
 import { Named } from './tui/Logo';
@@ -10,7 +9,6 @@ const paneStyle = { padding: '14px 12px 12px', maxWidth: 820, width: '100%', mar
 
 /** Settings that belong to this machine. Everything public is off until it's turned on here. */
 export function MachineSettings() {
-  const factories = useStore((s) => s.factories);
   const [m, setM] = useState<Machine | null>(null);
   const [harnesses, setHarnesses] = useState<HarnessProfile[]>([]);
   const [message, setMessage] = useState('');
@@ -71,7 +69,12 @@ export function MachineSettings() {
         <p className="t-dim" style={{ padding: 20 }}>loading…</p>
       ) : (
         <>
-          <ConnectionsPane settings={s} change={(next) => void change(next)} factories={factories} style={paneStyle} />
+          <Pane title="integrations" heading={1} style={paneStyle}>
+            <p className="t-muted">slack, sentry, linear and github are set up on their own page: sign in once, and pick which factories their work goes to.</p>
+            <span>
+              <Key k="i" onClick={() => go({ screen: 'integrations' })}>open integrations</Key>
+            </span>
+          </Pane>
 
           <Pane title="this machine" style={paneStyle}>
             <p>{m.sandbox ? <span className="t-red">{m.sandbox}</span> : 'this machine can run contained agents'}</p>

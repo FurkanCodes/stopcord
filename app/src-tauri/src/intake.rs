@@ -26,6 +26,8 @@ pub struct Intake {
     slack: Option<(SlackSettings, Arc<std::sync::atomic::AtomicBool>)>,
     /// Whether the Slack connection is up, and what it last said. Nothing while it's off.
     pub slack_state: Option<(bool, String)>,
+    /// Mentions from people not allowed yet, newest first.
+    pub slack_knocks: Vec<crate::slack::Knock>,
 }
 
 impl Engine {

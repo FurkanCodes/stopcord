@@ -28,7 +28,7 @@ try:
     press('3'); time.sleep(1.2); shot('logo-terminals'); check('terminals show logos',imgs()>=4 and bad()==0,(imgs(),bad()))
     press('2'); time.sleep(1.2); shot('logo-map'); check('map shows logos',imgs()>=4 and bad()==0,(imgs(),bad()))
     press('6'); time.sleep(1); shot('logo-setup'); check('setup shows logos',imgs()>=6 and bad()==0,(imgs(),bad()))
-    press('Escape'); time.sleep(0.5); press(','); time.sleep(0.8); shot('logo-settings'); check('settings shows logos',imgs()>=5 and bad()==0,(imgs(),bad()))
+    press('Escape'); time.sleep(0.5); press('i'); time.sleep(1); shot('logo-integrations'); check('integrations shows logos',imgs()>=4 and bad()==0,(imgs(),bad()))
     print('EXIT',FAILS)
 except Exception:
     import traceback; traceback.print_exc(); FAILS.append('crashed')

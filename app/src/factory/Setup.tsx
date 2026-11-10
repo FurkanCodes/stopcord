@@ -247,7 +247,7 @@ function Sources({ factory, sources, part, set }: { factory: Factory; sources: P
       style={paneStyle}
     >
       {sources.length === 0 && (
-        <Empty style={{ padding: 0 }}>no sources. sentry, github issues and linear above bring tickets in by themselves. other runs any command that prints them. or press w on [1] work to write one by hand</Empty>
+        <Empty style={{ padding: 0 }}>no sources. the easy way is integrations, from home: sign in to github, sentry or linear once and tick this factory. the buttons above add one here by hand, and other runs any command that prints tickets</Empty>
       )}
       {sources.map((p) => (
         <SourceCard
@@ -454,7 +454,7 @@ function ConnectionLine({ id, name, c }: { id: string; name: string; c?: Connect
                 ? `your ${c.name} connection: ${c.how}`
                 : `your ${c.name} connection, set once for every factory`}
         </ConnectionState>
-        <Key size="xs" onClick={() => go({ screen: 'settings' })}>{missing.length > 0 ? 'set it up in settings' : 'settings'}</Key>
+        <Key size="xs" onClick={() => go({ screen: 'integrations' })}>{missing.length > 0 ? 'set it up in integrations' : 'integrations'}</Key>
       </span>
     </FieldRow>
   );

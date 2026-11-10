@@ -180,6 +180,20 @@ export interface Connection {
   missing: string[];
 }
 
+/** Something to pick instead of typing it, such as a Sentry project or a Slack channel. */
+export interface Choice {
+  id: string;
+  label: string;
+}
+
+/** Someone who @mentioned the bot and isn't allowed to send work yet. */
+export interface Knock {
+  user: string;
+  name: string;
+  text: string;
+  at: number;
+}
+
 export interface Defaults {
   harness?: string;
   runner?: string;
@@ -511,6 +525,12 @@ export const api = {
   /** Tries the connection for real: who it signs in as, or a Failure saying why not. */
   testConnection: (connection: string) => invoke<string>('test_connection', { connection }),
   openConnectionPage: (connection: string) => invoke<void>('open_connection_page', { connection }),
+  /** What a connection offers to pick from, asked of the service. `parent` narrows it, as a Sentry organization does. */
+  connectionChoices: (connection: string, parent = '') => invoke<Choice[]>('connection_choices', { connection, parent }),
+  /** The GitHub repo a factory's folder points at, such as "acme/web". */
+  githubRepo: (id: string) => invoke<string>('github_repo', { id }),
+  slackKnocks: () => invoke<Knock[]>('slack_knocks'),
+  allowSlackUser: (user: string) => invoke<void>('allow_slack_user', { user }),
   slackManifest: () => invoke<string>('slack_manifest'),
   /** Whether the Slack connection is up, and what it last said. Null while it's off. */
   slackState: () => invoke<{ ok: boolean; text: string } | null>('slack_state'),

@@ -136,12 +136,12 @@ pub fn source_templates() -> Vec<SourceTemplate> {
         SourceTemplate {
             id: "linear",
             name: "Linear",
-            command: r#"curl -sf -H "Authorization: $LINEAR_API_KEY" -H "Content-Type: application/json" -d '{"query":"{ issues(filter:{state:{type:{eq:\"unstarted\"}}}, first:50){ nodes { identifier title description url } } }"}' https://api.linear.app/graphql | jq '[.data.issues.nodes[] | {key: .identifier, title, body: .description, url}]'"#,
+            command: r##"set -o pipefail; q=$(jq -nc --arg team "$LINEAR_TEAM" '{query: ("{ issues(filter:{state:{type:{eq:\"unstarted\"}}, team:{key:{eq:" + ($team | tojson) + "}}}, first:50){ nodes { identifier title description url } } }")}'); curl -sSf -H "Authorization: $LINEAR_API_KEY" -H "Content-Type: application/json" -d "$q" https://api.linear.app/graphql | jq '[.data.issues.nodes[] | {key: .identifier, title, body: .description, url}]'"##,
             every: "every 5 minutes",
-            needs: "issues that aren't started yet. needs jq",
+            needs: "one team's issues that aren't started yet. needs jq",
             keys: &[],
             connection: "linear",
-            vars: &[],
+            vars: &[Var { name: "LINEAR_TEAM", label: "team", placeholder: "ENG", hint: "the team's key: the letters before an issue's number, as in ENG-42" }],
         },
     ]
 }

@@ -28,6 +28,7 @@ TESTS = [
     ('markdown', []),
     ('logos', []),
     ('source_keys', []),
+    ('integrations', []),
     ('terminal', []),
 ]
 ON_REQUEST = [('real_answer', [])]

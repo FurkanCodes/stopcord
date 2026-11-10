@@ -115,6 +115,8 @@ export function Home({ onSearch }: { onSearch: () => void }) {
         return go({ screen: 'new' }), true;
       case ',':
         return go({ screen: 'settings' }), true;
+      case 'i':
+        return go({ screen: 'integrations' }), true;
     }
   });
 
@@ -151,6 +153,9 @@ export function Home({ onSearch }: { onSearch: () => void }) {
           <span style={{ flexGrow: 1 }} />
           <Key k="/" aria-label="Search factories, terminals and tickets" onClick={onSearch}>
             search
+          </Key>
+          <Key k="i" onClick={() => go({ screen: 'integrations' })}>
+            integrations
           </Key>
           <Key k="," onClick={() => go({ screen: 'settings' })}>
             settings

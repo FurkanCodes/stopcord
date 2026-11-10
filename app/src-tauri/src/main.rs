@@ -848,6 +848,30 @@ fn test_connection(app: State<'_, App>, connection: String) -> Result<String, Fa
     connections::test(app.store.home(), &connection).map_err(|why| Failure::new("connection", why))
 }
 
+/// What a connection offers to pick from, such as Sentry's projects, asked of the service.
+#[tauri::command(async)]
+fn connection_choices(app: State<'_, App>, connection: String, parent: String) -> Result<Vec<connections::Choice>, Failure> {
+    connections::choices(app.store.home(), &connection, &parent).map_err(|why| Failure::new("connection", why))
+}
+
+/// The GitHub repo a factory's folder points at.
+#[tauri::command(async)]
+fn github_repo(app: State<'_, App>, id: String) -> Result<String, Failure> {
+    let f = app.store.get(&id).map_err(fail)?;
+    connections::github_repo(Path::new(&f.path)).map_err(|why| Failure::new("github", why))
+}
+
+/// People who @mentioned the bot and aren't allowed to send work yet.
+#[tauri::command(async)]
+fn slack_knocks(engine: State<'_, Arc<Engine>>) -> Vec<slack::Knock> {
+    engine.slack_knocks()
+}
+
+#[tauri::command(async)]
+fn allow_slack_user(engine: State<'_, Arc<Engine>>, user: String) -> Result<(), Failure> {
+    engine.allow_slack_user(&user).map_err(fail)
+}
+
 /// Opens the page where a connection's token is made. Only those pages: the window can't open others.
 #[tauri::command(async)]
 fn open_connection_page(connection: String) -> Result<(), Failure> {
@@ -1066,6 +1090,10 @@ fn main() {
             test_connection,
             slack_manifest,
             open_connection_page,
+            connection_choices,
+            github_repo,
+            slack_knocks,
+            allow_slack_user,
             slack_state,
             source_ready,
             test_report,

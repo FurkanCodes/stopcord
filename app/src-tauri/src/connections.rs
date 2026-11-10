@@ -180,7 +180,7 @@ pub fn not_ready(home: &Path, connection: &str) -> Option<String> {
     let gone = missing(home, connection);
     (!gone.is_empty()).then(|| {
         let names: Vec<&str> = gone.iter().map(|f| f.label).collect();
-        format!("{} isn't connected: set its {} in settings → connections", c.name, names.join(" and "))
+        format!("{} isn't connected: set its {} in integrations", c.name, names.join(" and "))
     })
 }
 
@@ -218,7 +218,7 @@ pub fn test(home: &Path, connection: &str) -> Result<String, String> {
             Ok(format!("signed in as @{} in {}", me["user"].as_str().unwrap_or("?"), me["team"].as_str().unwrap_or("your workspace")))
         }
         "sentry" => {
-            let base = env(home, connection).into_iter().find(|(k, _)| k == "SENTRY_URL").map_or_else(|| "https://sentry.io".to_string(), |(_, v)| v.trim_end_matches('/').to_string());
+            let base = sentry_base(&get("SENTRY_URL"));
             let orgs: Value = ureq::get(&format!("{base}/api/0/organizations/"))
                 .set("Authorization", &format!("Bearer {}", get("SENTRY_AUTH_TOKEN")))
                 .timeout(timeout)
@@ -253,12 +253,106 @@ pub fn test(home: &Path, connection: &str) -> Result<String, String> {
     }
 }
 
+/// One thing a person can pick instead of typing it: a Sentry organization or project, a Linear
+/// team, a Slack channel.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Choice {
+    /// What's saved, such as a slug or a channel's name.
+    pub id: String,
+    /// What's shown.
+    pub label: String,
+}
+
+/// What a connection can offer to pick from. `parent` narrows it: a Sentry organization's
+/// projects. Asked of the service itself, with the connection's own credentials.
+pub fn choices(home: &Path, connection: &str, parent: &str) -> Result<Vec<Choice>, String> {
+    if let Some(why) = not_ready(home, connection) {
+        return Err(why);
+    }
+    let get = |name: &str| env(home, connection).into_iter().find(|(k, _)| k == name).map(|(_, v)| v).unwrap_or_default();
+    let timeout = Duration::from_secs(15);
+    let pick = |items: &Value, id: &str, label: &str| -> Vec<Choice> {
+        let mut out: Vec<Choice> = items
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|v| {
+                let id = v[id].as_str()?.to_string();
+                let name = v[label].as_str().unwrap_or(&id).to_string();
+                Some(Choice { label: if name == id { id.clone() } else { format!("{name} ({id})") }, id })
+            })
+            .collect();
+        out.sort_by(|a, b| a.label.to_lowercase().cmp(&b.label.to_lowercase()));
+        out
+    };
+    match connection {
+        "sentry" => {
+            let base = sentry_base(&get("SENTRY_URL"));
+            let path = if parent.is_empty() { "organizations/".to_string() } else { format!("organizations/{parent}/projects/") };
+            let v: Value = ureq::get(&format!("{base}/api/0/{path}"))
+                .set("Authorization", &format!("Bearer {}", get("SENTRY_AUTH_TOKEN")))
+                .timeout(timeout)
+                .call()
+                .map_err(|e| http_error("Sentry", e))?
+                .into_json()
+                .map_err(|e| format!("Sentry's answer wasn't JSON: {e}"))?;
+            Ok(pick(&v, "slug", "name"))
+        }
+        "linear" => {
+            let v: Value = ureq::post("https://api.linear.app/graphql")
+                .set("Authorization", &get("LINEAR_API_KEY"))
+                .timeout(timeout)
+                .send_json(serde_json::json!({ "query": "{ teams(first: 100) { nodes { key name } } }" }))
+                .map_err(|e| http_error("Linear", e))?
+                .into_json()
+                .map_err(|e| format!("Linear's answer wasn't JSON: {e}"))?;
+            Ok(pick(&v["data"]["teams"]["nodes"], "key", "name"))
+        }
+        SLACK => {
+            let v = crate::slack::call("conversations.list", &get("SLACK_BOT_TOKEN"), &[("types", "public_channel,private_channel"), ("exclude_archived", "true"), ("limit", "500")]).map_err(|e| format!("{e:#}"))?;
+            let mut out: Vec<Choice> = v["channels"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|c| {
+                    let name = c["name"].as_str()?;
+                    let joined = c["is_member"].as_bool().unwrap_or(false);
+                    Some(Choice { id: format!("#{name}"), label: if joined { format!("#{name}") } else { format!("#{name} · the bot isn't in it yet") } })
+                })
+                .collect();
+            out.sort_by(|a, b| a.label.contains('·').cmp(&b.label.contains('·')).then(a.id.cmp(&b.id)));
+            Ok(out)
+        }
+        _ => Err(format!("{connection} has nothing to pick from")),
+    }
+}
+
+/// Where a Sentry lives: sentry.io, or a self-hosted address.
+fn sentry_base(url: &str) -> String {
+    let url = url.trim().trim_end_matches('/');
+    if url.is_empty() { "https://sentry.io".to_string() } else { url.to_string() }
+}
+
+/// The GitHub repo a folder's git remote points at, as gh sees it, such as "acme/web".
+pub fn github_repo(folder: &Path) -> Result<String, String> {
+    crate::tickets::run_in_login_shell("gh repo view --json nameWithOwner --jq .nameWithOwner", folder, &[], Duration::from_secs(20))
+        .map(|out| out.trim().to_string())
+        .map_err(|e| {
+            let e = format!("{e:#}");
+            if e.contains("no git remotes") || e.contains("not a git repository") || e.contains("none of the git remotes") {
+                "this folder has no GitHub remote".to_string()
+            } else {
+                e.replace("the pull command failed", "gh failed")
+            }
+        })
+}
+
 /// A Slack app manifest with everything Sawtooth needs, so creating the app is one paste.
 pub fn slack_manifest() -> String {
     let manifest = serde_json::json!({
         "display_information": { "name": "Sawtooth", "description": "Turns @mentions into work for your factories" },
         "features": { "bot_user": { "display_name": "sawtooth", "always_online": true } },
-        "oauth_config": { "scopes": { "bot": ["app_mentions:read", "chat:write", "channels:read", "groups:read", "channels:history", "groups:history"] } },
+        "oauth_config": { "scopes": { "bot": ["app_mentions:read", "chat:write", "channels:read", "groups:read", "channels:history", "groups:history", "users:read"] } },
         "settings": {
             "event_subscriptions": { "bot_events": ["app_mention"] },
             "interactivity": { "is_enabled": false },

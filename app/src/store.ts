@@ -14,6 +14,8 @@ export type Route =
   | { screen: 'new' }
   /** Settings that belong to this machine: the sandbox, Slack, harnesses. */
   | { screen: 'settings' }
+  /** Slack, Sentry, Linear and GitHub: sign in once, pick what comes in, and where it goes. */
+  | { screen: 'integrations' }
   /** The factory's ticket source: list tickets and feed some in. */
   /**
    * `id` is a factory's id, or '' for terminals outside every factory.

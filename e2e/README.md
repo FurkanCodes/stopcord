@@ -22,6 +22,7 @@ No test calls a model unless you ask for `real_answer`, which spends quota. Each
 | `sandbox` | Testing a sandbox from setup reports what really held, for each kind of runner |
 | `vm` | Agents in Docker work on a copy, only their work comes back, and the copies go when the work ends. Needs Docker running |
 | `source_keys` | A connection is set once in settings. A source's settings and keys are set in setup and reach its pull command. A source says whether it can pull, pulls now and shows its whole error, the same on Work. A report sends a test and keeps its keys when renamed |
+| `integrations` | The integrations page takes Sentry from nothing to a factory's source with only a token typed: a wrong token says so, the organization and project come from Sentry to pick, and ticking a factory adds the source. Uses a fake Sentry on this machine |
 | `markdown`, `logos`, `terminal` | Rendering |
 
 ## Stand-in agents

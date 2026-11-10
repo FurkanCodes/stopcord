@@ -20,6 +20,21 @@ use crate::connections;
 use crate::settings::SlackSettings;
 
 const API: &str = "https://slack.com/api";
+
+/// Someone who @mentioned the bot but isn't allowed to send work yet. Kept so the person running
+/// Sawtooth can allow them with one press, instead of looking up a member id.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct Knock {
+    pub user: String,
+    /// Their name in Slack, or their id when Slack won't say.
+    pub name: String,
+    /// What they asked for, so it's clear who they are.
+    pub text: String,
+    pub at: u64,
+}
+
+/// Knocks kept at most, newest first.
+const KNOCKS: usize = 20;
 /// How far back to look for mentions missed while asleep. Ones already seen are left out.
 const CATCH_UP_SECS: u64 = 24 * 60 * 60;
 const READ_TICK: Duration = Duration::from_secs(2);
@@ -180,6 +195,14 @@ impl Engine {
     /// thread. A question only goes back for a mention heard live: catching up after a restart
     /// would ask again about every one of them.
     fn slack_proposal(self: &Arc<Self>, s: &SlackSettings, event: &Value, live: bool) {
+        if let Some(user) = event["user"].as_str() {
+            if event["type"] == "app_mention" && !s.allow_users.iter().any(|a| a == user) {
+                if live {
+                    self.slack_knock(event, user);
+                }
+                return;
+            }
+        }
         let Some(ticket) = ticket_from_event(event, &s.allow_users) else { return };
         let factories: Vec<(String, String)> = self.store.list().unwrap_or_default().into_iter().map(|f| (f.id, f.name)).collect();
         match route(&ticket.body, &factories, &s.factory) {
@@ -279,6 +302,60 @@ impl Engine {
         }
     }
 
+    /// Keeps a mention from someone not allowed yet, and tells them once, in its thread, why
+    /// nothing happened.
+    fn slack_knock(self: &Arc<Self>, event: &Value, user: &str) {
+        let (Some(ts), Some(channel)) = (event["ts"].as_str(), event["channel"].as_str()) else { return };
+        let text = without_mentions(event["text"].as_str().unwrap_or_default());
+        let first = {
+            let mut intake = self.intake.lock().unwrap();
+            let knocks = &mut intake.slack_knocks;
+            let first = !knocks.iter().any(|k| k.user == user);
+            knocks.retain(|k| k.user != user);
+            knocks.insert(0, Knock { user: user.to_string(), name: user.to_string(), text: title_of(&text), at: runs::now_ms() });
+            knocks.truncate(KNOCKS);
+            first
+        };
+        let home = self.store.home().to_path_buf();
+        let me = Arc::clone(self);
+        let user = user.to_string();
+        let thread = event["thread_ts"].as_str().unwrap_or(ts).to_string();
+        let url = format!("https://slack.com/archives/{channel}/p{}?thread_ts={thread}", ts.replace('.', ""));
+        std::thread::spawn(move || {
+            // The name needs users:read. Without it the id stands in, which still works.
+            let Some((_, bot)) = connections::env(&home, connections::SLACK).into_iter().find(|(k, _)| k == "SLACK_BOT_TOKEN") else { return };
+            if let Ok(v) = call("users.info", &bot, &[("user", &user)]) {
+                let name = [&v["user"]["profile"]["real_name"], &v["user"]["real_name"], &v["user"]["name"]].into_iter().find_map(|n| n.as_str().filter(|n| !n.is_empty())).map(str::to_string);
+                if let Some(name) = name {
+                    for k in me.intake.lock().unwrap().slack_knocks.iter_mut().filter(|k| k.user == user) {
+                        k.name = name.clone();
+                    }
+                }
+            }
+            if first {
+                me.slack_reply(&url, "Sawtooth doesn't take work from you yet. Whoever runs it can allow you under integrations, then mention me again.");
+            }
+        });
+    }
+
+    /// The people who asked and aren't allowed yet, newest first.
+    pub fn slack_knocks(&self) -> Vec<Knock> {
+        self.intake.lock().unwrap().slack_knocks.clone()
+    }
+
+    /// Lets a person send work, and forgets their knock.
+    pub fn allow_slack_user(self: &Arc<Self>, user: &str) -> Result<()> {
+        let home = self.store.home();
+        let mut s = crate::settings::load(home)?;
+        if !s.slack.allow_users.iter().any(|u| u == user) {
+            s.slack.allow_users.push(user.to_string());
+        }
+        crate::settings::save(home, &s)?;
+        self.intake.lock().unwrap().slack_knocks.retain(|k| k.user != user);
+        self.apply_settings();
+        Ok(())
+    }
+
     /// Tells the Slack thread a piece of work came from what happened to it.
     pub(crate) fn slack_reply(&self, url: &str, text: &str) {
         let Some((channel, thread)) = thread_of(url) else { return };
@@ -296,7 +373,7 @@ impl Engine {
 /// Posts to a channel, such as #eng, as the connected bot. Says how to fix the usual mistakes.
 pub(crate) fn post(home: &std::path::Path, channel: &str, text: &str) -> std::result::Result<(), String> {
     let Some((_, bot)) = connections::env(home, connections::SLACK).into_iter().find(|(k, _)| k == "SLACK_BOT_TOKEN") else {
-        return Err("Slack isn't connected: set its bot token in settings → connections".into());
+        return Err("Slack isn't connected: set its bot token in integrations".into());
     };
     call("chat.postMessage", &bot, &[("channel", channel), ("text", text)]).map(|_| ()).map_err(|e| {
         let e = format!("{e:#}");

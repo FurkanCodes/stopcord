@@ -31,19 +31,13 @@ try:
     cline = lambda: bridge("return document.querySelector('#src-cn-sentry')?.innerText||''")
     check('it says the connection needs its token', "isn't set up" in cline() and 'auth token' in cline(), cline())
 
-    # The token goes in once, in settings, through the connection line's own button.
+    # The token goes in once, on the integrations page, which the connection line opens.
     bridge("[...document.querySelectorAll('#src-cn-sentry button')][0].click();return 1"); time.sleep(1)
-    sentry = lambda: bridge("return document.querySelector('[data-connection=\"sentry\"]')?.innerText||''")
-    check('settings shows the sentry connection as not set up', 'not set up' in sentry() and 'auth token' in sentry(), sentry()[:300])
-    check('an optional field says optional', 'optional' in sentry(), sentry()[:300])
+    wait('the connection line opens integrations', lambda: bridge("return !!document.querySelector('[data-integration=\"sentry\"]')"))
     TOKEN = 'sntryu_e2e-token'
-    fill('#cn-sentry-SENTRY_AUTH_TOKEN', TOKEN)
-    bridge("document.querySelector('#cn-sentry-SENTRY_AUTH_TOKEN').dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true}));return 1")
-    wait('once the token is in, it says set', lambda: 'set · press test' in sentry())
+    inv('set_connection_field', connection='sentry', name='SENTRY_AUTH_TOKEN', value=TOKEN)
     stored = f'{H}/secrets/connection.sentry.SENTRY_AUTH_TOKEN'
     check('the token is kept once, for every factory', os.path.exists(stored) and open(stored).read().strip() == TOKEN)
-    check('and never shown', TOKEN not in text())
-    shot('connections')
     press('Escape'); time.sleep(0.6); to_setup()
     bridge(f"{fold}.click();return 1"); time.sleep(0.6)
     wait('back in setup, the connection is set up', lambda: 'set once for every factory' in cline())
