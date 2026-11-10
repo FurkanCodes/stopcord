@@ -1,9 +1,9 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { api, failureText, REPORT_EVENTS, type Agent, type BenchResult, type BenchTask, type Choice, type Connection, type Factory, type LineStage, type Part, type PullStatus, type Report, type Skill, type SourceTemplate, type Suite } from '../api';
 import { ConnectionState } from '../Connections';
 import { FactoryIntegrations } from '../Integrations';
 import { changeFactory, go, refreshFactories, showProblem, useStore } from '../store';
-import { ArmedKey, Check, FieldRow, Key, ListInput, Pane, Screen } from '../tui/kit';
+import { ArmedKey, Check, FieldRow, Key, ListInput, Pane, Screen, Sep } from '../tui/kit';
 import { Logo } from '../tui/Logo';
 import { Markdown } from '../tui/Markdown';
 import { FactoryHeader } from './FactoryHeader';
@@ -118,6 +118,56 @@ function Need({ id, label, value, action, children }: { id: string; label: strin
   );
 }
 
+const NEEDS: [string, string][] = [['sources', 'work comes from'], ['harness', 'runs with'], ['sandbox', 'works in'], ['line', 'line'], ['reports', 'tells you']];
+const TUNED: [string, string][] = [['tuning-agents', 'agents'], ['tuning-sandboxes', 'sandboxes'], ['tuning-sources', 'sources'], ['tuning-scorers', 'scorers'], ['tuning-skills', 'skills'], ['tuning-benchmarks', 'benchmarks']];
+const section = (id: string) => (id.startsWith('tuning-') ? document.getElementById(id) : document.querySelector(`[data-need="${id}"]`));
+
+/**
+ * Stays at the top of the page and jumps to a section, marking the one you're in. A section under
+ * tuning opens tuning first.
+ */
+function SectionIndex({ onTuning }: { onTuning: (pane: string) => void }) {
+  const [here, setHere] = useState(NEEDS[0]![0]);
+  // A section near the end can't scroll to the top, so the one jumped to stays marked there.
+  const jumped = useRef('');
+  useEffect(() => {
+    const body = document.querySelector('.t-body');
+    if (!body) return;
+    const look = () => {
+      const atEnd = body.scrollTop + body.clientHeight >= body.scrollHeight - 2;
+      if (jumped.current && atEnd) return setHere(jumped.current);
+      jumped.current = '';
+      const line = body.getBoundingClientRect().top + 60;
+      let at = NEEDS[0]![0];
+      for (const [id] of [...NEEDS, ...TUNED]) {
+        const el = section(id);
+        if (el && el.getBoundingClientRect().top <= line) at = id;
+      }
+      setHere(at);
+    };
+    look();
+    body.addEventListener('scroll', look, { passive: true });
+    return () => body.removeEventListener('scroll', look);
+  }, []);
+  const jump = (id: string) => {
+    jumped.current = id;
+    setHere(id);
+    if (id.startsWith('tuning-')) onTuning(id);
+    else section(id)?.scrollIntoView({ block: 'start' });
+  };
+  const key = ([id, name]: [string, string]) => (
+    <Key key={id} size="xs" aria-current={here === id ? 'location' : undefined} onClick={() => jump(id)}>{name}</Key>
+  );
+  return (
+    <nav aria-label="Setup sections" className="t-index">
+      {NEEDS.map(key)}
+      <Sep />
+      <span className="t-dim" style={{ padding: '0 4px 0 2px' }}>tuning</span>
+      {TUNED.map(key)}
+    </nav>
+  );
+}
+
 /** change ⇄ done: opens a need's fields under it. */
 function ChangeKey({ open, onToggle, what }: { open: boolean; onToggle: () => void; what: string }) {
   return (
@@ -173,6 +223,8 @@ export function Setup({ factory, onRemove }: { factory: Factory; onRemove: () =>
       hints={[['1-6', 'tabs'], ['esc', 'every factory']]}
       status={{ mode: 'SETUP', path: factory.name, info: 'saved as you type · every change is a commit' }}
     >
+      <SectionIndex onTuning={openTuning} />
+
       {factory.proposals.map((p) => (
         <Pane key={p.id} title={`proposed change · ${p.agent}`} style={paneStyle}>
           <Markdown text={p.why} breaks />
