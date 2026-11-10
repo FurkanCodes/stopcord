@@ -51,6 +51,7 @@ export function LineStrip({ factory, onPick, selected, onSelect }: { factory: Fa
                 {/* An agent stage says what it runs on, model and all, so the line shows which model does what. */}
                 {s.kind === 'agent' && stageHarness(factory, s) ? runsOn(profiles, stageHarness(factory, s)!) : who[s.kind]}
                 {s.kind === 'agent' && [...factory.agents, ...factory.scorers].some((a) => a.id === s.agent && a.once) ? ' · once' : ''}
+                {s.race?.length ? ` · races ${s.race.join(', ')}` : ''}
                 {s.maxLoops ? ` · up to ${s.maxLoops} loops` : ''}
               </div>
               <div style={{ fontSize: 12, display: 'flex', flexWrap: 'wrap', gap: '0 6px' }}>

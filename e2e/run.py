@@ -33,6 +33,7 @@ TESTS = [
     ('templates', []),
     ('roles_talk', []),
     ('answers_once', []),
+    ('race', []),
     ('terminal', []),
 ]
 ON_REQUEST = [('real_answer', [])]

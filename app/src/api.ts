@@ -124,6 +124,19 @@ export interface Skill {
 
 export type StageKind = 'agent' | 'gate' | 'human';
 
+export interface Racer {
+  agent: string;
+  terminal: string;
+  state: 'running' | 'checking' | 'passed' | 'failed' | 'out';
+  note: string;
+  at: number;
+}
+
+export interface Race {
+  stage: string;
+  racers: Racer[];
+}
+
 export interface LineStage {
   id: string;
   kind: StageKind;
@@ -135,6 +148,10 @@ export interface LineStage {
   maxLoops?: number;
   isolated?: boolean;
   keep?: string[];
+  /** Other agents racing `agent` here, each in its own copy. */
+  race?: string[];
+  /** The scorer that picks among the copies that passed. Empty keeps the first to pass. */
+  judge?: string;
   merge?: string;
   landed?: string;
 }
@@ -253,6 +270,8 @@ export interface WorkItem {
   base: string;
   merging: string;
   mergeError: string;
+  /** The race at its current stage, while one is running. */
+  race?: Race | null;
 }
 
 export type WorkVerb = 'approve' | 'sendBack' | 'treatAsDone' | 'drop' | 'merge' | 'landed' | 'answer';

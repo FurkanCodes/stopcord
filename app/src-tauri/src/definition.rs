@@ -500,6 +500,17 @@ fn validate_line(line: &[LineStage], agents: &BTreeSet<&str>, checks: &BTreeSet<
             StageKind::Agent if !agents.contains(s.agent.as_str()) => {
                 out.push(format!("stage {} needs an agent that exists, and has {:?}", s.id, s.agent));
             }
+            StageKind::Agent => {
+                for r in s.race.iter().filter(|r| !agents.contains(r.as_str())) {
+                    out.push(format!("stage {} races an agent that doesn't exist: {r}", s.id));
+                }
+                if s.race.contains(&s.agent) {
+                    out.push(format!("stage {} races {} against itself", s.id, s.agent));
+                }
+                if !s.judge.is_empty() && !agents.contains(s.judge.as_str()) {
+                    out.push(format!("stage {} is judged by a scorer that doesn't exist: {}", s.id, s.judge));
+                }
+            }
             StageKind::Gate if s.checks.is_empty() => {
                 out.push(format!("gate {} has no checks", s.id));
             }
@@ -1008,6 +1019,9 @@ mod tests {
         assert!(line_problems(|f| f.line[1].checks = vec!["ghost".into()]).contains("check that doesn't exist"));
         assert!(line_problems(|f| f.line[1].checks.clear()).contains("no checks"));
         assert!(line_problems(|f| f.line[1].id = "build".into()).contains("two stages"));
+        assert!(line_problems(|f| f.line[0].race = vec!["ghost".into()]).contains("races an agent that doesn't exist"));
+        assert!(line_problems(|f| f.line[0].race = vec![f.line[0].agent.clone()]).contains("against itself"));
+        assert!(line_problems(|f| f.line[0].judge = "ghost".into()).contains("judged by a scorer that doesn't exist"));
     }
 
     #[test]

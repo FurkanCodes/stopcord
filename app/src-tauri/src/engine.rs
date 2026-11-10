@@ -349,6 +349,8 @@ pub(crate) struct State {
     broken: Vec<(String, String)>,
     /// Work items a thread is acting on right now: (factory, key).
     pub(crate) stepping: HashSet<(String, String)>,
+    /// Racers whose copies are being checked right now: factory, work key and agent.
+    pub(crate) checking: HashSet<(String, String, String)>,
     /// Terminals already told to trust their folder.
     pub(crate) trusted: HashSet<String>,
     /// Terminals on the line that stopped without reporting and have had their one reminder.

@@ -16,7 +16,7 @@ fn main() {
         if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open("oneshot.log") {
             let _ = writeln!(f, "=== asked once\n{prompt}");
         }
-        let role = prompt.lines().find_map(|l| l.trim().strip_prefix("ROLE=")).unwrap_or("unknown").trim().to_string();
+        let role: String = prompt.split_once("ROLE=").map_or("unknown", |(_, r)| r).chars().take_while(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_').collect();
         let mut child = Command::new("/bin/sh")
             .arg("ROOT_PATH/answer.sh")
             .arg(&role)
@@ -62,8 +62,9 @@ fn main() {
         }
         let got = std::mem::take(&mut *text.lock().unwrap());
         if role.is_empty() {
-            for r in ["planner", "builder", "reviewer"] {
-                if got.contains(&format!("ROLE={r}")) { role = r.to_string(); }
+            // Typed text can come wrapped in paste markers, so ROLE= is looked for anywhere.
+            if let Some((_, r)) = got.split_once("ROLE=") {
+                role = r.chars().take_while(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_').collect();
             }
             bad = got.contains("GATEFAIL");
         }

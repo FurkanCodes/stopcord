@@ -16,6 +16,8 @@ use crate::line::{self, Action, Step};
 use crate::runs::{self, Run};
 use crate::{gate, git, harness, hooks, shell, worktree};
 
+mod race;
+
 const LANDED_TIMEOUT: Duration = Duration::from_secs(30);
 pub(crate) const GATE_TIMEOUT: Duration = Duration::from_secs(30 * 60);
 /// A `st done` usually lands before the terminal looks idle, but not always.
@@ -234,8 +236,13 @@ impl Engine {
         if !self.state.lock().unwrap().stepping.insert(guard.clone()) {
             return;
         }
-        let once = self.store.get(factory).ok().is_some_and(|f| f.agents.iter().chain(&f.scorers).any(|a| a.id == agent_id && a.once));
-        let steps = if once {
+        let f = self.store.get(factory).ok();
+        let racing = f.as_ref().is_some_and(|f| f.line.iter().any(|s| s.id == stage && !s.race.is_empty()));
+        let once = f.as_ref().is_some_and(|f| f.agents.iter().chain(&f.scorers).any(|a| a.id == agent_id && a.once));
+        let steps = if racing {
+            self.start_race(factory, key, stage, note);
+            Vec::new()
+        } else if once {
             self.answer_once(factory, key, stage, agent_id, note)
         } else {
             self.run_agent_inner(factory, key, stage, agent_id, note);
@@ -339,20 +346,7 @@ impl Engine {
         // In a VM, st is on the PATH; the Mac's path to it isn't there.
         let in_vm = crate::runner::in_vm(crate::runner::pick(&f, agent.as_ref().map(|a| a.runner.as_str())));
         let st = if in_vm { "st".to_string() } else { self.store.home().join("bin/st").display().to_string() };
-        let skills: Vec<(String, String, String)> = f
-            .skills
-            .iter()
-            .filter(|s| s.agent.is_empty() || s.agent == agent_id)
-            .map(|s| {
-                let dir = self.store.definition_dir(factory);
-                let base = if s.agent.is_empty() {
-                    dir.join("skills")
-                } else {
-                    dir.join("agents").join(&s.agent).join("skills")
-                };
-                (s.id.clone(), s.description.clone(), base.join(&s.id).join("SKILL.md").display().to_string())
-            })
-            .collect();
+        let skills = self.skills_for(&f, agent_id);
         let write = if is_scorer { line::scorer_brief } else { line::brief };
         // Where this stage can hand work with `st send`: every other stage a role or a person does.
         let others: Vec<String> = f.line.iter().filter(|s| s.id != stage && s.kind != crate::factories::StageKind::Gate).map(|s| s.id.clone()).collect();
@@ -453,6 +447,19 @@ impl Engine {
             }
             Err(e) => self.fail_step(factory, key, format!("{key} has a terminal for {stage} but never got its brief: {e}")),
         }
+    }
+
+    /// The skills an agent is told about: name, when to use it, and where its file is.
+    pub(crate) fn skills_for(&self, f: &Factory, agent_id: &str) -> Vec<(String, String, String)> {
+        let dir = self.store.definition_dir(&f.id);
+        f.skills
+            .iter()
+            .filter(|s| s.agent.is_empty() || s.agent == agent_id)
+            .map(|s| {
+                let base = if s.agent.is_empty() { dir.join("skills") } else { dir.join("agents").join(&s.agent).join("skills") };
+                (s.id.clone(), s.description.clone(), base.join(&s.id).join("SKILL.md").display().to_string())
+            })
+            .collect()
     }
 
     /// Brings a VM terminal's folder and its copy in the VM into step. Nothing for other terminals.
@@ -571,10 +578,15 @@ impl Engine {
 
     /// Runs one gate's checks on a clean copy of the agent's commit.
     fn gate_checks(self: &Arc<Self>, f: &Factory, w: &WorkItem, stage: &LineStage) -> (bool, String) {
-        let project = PathBuf::from(&f.path);
-        let dir = if w.worktree.is_empty() { project.clone() } else { PathBuf::from(&w.worktree) };
+        let dir = if w.worktree.is_empty() { PathBuf::from(&f.path) } else { PathBuf::from(&w.worktree) };
         let into = self.store.state_dir(&f.id).join("gates").join(&w.id);
-        let snap = match gate::snapshot(&project, &dir, &w.base, &stage.protect, &into) {
+        self.checks_in(f, w, stage, &dir, &into)
+    }
+
+    /// Runs a gate's checks on a clean snapshot of `dir`'s commit, made in `into`.
+    pub(crate) fn checks_in(self: &Arc<Self>, f: &Factory, w: &WorkItem, stage: &LineStage, dir: &Path, into: &Path) -> (bool, String) {
+        let project = PathBuf::from(&f.path);
+        let snap = match gate::snapshot(&project, dir, &w.base, &stage.protect, into) {
             Ok(s) => s,
             Err(e) => return (false, format!("{e:#}")),
         };
@@ -723,6 +735,7 @@ impl Engine {
                     let (fid, key, sid) = (f.id.clone(), w.ticket.key.clone(), stage.id.clone());
                     std::thread::spawn(move || me.run_gate(&fid, &key, &sid));
                 }
+                StageKind::Agent if w.race.as_ref().is_some_and(|r| r.stage == stage.id) => self.check_racers(&f.id, &w.ticket.key),
                 StageKind::Agent if w.terminal.is_none() => {
                     let me = Arc::clone(self);
                     let (fid, key, sid, agent) = (f.id.clone(), w.ticket.key.clone(), stage.id.clone(), stage.agent.clone());
@@ -757,6 +770,9 @@ impl Engine {
     fn on_report(self: &Arc<Self>, terminal: &str, report: &Value) {
         let verb = report["verb"].as_str().unwrap_or_default();
         let text = report["text"].as_str().unwrap_or_default().to_string();
+        if self.race_report(terminal, report) {
+            return;
+        }
         let Some((factory, key)) = self.item_on(terminal) else {
             if let Some(f) = self.terminal_factory(terminal) {
                 self.log(&f, Run::new("agent", format!("{verb}: {text}")).terminal(Some(terminal)).by("agent"));
@@ -854,6 +870,9 @@ impl Engine {
 
     /// An engine turn ended on a line. If the agent said nothing, a person has to look.
     pub(crate) fn line_turn_finished(self: &Arc<Self>, terminal: &str, engine_turn: bool) -> bool {
+        if self.racer_turn_finished(terminal, engine_turn) {
+            return true;
+        }
         let Some((factory, key)) = self.item_on(terminal) else {
             return false;
         };

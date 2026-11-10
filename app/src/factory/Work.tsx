@@ -772,6 +772,19 @@ function Detail({ factory, item, runs, terminals, onSending, onSite }: { factory
           findings.length > 0 && <Findings list={findings} />
         )}
 
+        {item.race && item.race.stage === item.lineStage && (
+          <ul aria-label="The race" data-race style={{ margin: 0 }}>
+            <li className="t-dim" style={{ fontSize: 12 }}>racing at {item.race.stage}, each in its own copy</li>
+            {item.race.racers.map((r) => (
+              <li key={r.agent} style={{ display: 'flex', gap: 10 }}>
+                <span className="t-name" style={{ width: '14ch', flexShrink: 0 }}>{r.agent}</span>
+                <span className={r.state === 'failed' || r.state === 'out' ? 't-red' : r.state === 'passed' ? undefined : 't-muted'} style={{ width: '9ch', flexShrink: 0, ...(r.state === 'passed' ? { color: 'var(--green)' } : {}) }}>{r.state}</span>
+                <span className="t-dim" style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.note.split('\n')[0]}</span>
+              </li>
+            ))}
+          </ul>
+        )}
+
         <div style={{ display: 'flex', gap: 10 }}>
           <Key k="t" size="sm" expanded={showTimeline} onClick={() => setShowTimeline((v) => !v)}>timeline · {timeline.length}</Key>
           {terms.length > 0 && <Key size="sm" expanded={showTerminals} onClick={() => setShowTerminals((v) => !v)}>terminals · {terms.length}</Key>}

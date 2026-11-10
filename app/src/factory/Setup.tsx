@@ -510,7 +510,20 @@ function Line({ factory, set }: { factory: Factory; set: (patch: Partial<Factory
               <ListText id={`st-pr-${i}`} label="protected tests" value={s.protect} placeholder="tests/**, **/*.test.ts" onChange={(v) => stage(i, { protect: v })} />
             </>
           )}
-          {s.kind === 'agent' && <Pick id={`st-iso-${i}`} label="works in" value={s.isolated ? 'copy' : ''} options={[['', 'the real branch'], ['copy', 'a throwaway copy']]} onChange={(v) => stage(i, v === 'copy' ? { isolated: true } : { isolated: false, keep: [] })} />}
+          {s.kind === 'agent' && factory.agents.length > 1 && (
+            <FieldRow label="races with" width="14ch">
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                {factory.agents.filter((a) => a.id !== s.agent).map((a) => (
+                  <Check key={a.id} id={`st-${i}-race-${a.id}`} checked={(s.race ?? []).includes(a.id)} onChange={(on) => stage(i, on ? { race: [...(s.race ?? []), a.id], isolated: false, keep: [] } : { race: (s.race ?? []).filter((x) => x !== a.id) })}>
+                    {a.id}
+                  </Check>
+                ))}
+              </div>
+              <span className="t-dim" style={{ fontSize: 12 }}>{(s.race ?? []).length ? `${(s.race ?? []).length + 1} agents do this at once, each in its own copy. ${factory.line.some((g) => g.id === s.then && g.kind === 'gate') ? `the ${s.then} checks run in every copy` : 'with no gate next, every finished copy counts'}, and one that passes comes back to the branch` : 'none. pick agents to race this one, each in its own copy'}</span>
+            </FieldRow>
+          )}
+          {s.kind === 'agent' && (s.race ?? []).length > 0 && <Pick id={`st-judge-${i}`} label="judged by" value={s.judge ?? ''} options={[['', 'nobody: the first to pass is kept'], ...factory.scorers.map((a): [string, string] => [a.id, `${a.id}, which picks among the copies that pass`])]} onChange={(judge) => stage(i, { judge })} />}
+          {s.kind === 'agent' && !(s.race ?? []).length && <Pick id={`st-iso-${i}`} label="works in" value={s.isolated ? 'copy' : ''} options={[['', 'the real branch'], ['copy', 'a throwaway copy']]} onChange={(v) => stage(i, v === 'copy' ? { isolated: true } : { isolated: false, keep: [] })} />}
           <Pick id={`st-then-${i}`} label="then" value={s.then ?? ''} options={[['', 'end of the line'], ...stageIds]} onChange={(then) => stage(i, { then })} />
           {s.kind !== 'human' || s.then ? null : <Text id={`st-mg-${i}`} label="merge with" value={s.merge ?? ''} placeholder="empty merges locally, or a command like gh pr create --fill" onChange={(merge) => stage(i, { merge })} />}
           {s.kind === 'human' && !s.then && s.merge && <Text id={`st-ld-${i}`} label="landed when" value={s.landed ?? ''} placeholder="gh pr view --json state -q .state | grep -qx MERGED" onChange={(landed) => stage(i, { landed })} />}

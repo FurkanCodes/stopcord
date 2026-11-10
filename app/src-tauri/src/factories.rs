@@ -271,6 +271,13 @@ pub struct LineStage {
     /// Isolated stages: files in the top folder that come back from the copy and get committed.
     #[serde(skip_serializing_if = "none")]
     pub keep: Vec<String>,
+    /// Agent stages: other agents that race `agent` on the same ticket, each in its own copy. The
+    /// next gate's checks run in every copy, and one that passes comes back to the real branch.
+    #[serde(skip_serializing_if = "none")]
+    pub race: Vec<String>,
+    /// Races: the scorer that picks among the copies that passed. Empty keeps the first to pass.
+    #[serde(skip_serializing_if = "no_text")]
+    pub judge: String,
     /// The last stage: how to merge. Empty merges the branch locally; anything else is a shell command.
     #[serde(skip_serializing_if = "no_text")]
     pub merge: String,
@@ -448,6 +455,29 @@ pub struct WorkItem {
     pub merging: String,
     /// Why the last merge didn't happen.
     pub merge_error: String,
+    /// The race at its current stage, while one is running.
+    pub race: Option<Race>,
+}
+
+/// Several agents doing one stage at once, each in its own copy, until one is kept.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct Race {
+    pub stage: String,
+    pub racers: Vec<Racer>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct Racer {
+    pub agent: String,
+    pub terminal: String,
+    /// running, checking, passed, failed or out.
+    pub state: String,
+    /// What it said when it finished, or why it's out or failed.
+    pub note: String,
+    /// When it finished, in milliseconds. The first to pass wins when nobody judges.
+    pub at: u64,
 }
 
 /// What a stage's agent wrote for the ones after it: what it did, what it isn't sure of, what to check.
