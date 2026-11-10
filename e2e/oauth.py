@@ -84,7 +84,7 @@ try:
 
     # Sentry: one press, a code to check, approve, and it's signed in.
     wait('sentry offers to sign in in the browser', lambda: 'sign in with Sentry' in card('sentry'))
-    check('pasting a token is offered just as much', 'sign in in the browser' in card('sentry') and 'paste a token' in card('sentry'), card('sentry')[:300])
+    check('pasting a token is offered right beside it', 'or paste a token' in card('sentry'), card('sentry')[:300])
     check('the token field is put away until asked for', not bridge("return !!document.querySelector('#ig-sentry-SENTRY_AUTH_TOKEN')"))
     click_in('sentry', 'sign in with Sentry')
     wait('it shows the code to check against the browser', lambda: 'ABCD-EFGH' in card('sentry'))
@@ -127,7 +127,7 @@ try:
     check('and forgets the tokens', not secret('connection.linear.oauth.access') and not secret('connection.linear.oauth.refresh'))
     # Either way stays open: switch Sentry from the browser sign-in to a pasted token.
     bridge("[...document.querySelectorAll('[data-integration=\"sentry\"] [data-step=\"1\"] button')].find(b=>b.innerText.trim()==='change').click();return 1"); time.sleep(0.4)
-    click_in('sentry', 'paste a token')
+    click_in('sentry', 'use a token instead')
     wait('the paste side says it replaces the sign-in', lambda: 'signs you out of the browser sign-in' in card('sentry'))
     fill('#ig-sentry-SENTRY_AUTH_TOKEN', 'sntryu_pasted')
     bridge("document.querySelector('#ig-sentry-SENTRY_AUTH_TOKEN').dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true}));return 1"); time.sleep(1)

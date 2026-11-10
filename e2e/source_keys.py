@@ -10,9 +10,10 @@ try:
     inv('create_factory', path=os.path.realpath(R), name='keys', template='line', readAs=['AGENTS.md'], harness='claude', reviewer='claude', level='worktree')
     fid = inv('factories')[0]['id']
     stop(); launch(); time.sleep(1.5)
-    to_setup = lambda: (bridge("[...document.querySelectorAll('[data-card]')][0].click();return 1"), time.sleep(1), press('6'), time.sleep(1))
+    to_setup = lambda: (bridge("[...document.querySelectorAll('[data-card]')][0].click();return 1"), time.sleep(1), press('6'), time.sleep(1), bridge("[...document.querySelectorAll('button')].find(b=>b.innerText.includes('add or fine-tune sources by hand')).click();return 1"), time.sleep(0.5))
     to_setup()
     order = bridge("return [...document.querySelectorAll('.t-body .t-pane-title')].map(e=>e.textContent.trim())")
+    check("a factory's sources start with the integration cards, for this factory", bridge("return [...document.querySelectorAll('[data-factory-integrations] [data-integration]')].map(e=>e.dataset.integration).join()") == 'github,sentry,linear,slack')
     check('sources and reporting back come right after the line', order[1:4] == ['line', 'sources', 'reporting back'], order)
 
     bridge("[...document.querySelectorAll('button')].find(b=>b.innerText.trim()==='sentry').click();return 1"); time.sleep(1.2)
@@ -33,7 +34,7 @@ try:
 
     # The token goes in once, on the integrations page, which the connection line opens.
     bridge("[...document.querySelectorAll('#src-cn-sentry button')][0].click();return 1"); time.sleep(1)
-    wait('the connection line opens integrations', lambda: bridge("return !!document.querySelector('[data-integration=\"sentry\"]')"))
+    wait('the connection line opens integrations', lambda: 'INTEGRATIONS' in text()[-300:])
     TOKEN = 'sntryu_e2e-token'
     inv('set_connection_field', connection='sentry', name='SENTRY_AUTH_TOKEN', value=TOKEN)
     stored = f'{H}/secrets/connection.sentry.SENTRY_AUTH_TOKEN'

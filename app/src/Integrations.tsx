@@ -16,7 +16,12 @@ type Tested = { ok: boolean; text: string } | 'testing' | null;
 interface Ctx {
   connections: Connection[];
   templates: SourceTemplate[];
+  /** The factories the cards offer: all of them, or the one whose setup this is. */
   factories: Factory[];
+  /** Every factory, for what's machine-wide, such as Slack's default factory. */
+  allFactories: Factory[];
+  /** Inside a factory's setup: blocks instead of panes. */
+  flat: boolean;
   settings: Settings;
   change: (next: Settings) => Promise<void>;
   refresh: () => void;
@@ -27,13 +32,14 @@ interface Ctx {
  * factories it goes to. Each card walks through its steps in order and ticks them off, so nobody
  * needs a guide.
  */
-export function Integrations() {
-  const factories = useStore((s) => s.factories);
+/** What the cards need, loaded once. `only` narrows the factories to one, for its setup. */
+function useIntegrations(only?: string, flat = false) {
+  const all = useStore((s) => s.factories);
+  const factories = only ? all.filter((f) => f.id === only) : all;
   const [connections, setConnections] = useState<Connection[]>([]);
   const [templates, setTemplates] = useState<SourceTemplate[]>([]);
   const [m, setM] = useState<Machine | null>(null);
   const [message, setMessage] = useState('');
-
   const refresh = () => {
     api.connections().then(setConnections, () => undefined);
   };
@@ -42,14 +48,6 @@ export function Integrations() {
     api.sourceTemplates().then(setTemplates, showProblem);
     api.machine().then(setM, showProblem);
   }, []);
-
-  useKeys((e) => {
-    if (e.key === 'Escape') {
-      go({ screen: 'home' });
-      return true;
-    }
-  }, { priority: -1 });
-
   async function change(next: Settings) {
     setM((x) => (x ? { ...x, settings: next } : x));
     try {
@@ -59,7 +57,36 @@ export function Integrations() {
       setMessage(failureText(e));
     }
   }
+  const ready = m && connections.length > 0 && templates.length > 0;
+  const ctx: Ctx | null = ready ? { connections, templates, factories, allFactories: all, settings: m.settings, change, refresh, flat } : null;
+  return { ctx, message };
+}
 
+function Cards({ ctx }: { ctx: Ctx }) {
+  const find = (id: string) => ctx.connections.find((c) => c.id === id);
+  return (
+    <>
+      <GitHubCard ctx={ctx} />
+      {find('sentry') && <TrackerCard ctx={ctx} c={find('sentry')!} />}
+      {find('linear') && <TrackerCard ctx={ctx} c={find('linear')!} />}
+      {find('slack') && <SlackCard ctx={ctx} c={find('slack')!} />}
+    </>
+  );
+}
+
+/**
+ * One place to set up every outside service: sign in once, pick what comes in, and pick the
+ * factories it goes to. Each card walks through its steps in order and ticks them off, so nobody
+ * needs a guide.
+ */
+export function Integrations() {
+  const { ctx, message } = useIntegrations();
+  useKeys((e) => {
+    if (e.key === 'Escape') {
+      go({ screen: 'home' });
+      return true;
+    }
+  }, { priority: -1 });
   const header = (
     <>
       <Brand />
@@ -69,25 +96,34 @@ export function Integrations() {
       <Key k="esc" onClick={() => go({ screen: 'home' })}>back</Key>
     </>
   );
-  const find = (id: string) => connections.find((c) => c.id === id);
-  const ctx: Ctx | null = m ? { connections, templates, factories, settings: m.settings, change, refresh } : null;
-
   return (
     <Screen header={header} bodyStyle={{ overflow: 'auto', padding: '16px 8px 10px', display: 'flex', flexDirection: 'column', gap: 18 }} hints={[['esc', 'back']]} status={{ mode: 'INTEGRATIONS', path: 'this machine', info: message }}>
-      {!ctx || connections.length === 0 || templates.length === 0 ? (
+      {!ctx ? (
         <p className="t-dim" style={{ padding: 20 }}>loading…</p>
       ) : (
         <>
           <p className="t-muted" style={{ ...paneStyle, padding: '0 12px' }}>
             sign in to a service once here, and pick which factories its work goes to. tokens stay on this machine, in sawtooth's secrets.
           </p>
-          <GitHubCard ctx={ctx} />
-          {find('sentry') && <TrackerCard ctx={ctx} c={find('sentry')!} />}
-          {find('linear') && <TrackerCard ctx={ctx} c={find('linear')!} />}
-          {find('slack') && <SlackCard ctx={ctx} c={find('slack')!} />}
+          <Cards ctx={ctx} />
         </>
       )}
     </Screen>
+  );
+}
+
+/**
+ * The same cards inside one factory's setup, offering only that factory. Signing in here signs in
+ * for every factory on this machine, and the cards say so.
+ */
+export function FactoryIntegrations({ factoryId }: { factoryId: string }) {
+  const { ctx, message } = useIntegrations(factoryId, true);
+  if (!ctx) return <p className="t-dim">loading…</p>;
+  return (
+    <div data-factory-integrations style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+      <Cards ctx={ctx} />
+      {message && <span className="t-red" role="alert">{message}</span>}
+    </div>
   );
 }
 
@@ -113,21 +149,30 @@ function Step({ n, done, title, summary, current, children }: { n: number; done:
 }
 
 /** The card's frame: its logo and name, and one line that says whether it's working. */
-function Card({ id, name, state, children }: { id: string; name: string; state: ReactNode; children: ReactNode }) {
-  return (
-    <Pane
-      title={
-        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-          <Logo name={id} size={12} />
-          {name.toLowerCase()}
-        </span>
-      }
-      style={paneStyle}
-    >
-      <div data-integration={id} style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-        <span role="status" data-integration-state={id}>{state}</span>
-        {children}
+function Card({ id, name, state, flat, children }: { id: string; name: string; state: ReactNode; flat: boolean; children: ReactNode }) {
+  const body = (
+    <div data-integration={id} style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      <span role="status" data-integration-state={id}>{state}</span>
+      {children}
+    </div>
+  );
+  const title = (
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+      <Logo name={id} size={12} />
+      {name.toLowerCase()}
+    </span>
+  );
+  if (flat) {
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8, padding: '10px 0', borderTop: '1px solid var(--line-soft, var(--line))' }}>
+        <span style={{ color: 'var(--ink)' }}>{title}</span>
+        {body}
       </div>
+    );
+  }
+  return (
+    <Pane title={title} style={paneStyle}>
+      {body}
     </Pane>
   );
 }
@@ -284,7 +329,7 @@ function GitHubCard({ ctx }: { ctx: Ctx }) {
   if (!c || !t) return null;
   const using = ctx.factories.filter((f) => f.parts.some((p) => p.id === t.id));
   return (
-    <Card id="github" name="GitHub" state={signed ? <ConnectionState ok>{said(tested)}{using.length > 0 ? ` · issues go to ${using.map((f) => f.name).join(', ')}` : ''}</ConnectionState> : testLine(tested, 'checking gh…')}>
+    <Card id="github" name="GitHub" flat={ctx.flat} state={signed ? <ConnectionState ok>{said(tested)}{using.length > 0 ? ` · issues go to ${using.map((f) => f.name).join(', ')}` : ''}</ConnectionState> : testLine(tested, 'checking gh…')}>
       <Step n={1} done={signed} current={!signed} title="sign in with gh" summary={signed ? said(tested) : undefined}>
         <span className="t-muted">sawtooth uses the gh command as you, so there's no token to paste. in a terminal, run</span>
         <code style={{ userSelect: 'text' }}>gh auth login</code>
@@ -292,7 +337,7 @@ function GitHubCard({ ctx }: { ctx: Ctx }) {
           <Key size="xs" onClick={retest}>check again</Key> <Key size="xs" onClick={() => void navigator.clipboard?.writeText('gh auth login')}>copy the command</Key>
         </span>
       </Step>
-      <Step n={2} done={using.length > 0} current={signed} title="bring open issues into">
+      <Step n={2} done={signed && using.length > 0} current={signed} title="bring open issues into">
         {ctx.factories.length === 0 && <span className="t-dim">no factories yet</span>}
         {ctx.factories.map((f) => {
           const repo = repos[f.id];
@@ -316,7 +361,7 @@ function GitHubCard({ ctx }: { ctx: Ctx }) {
  * Signing in in the browser: one press, then approve it there. Sentry shows a code to check against
  * the browser's. Polls until it's done, then tells the card.
  */
-function BrowserSignIn({ c, onDone }: { c: Connection; onDone: () => void }) {
+function BrowserSignIn({ c, onDone, other, note }: { c: Connection; onDone: () => void; other?: ReactNode; note?: string }) {
   const [s, setS] = useState<Signing | null>(null);
   const [problem, setProblem] = useState('');
   useEffect(() => {
@@ -358,9 +403,11 @@ function BrowserSignIn({ c, onDone }: { c: Connection; onDone: () => void }) {
   }
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-      <span>
+      <span style={{ display: 'flex', gap: 10, alignItems: 'baseline', flexWrap: 'wrap' }}>
         <Key onClick={() => void start()}>sign in with {c.name} ↗</Key>
+        {other}
       </span>
+      {note && <span className="t-dim">{note}</span>}
       {(problem || s?.error) && <ConnectionState ok={false}>{problem || s?.error}</ConnectionState>}
     </div>
   );
@@ -421,31 +468,36 @@ function TrackerCard({ ctx, c }: { ctx: Ctx; c: Connection }) {
     <Card
       id={c.id}
       name={c.name}
+      flat={ctx.flat}
       state={
         !signed ? testLine(tested, c.missing.length > 0 ? 'not set up yet' : 'checking…') : using.length > 0 ? <ConnectionState ok>{`${what} · issues go to ${using.map((f) => f.name).join(', ')}`}</ConnectionState> : <ConnectionState ok={null}>signed in · pick where its issues go below</ConnectionState>
       }
     >
       <Step n={1} done={signed} current={!signed} title={`sign in to ${c.name}`} summary={signed ? (c.signedIn ? `signed in as ${c.signedIn}` : said(tested)) : undefined}>
-        {c.oauth && (
-          <div role="group" aria-label={`how to sign in to ${c.name}`} style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-            <Key size="xs" pressed={way === 'browser'} onClick={() => setWay('browser')}>sign in in the browser</Key>
-            <Key size="xs" pressed={way === 'key'} onClick={() => setWay('key')}>paste {keyWord}</Key>
-          </div>
+        {c.signedIn ? (
+          <span style={{ display: 'flex', gap: 8, alignItems: 'baseline', flexWrap: 'wrap' }}>
+            <span className="t-muted">signed in as {c.signedIn}, in the browser</span>
+            <Key size="xs" onClick={() => void api.oauthSignOut(c.id).then(saved, showProblem)}>sign out</Key>
+            <Key size="xs" aria-expanded={way === 'key'} onClick={() => setWay(way === 'key' ? 'browser' : 'key')}>use {keyWord} instead</Key>
+          </span>
+        ) : (
+          c.oauth &&
+          way === 'browser' && (
+            <BrowserSignIn
+              c={c}
+              onDone={saved}
+              other={<Key size="xs" onClick={() => setWay('key')}>or paste {keyWord}</Key>}
+              note={pasted ? `signing in replaces the ${keyWord.replace(/^an? /, '')} you pasted.` : ''}
+            />
+          )
         )}
-        {way === 'browser' &&
-          (c.signedIn ? (
-            <span style={{ display: 'flex', gap: 8, alignItems: 'baseline' }}>
-              <span className="t-muted">signed in as {c.signedIn}, in the browser</span>
-              <Key size="xs" onClick={() => void api.oauthSignOut(c.id).then(saved, showProblem)}>sign out</Key>
-            </span>
-          ) : (
-            <>
-              {pasted && <span className="t-dim">signing in replaces the {keyWord.replace(/^an? /, '')} you pasted.</span>}
-              <BrowserSignIn c={c} onDone={saved} />
-            </>
-          ))}
         {way === 'key' && (
           <>
+            {c.oauth && !c.signedIn && (
+              <span>
+                <Key size="xs" onClick={() => setWay('browser')}>or sign in with {c.name} in the browser</Key>
+              </span>
+            )}
             <span className="t-muted">
               {c.id === 'sentry'
                 ? 'make a personal token: open sentry, press create new token, tick event:read, project:read and org:read, create it, and copy it.'
@@ -494,7 +546,7 @@ function TrackerCard({ ctx, c }: { ctx: Ctx; c: Connection }) {
           );
         })}
       </Step>
-      <Step n={3} done={using.length > 0} current={signed && picked} title={c.id === 'sentry' ? 'bring its fatal, unresolved issues into' : "bring its issues that aren't started into"}>
+      <Step n={3} done={signed && picked && using.length > 0} current={signed && picked} title={c.id === 'sentry' ? 'bring its fatal, unresolved issues into' : "bring its issues that aren't started into"}>
         {ctx.factories.map((f) => (
           <FactoryRow key={f.id} f={f} t={t} wanted={picked ? wanted : undefined} disabled={!picked} onToggle={(on) => void setSource(f, t, on ? wanted : null)} />
         ))}
@@ -556,7 +608,7 @@ function SlackCard({ ctx, c }: { ctx: Ctx; c: Connection }) {
   );
 
   return (
-    <Card id="slack" name="Slack" state={state}>
+    <Card id="slack" name="Slack" flat={ctx.flat} state={state}>
       <Step n={1} done={bot || app} current={!bot && !app} title="make the Slack app" summary="made">
         <span className="t-muted">copy the manifest, open slack, choose "from a manifest", pick your workspace, paste it, and press create. then press install to workspace and allow.</span>
         <span style={{ display: 'flex', gap: 6 }}>
@@ -601,11 +653,11 @@ function SlackCard({ ctx, c }: { ctx: Ctx; c: Connection }) {
           </span>
         )}
       </Step>
-      <Step n={5} done={Boolean(s.slack.factory) || ctx.factories.length < 2} current={allowed.length > 0 && !s.slack.factory && ctx.factories.length > 1} title="where a mention's work goes" summary={s.slack.factory ? ctx.factories.find((f) => f.id === s.slack.factory)?.name : 'the factory it names'}>
+      <Step n={5} done={Boolean(s.slack.factory) || ctx.allFactories.length < 2} current={allowed.length > 0 && !s.slack.factory && ctx.allFactories.length > 1} title="where a mention's work goes" summary={s.slack.factory ? ctx.allFactories.find((f) => f.id === s.slack.factory)?.name : 'the factory it names'}>
         <span className="t-muted">a message can start with a factory's name, as in @sawtooth web shop: fix the login. without one, it goes here:</span>
         <select id="ig-sl-f" className="t-field" value={s.slack.factory} onChange={(e) => void ctx.change({ ...s, slack: { ...s.slack, factory: e.currentTarget.value } })}>
           <option value="">none: ask which factory</option>
-          {ctx.factories.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}
+          {ctx.allFactories.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}
         </select>
       </Step>
       <SlackReports ctx={ctx} current={works} />

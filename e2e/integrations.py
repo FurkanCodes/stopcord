@@ -48,6 +48,8 @@ try:
     card = lambda id: bridge(f"return document.querySelector('[data-integration=\"{id}\"]')?.innerText||''")
     state = lambda id: bridge(f"return document.querySelector('[data-integration-state=\"{id}\"]')?.innerText||''")
     check('sentry starts as not set up', 'not set up' in state('sentry'), state('sentry'))
+    # Signing in in the browser comes first; this test takes the other way, a pasted token.
+    bridge("const b=[...document.querySelectorAll('[data-integration=\"sentry\"] button')].find(b=>b.innerText.trim()==='or paste a token');if(b)b.click();return 1"); time.sleep(0.4)
     check('its first step says exactly what to make', 'event:read, project:read and org:read' in card('sentry'), card('sentry')[:300])
     check('slack starts at making the app', 'copy the manifest' in card('slack'), card('slack')[:300])
 
@@ -81,6 +83,9 @@ try:
 
     press('Escape'); time.sleep(0.6)
     bridge("[...document.querySelectorAll('[data-card]')][0].click();return 1"); time.sleep(1); press('6'); time.sleep(1)
+    fcard = bridge("return document.querySelector('[data-factory-integrations] [data-integration=\"sentry\"]')?.innerText||''")
+    check("the factory's own sources show the same sentry card, already bringing issues in", 'acme / web' in fcard and 'web shop' in fcard, fcard[:300])
+    bridge("[...document.querySelectorAll('button')].find(b=>b.innerText.includes('add or fine-tune sources by hand')).click();return 1"), time.sleep(0.5)
     bridge("[...document.querySelectorAll('button[aria-expanded]')].find(b=>b.innerText.includes('Sentry')).click();return 1"); time.sleep(0.6)
     cline = bridge("return document.querySelector('#src-cn-sentry')?.innerText||''")
     check("the factory's setup shows the same source, signed in once for every factory", 'set once for every factory' in cline, cline)

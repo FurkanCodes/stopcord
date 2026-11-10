@@ -1,6 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { api, failureText, REPORT_EVENTS, type Agent, type BenchResult, type BenchTask, type Connection, type Factory, type LineStage, type Part, type PullStatus, type Report, type Skill, type SourceTemplate, type Suite } from '../api';
 import { ConnectionState } from '../Connections';
+import { FactoryIntegrations } from '../Integrations';
 import { changeFactory, go, refreshFactories, showProblem } from '../store';
 import { ArmedKey, Check, Empty, FieldRow, Key, ListInput, Pane, Screen } from '../tui/kit';
 import { Logo } from '../tui/Logo';
@@ -220,6 +221,7 @@ export function Setup({ factory, onRemove }: { factory: Factory; onRemove: () =>
 function Sources({ factory, sources, part, set }: { factory: Factory; sources: Part[]; part: (id: string, patch: Partial<Part>) => void; set: (p: Partial<Factory>) => void }) {
   const [templates, setTemplates] = useState<SourceTemplate[]>([]);
   const [connections, setConnections] = useState<Connection[]>([]);
+  const [byHand, setByHand] = useState(false);
   useEffect(() => {
     api.sourceTemplates().then(setTemplates, showProblem);
     // Connections are set in settings, so look again whenever this window comes back.
@@ -234,22 +236,24 @@ function Sources({ factory, sources, part, set }: { factory: Factory; sources: P
     set({ parts: [...factory.parts, blank] });
   }
   return (
-    <Pane
-      title="sources"
-      right={
-        <span style={{ display: 'inline-flex', gap: 4 }}>
+    <Pane title="sources" style={paneStyle}>
+      <p className="t-muted">bring work in from a service: sign in, then tick this factory. signing in counts for every factory on this machine.</p>
+      <FactoryIntegrations factoryId={factory.id} />
+      <button type="button" className="t-key" aria-expanded={byHand} style={{ justifyContent: 'flex-start', gap: 8, marginTop: 4 }} onClick={() => setByHand(!byHand)}>
+        <span className="t-dim" aria-hidden="true">{byHand ? '▾' : '▸'}</span>
+        <span>add or fine-tune sources by hand</span>
+        <span className="t-dim">{sources.length === 0 ? 'a command of your own, how often to pull, starting work by itself' : `${sources.length} here · how often each pulls, its command, starting work by itself`}</span>
+      </button>
+      {byHand && (
+        <span style={{ display: 'flex', gap: 4, flexWrap: 'wrap', paddingLeft: 8 }}>
+          <span className="t-dim">add by hand:</span>
           {templates.map((t) => (
             <Key key={t.id} size="xs" onClick={() => add(t)}><Logo name={t.id} size={12} />{t.name.toLowerCase()}</Key>
           ))}
-          <Key size="xs" onClick={() => add()}>other</Key>
+          <Key size="xs" title="Any command that prints a JSON list of tickets" onClick={() => add()}>other</Key>
         </span>
-      }
-      style={paneStyle}
-    >
-      {sources.length === 0 && (
-        <Empty style={{ padding: 0 }}>no sources. the easy way is integrations, from home: sign in to github, sentry or linear once and tick this factory. the buttons above add one here by hand, and other runs any command that prints tickets</Empty>
       )}
-      {sources.map((p) => (
+      {byHand && sources.map((p) => (
         <SourceCard
           key={p.id}
           factory={factory.id}
