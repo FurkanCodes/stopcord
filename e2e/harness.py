@@ -60,9 +60,10 @@ def shot(n):
     if w: subprocess.run(['screencapture', '-x', '-o', '-l', w, f'{SHOTS}/{n}.png'], capture_output=True)
 def row(k):
     bridge(f"const b=[...document.querySelectorAll('[data-work-row]')].find(e=>e.innerText.includes({json.dumps(k)}));b.click();return 1"); time.sleep(0.6)
-def open_tuning():
-    """Opens setup's tuning, where agents, sandboxes and sources by hand are. It remembers being open."""
-    bridge("const b=document.querySelector('#tuning-title button');if(b&&b.getAttribute('aria-expanded')!=='true')b.click();return 1"); time.sleep(0.5)
+def setup_section(name):
+    """Opens one section of a factory's setup from its list on the left: general, integrations, sources, line, agents,
+    scorers, sandboxes, skills, benchmarks, notifications or template. Setup remembers the last one."""
+    bridge(f"document.querySelector('[data-setup-section=\"{name}\"]')?.click();return 1"); time.sleep(0.5)
 def fill(sel, v):
     bridge(f"const e=document.querySelector({json.dumps(sel)});const p=e.tagName==='TEXTAREA'?HTMLTextAreaElement.prototype:HTMLInputElement.prototype;Object.getOwnPropertyDescriptor(p,'value').set.call(e,{json.dumps(v)});e.focus();e.dispatchEvent(new Event('input',{{bubbles:true}}));return 1"); time.sleep(0.4)
 

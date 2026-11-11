@@ -10,21 +10,23 @@ try:
     inv('create_factory', path=os.path.realpath(R), name='keys', template='line', readAs=['AGENTS.md'], harness='claude', reviewer='claude', level='worktree')
     fid = inv('factories')[0]['id']
     stop(); launch(); time.sleep(1.5)
-    to_setup = lambda: (bridge("[...document.querySelectorAll('[data-card]')][0].click();return 1"), time.sleep(1), press('6'), time.sleep(1), open_tuning())
-    # Tuning starts folded, so setup opens on the few things a factory needs.
+    to_setup = lambda: (bridge("[...document.querySelectorAll('[data-card]')][0].click();return 1"), time.sleep(1), press('6'), time.sleep(1), setup_section('sources'))
+    # Setup lists its sections on the left and shows one at a time, starting with general.
     bridge("[...document.querySelectorAll('[data-card]')][0].click();return 1"); time.sleep(1)
-    bridge("try{localStorage.removeItem('sawtooth.setup.tuning')}catch(e){};return 1"); press('6'); time.sleep(1)
-    needs = bridge("return [...document.querySelectorAll('[data-need]')].map(e=>e.dataset.need)")
-    check('setup opens with what the factory needs, in order', needs == ['sources', 'harness', 'sandbox', 'line', 'reports'], needs)
-    check('and the rest is folded under tuning', bridge("return document.querySelector('#tuning-title button').getAttribute('aria-expanded')") == 'false' and not bridge("return !!document.querySelector('#tuning-agents')"))
-    ready = bridge("return document.querySelector('[data-setup-summary] [role=status]')?.innerText||''")
-    check('it says what is still to do', 'pick where work comes from' in ready, ready)
-    check("work comes from has one row per service, for this factory", bridge("return [...document.querySelectorAll('[data-factory-integrations] [data-integration]')].map(e=>e.dataset.integration).join()") == 'github,sentry,linear,slack')
+    bridge("try{localStorage.removeItem('sawtooth.setup.section')}catch(e){};return 1"); press('6'); time.sleep(1)
+    secs = bridge("return [...document.querySelectorAll('[data-setup-section]')].map(e=>e.dataset.setupSection)")
+    check('setup lists its sections on the left, by plain names', secs[:4] == ['general', 'integrations', 'sources', 'line'] and 'notifications' in secs and 'template' in secs, secs)
+    check('and opens on general, one section at a time', bridge("return !!document.querySelector('#setup-general')") and not bridge("return !!document.querySelector('#setup-agents')"))
+    ready = bridge("return document.querySelector('#setup-general [role=status]')?.innerText||''")
+    check('it says what is still to do', 'connect an integration or add a ticket source' in ready, ready)
+    setup_section('integrations')
+    check("integrations has one row per service, for this factory", bridge("return [...document.querySelectorAll('[data-factory-integrations] [data-integration]')].map(e=>e.dataset.integration).join()") == 'github,sentry,linear,slack')
     shot('setup-summary')
     press('Escape'); time.sleep(0.6)
     to_setup()
-    check('tuning opens, with sources by hand in it', bridge("return !!document.querySelector('#tuning-sources')"))
+    check('ticket sources is a section of its own', bridge("return !!document.querySelector('#setup-sources')"))
 
+    setup_section('line')
     # Renaming a stage takes every stage that points at it along.
     line0 = next(f for f in inv('factories') if f['id'] == fid)['line']
     target = next(i for i, s in enumerate(line0) if any(o.get('then') == s['id'] or o.get('onFail') == s['id'] for o in line0))
@@ -41,9 +43,10 @@ try:
     check('and renaming it back puts it all back', next(f for f in inv('factories') if f['id'] == fid)['line'] == line0, next(f for f in inv('factories') if f['id'] == fid)['line'])
 
     # So does renaming an agent: the stages it does go with it.
+    setup_section('agents')
     agents0 = next(f for f in inv('factories') if f['id'] == fid)['agents']
     ai, name = next((i, a['id']) for i, a in enumerate(agents0) if any(s.get('agent') == a['id'] for s in line0))
-    bridge(f"[...document.querySelectorAll('#tuning-agents button[aria-expanded]')][{ai}].click();return 1"); time.sleep(0.4)
+    bridge(f"[...document.querySelectorAll('#setup-agents button[aria-expanded]')][{ai}].click();return 1"); time.sleep(0.4)
     fill(f'#agent-id-{ai}', 'maker')
     bridge(f"document.querySelector('#agent-id-{ai}').dispatchEvent(new KeyboardEvent('keydown',{{key:'Enter',bubbles:true}}));return 1"); time.sleep(1)
     f1 = next(f for f in inv('factories') if f['id'] == fid)
@@ -55,12 +58,16 @@ try:
     fill(f'#agent-{ai}-m', 'haiku'); time.sleep(1)
     harness_now = lambda: next(a for a in next(f for f in inv('factories') if f['id'] == fid)['agents'] if a['id'] == name)['harness']
     check('picking a model writes it into the role\'s command', harness_now() == 'claude --model haiku', harness_now())
+    setup_section('line')
     strip = bridge("return document.querySelector('ol[aria-label=\"The line\"]')?.innerText||''")
     check('and the line shows which model does that stage', 'claude · haiku' in strip, strip)
+    setup_section('agents')
+    bridge(f"[...document.querySelectorAll('#setup-agents button[aria-expanded]')][{ai}].click();return 1"); time.sleep(0.4)
     fill(f'#agent-{ai}-m', ''); time.sleep(1)
     check('clearing it leaves the harness alone', harness_now() == 'claude', harness_now())
-    bridge(f"[...document.querySelectorAll('#tuning-agents button[aria-expanded]')][{ai}].click();return 1"); time.sleep(0.3)
+    bridge(f"[...document.querySelectorAll('#setup-agents button[aria-expanded]')][{ai}].click();return 1"); time.sleep(0.3)
 
+    setup_section('sources')
     bridge("[...document.querySelectorAll('button')].find(b=>b.innerText.trim()==='sentry').click();return 1"); time.sleep(1.2)
     fac = lambda: next(f for f in inv('factories') if f['id'] == fid)
     part = lambda: next(p for p in fac()['parts'] if p['id'] == 'sentry')
@@ -134,6 +141,7 @@ try:
     f['reports'] = [{'id': 'notify', 'on': ['handoff'], 'command': f'printf "%s|%s|%s" "$ST_EVENT" "$ST_KEY" "${{HOOK:-none}}" > {out}', 'keys': ['HOOK'], 'slack': ''}]
     inv('save_factory', factory=f); time.sleep(1)
     inv('set_report_key', factory=fid, report='notify', name='HOOK', value='hook-e2e')
+    setup_section('notifications')
     rfold = "[...document.querySelectorAll('button[aria-expanded]')].find(b=>b.innerText.includes('notify'))"
     wait('the report shows in setup', lambda: bridge(f"return !!{rfold}"))
     bridge(f"{rfold}.click();return 1"); time.sleep(0.6)

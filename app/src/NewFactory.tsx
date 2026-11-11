@@ -364,7 +364,7 @@ export function NewFactory() {
                 >
                   open a template file…
                 </Key>
-                {shared ? <span role="status" className="t-muted" style={{ fontSize: 12 }}>{shared}</span> : saved.length === 0 && <span className="t-dim" style={{ fontSize: 12 }}>or save one from any factory's setup, under tuning</span>}
+                {shared ? <span role="status" className="t-muted" style={{ fontSize: 12 }}>{shared}</span> : saved.length === 0 && <span className="t-dim" style={{ fontSize: 12 }}>or save one from any factory's setup, under template</span>}
               </span>
             </div>
           </div>

@@ -202,35 +202,6 @@ textarea::placeholder {
 .t-body:focus {
   outline: none;
 }
-/* Jumping to a section leaves room for its title and the sticky index above it. */
-.t-body .t-pane,
-.t-body .t-need {
-  scroll-margin-top: 56px;
-}
-
-/* Setup's section index: stays at the top, with an edge so what scrolls under it ends cleanly. */
-.t-index {
-  position: sticky;
-  top: -16px;
-  z-index: 5;
-  flex-shrink: 0;
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 2px;
-  max-width: 960px;
-  width: 100%;
-  margin: -16px auto -8px;
-  padding: 6px 0;
-  background: var(--bg);
-  border-bottom: 1px solid var(--line-soft);
-}
-/* The section you're in: full ink and an underline, quieter than a tab that's open. */
-.t-key[aria-current='location'] {
-  color: var(--ink);
-  box-shadow: inset 0 -1px 0 var(--ink);
-}
-
 .t-message {
   display: flex;
   flex-wrap: wrap;
@@ -478,36 +449,6 @@ textarea::placeholder {
 .t-solid:disabled {
   background: oklch(0.24 0.008 260);
   color: var(--ink-3);
-}
-
-/* ---- A factory's setup: one row per thing it needs -------------------------- */
-
-.t-need {
-  display: grid;
-  grid-template-columns: 17ch minmax(0, 1fr);
-  column-gap: 16px;
-  row-gap: 6px;
-  padding: 12px 0;
-}
-.t-need + .t-need {
-  border-top: 1px solid var(--line-soft);
-}
-.t-need-label {
-  margin: 0;
-  padding-top: 1px;
-  font: inherit;
-  color: var(--ink-2);
-}
-.t-need-body {
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-@media (max-width: 640px) {
-  .t-need {
-    grid-template-columns: minmax(0, 1fr);
-  }
 }
 
 /* Rows in lists: hover wash, the picked one in the selection colour. */

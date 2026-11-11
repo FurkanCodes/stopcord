@@ -76,7 +76,7 @@ try:
     check('the box doesn\'t pin the engine\'s words on an agent, and names whose terminal to answer in', 'planner asks' not in box and "critic's terminal" in box, box[:400])
     shot('panel-talk')
 
-    press('6'); time.sleep(1)
+    press('6'); time.sleep(1); setup_section('line')
     strip = bridge("return document.querySelector('[aria-label=\"The line\"]')?.innerText||''")
     check('the line shows the panel', 'talks with critic' in strip, strip)
     print('EXIT', FAILS)

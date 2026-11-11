@@ -43,7 +43,7 @@ try:
     check("a harness's own sandbox says why it can't be tested", not got['checks'] and 'harness' in got['note'], got)
 
     runner(level='contained')
-    bridge("[...document.querySelectorAll('[data-card]')][0].click();return 1"); time.sleep(1); press('6'); time.sleep(1); open_tuning()
+    bridge("[...document.querySelectorAll('[data-card]')][0].click();return 1"); time.sleep(1); press('6'); time.sleep(1); setup_section('sandboxes')
     bridge("document.querySelector('[data-sandbox] button[aria-expanded]').scrollIntoView();return 1"); time.sleep(0.4)
     if bridge("return document.querySelector('[data-sandbox] button[aria-expanded]').getAttribute('aria-expanded')") != 'true':
         bridge("document.querySelector('[data-sandbox] button[aria-expanded]').click();return 1"); time.sleep(0.5)

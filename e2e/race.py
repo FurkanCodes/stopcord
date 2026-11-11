@@ -68,7 +68,7 @@ try:
     check('the race is over', not w.get('race'), w.get('race'))
     check('and its terminals and copies are gone', not any(k.startswith('build·') for k in w['agents']) and not any(d.startswith('race-') for d in os.listdir(f"{H}/worktrees/{f['id']}/.copies/{w['id']}") if os.path.isdir(f"{H}/worktrees/{f['id']}/.copies/{w['id']}")), w['agents'])
 
-    time.sleep(0.8); press('6'); time.sleep(1)
+    time.sleep(0.8); press('6'); time.sleep(1); setup_section('line')
     strip = bridge("return document.querySelector('[aria-label=\"The line\"]')?.innerText||''")
     check('the line shows who races at build', 'races fast, careful' in strip, strip)
     bridge("[...document.querySelectorAll('[aria-label=\"The line\"] button')].find(b=>b.innerText.startsWith('build')).click();return 1"); time.sleep(0.6)

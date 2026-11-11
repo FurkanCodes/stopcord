@@ -263,7 +263,7 @@ export function SandboxPane({ id, factory, set, style }: { id?: string; factory:
   const edit = (i: number, patch: Partial<Runner>) => set({ runners: factory.runners.map((r, j) => (j === i ? { ...r, ...patch } : r)) });
   const add = () => set({ runners: [...factory.runners, { id: uniq('sandbox', factory.runners.map((r) => r.id)), level: 'contained' }] });
   return (
-    <Pane id={id} title="sandboxes" heading={3} right={<Key size="xs" onClick={add}>add sandbox</Key>} style={style}>
+    <Pane id={id} title="sandboxes" heading={2} right={<Key size="xs" onClick={add}>add sandbox</Key>} style={style}>
       <p className="t-muted" style={{ margin: 0 }}>
         where agents run, and what they can touch. agents use {factory.defaults.runner || 'no sandbox'} unless they pick another.
       </p>

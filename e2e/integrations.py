@@ -82,11 +82,11 @@ try:
         wait('a folder with no github remote says so instead of offering it', lambda: 'no GitHub remote' in card('github'))
 
     press('Escape'); time.sleep(0.6)
-    bridge("[...document.querySelectorAll('[data-card]')][0].click();return 1"); time.sleep(1); press('6'); time.sleep(1)
+    bridge("[...document.querySelectorAll('[data-card]')][0].click();return 1"); time.sleep(1); press('6'); time.sleep(1); setup_section('integrations')
     fcard = bridge("return document.querySelector('[data-factory-integrations] [data-integration=\"sentry\"]')?.innerText||''")
     ticked = bridge(f"return document.querySelector('[data-factory-integrations] #ig-f-sentry-{fid}')?.checked===true")
     check("the factory's own sentry row says what it brings in, already ticked", 'acme / web' in fcard and ticked, fcard[:300])
-    open_tuning()
+    setup_section('sources')
     bridge("[...document.querySelectorAll('button[aria-expanded]')].find(b=>b.innerText.includes('Sentry')).click();return 1"); time.sleep(0.6)
     cline = bridge("return document.querySelector('#src-cn-sentry')?.innerText||''")
     check("the factory's setup shows the same source, signed in once for every factory", 'set once for every factory' in cline, cline)

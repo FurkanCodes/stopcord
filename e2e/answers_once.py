@@ -70,17 +70,17 @@ try:
     check('the fixed finding is gone', not any(x.get('kind') == 'clear' for x in w.get('findings', [])), w.get('findings'))
 
     time.sleep(0.8)
-    press('6'); time.sleep(1); open_tuning()
+    press('6'); time.sleep(1); setup_section('agents')
     i = [a['id'] for a in factory()['agents']].index('reviewer')
-    fold = "[...document.querySelectorAll('#tuning-agents button[aria-expanded]')].find(b=>b.innerText.includes('reviewer'))"
+    fold = "[...document.querySelectorAll('#setup-agents button[aria-expanded]')].find(b=>b.innerText.includes('reviewer'))"
     check('the reviewer\'s fold says it answers once', 'answers once' in (bridge(f"return {fold}?.innerText||''") or ''), bridge(f"return {fold}?.innerText||''"))
     bridge(f"{fold}.click();return 1"); time.sleep(0.5)
     how = bridge(f"const e=document.getElementById('agent-how-{i}');return e?e.value:null")
     check('setup shows how the reviewer runs', how == 'once', how)
     check('and hides its sandbox, which it doesn\'t use', bridge(f"return !document.getElementById('agent-r-{i}')"))
+    setup_section('line')
     strip = bridge("return document.querySelector('[aria-label=\"The line\"]')?.innerText||''")
     check('the line marks the stages that answer once', 'review\n' in strip and strip.count('once') == 2, strip)
-    bridge(f"{fold}.scrollIntoView({{block:'center'}});return 1"); time.sleep(0.4)
     shot('answers-once-setup')
     print('EXIT', FAILS)
 except Exception:

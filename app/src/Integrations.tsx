@@ -660,7 +660,7 @@ function TrackerCard({ ctx, c }: { ctx: Ctx; c: Connection }) {
       </Step>
       {ctx.rows ? (
         // The row has the tick for this factory, so there's no third step here.
-        <span className="t-dim" style={{ fontSize: 12 }}>ticking it in the row above pulls every 5 minutes, and each issue waits for you to start it. change that under tuning, in sources by hand.</span>
+        <span className="t-dim" style={{ fontSize: 12 }}>ticking it in the row above pulls every 5 minutes, and each issue waits for you to start it. change that in setup, under ticket sources.</span>
       ) : (
         <Step n={3} done={signed && picked && using.length > 0} current={signed && picked} title={c.id === 'sentry' ? 'bring its fatal, unresolved issues into' : "bring its issues that aren't started into"}>
           {ctx.factories.map((f) => (

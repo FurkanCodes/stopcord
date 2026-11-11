@@ -17,10 +17,10 @@ try:
     inv('save_factory', factory=f)
     stop(); launch(); time.sleep(1.5)
 
-    bridge("[...document.querySelectorAll('[data-card]')][0].click();return 1"); time.sleep(1); press('6'); time.sleep(1); open_tuning()
-    check('tuning has a pane to save the factory as a template', bridge("return !!document.querySelector('#tuning-template')"))
+    bridge("[...document.querySelectorAll('[data-card]')][0].click();return 1"); time.sleep(1); press('6'); time.sleep(1); setup_section('template')
+    check('setup has a template section to save the factory as one', bridge("return !!document.querySelector('#setup-template')"))
     fill('#tpl-name', 'bug fixer'); fill('#tpl-about', 'small fixes, built by codex')
-    bridge("[...document.querySelectorAll('#tuning-template button')].find(b=>b.innerText.includes('save as a template')).click();return 1")
+    bridge("[...document.querySelectorAll('#setup-template button')].find(b=>b.innerText.includes('save as a template')).click();return 1")
     said = lambda: bridge("return document.querySelector('[data-template-saved]')?.innerText||''")
     wait('it says it was saved, and where to find it', lambda: 'saved as bug fixer' in said())
     shot('template-saved')
