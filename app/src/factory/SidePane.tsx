@@ -132,7 +132,7 @@ function PartBody(props: SidePaneProps & { part: Part }) {
       )}
 
       <div style={{ marginTop: 'auto', paddingTop: 10, borderTop: '1px dashed var(--line-dash)' }}>
-        <Key onClick={remove} style={{ color: deleting ? 'var(--ink)' : undefined }}>
+        <Key danger className={deleting ? 'is-armed' : undefined} onClick={remove}>
           {deleting ? `delete ${part.name}? click again` : `delete this ${kindWord[part.kind]}`}
         </Key>
       </div>
@@ -281,7 +281,7 @@ function TriggerSettings({ part, update }: { part: Part; update: (patch: Partial
   );
 }
 
-/** Pick a harness by name, or type any other command. */
+/** Pick a harness from a list, installed ones first, or type any other command. */
 export function HarnessPick({
   id,
   label,
@@ -298,49 +298,47 @@ export function HarnessPick({
   const detected = useStore((s) => s.agents);
   const installed = useStore((s) => s.installed);
   const profiles = useHarnessProfiles();
-  // Every harness with a profile, and any the screen reader knows: installed ones first.
-  const agents = [...new Set([...detected, ...profiles.map((p) => p.commands[0]!).filter(Boolean)])].sort(
-    (a, b) => Number(!installed || installed.includes(b)) - Number(!installed || installed.includes(a)) || a.localeCompare(b),
-  );
-  const known = agents.includes(value) || (allowShell && value === '');
+  const names = [...new Set([...detected, ...profiles.map((p) => p.commands[0]!).filter(Boolean)])].sort();
+  const found = (n: string) => !installed || installed.includes(n);
+  const here = names.filter(found);
+  const missing = names.filter((n) => !found(n));
+  const known = names.includes(value) || (allowShell && value === '');
   const [other, setOther] = useState(!known && value !== '');
-  const options: [string, string, boolean][] = [
-    ...(allowShell ? [['', 'shell', true] as [string, string, boolean]] : []),
-    ...agents.map((a): [string, string, boolean] => [a, a, !installed || installed.includes(a)]),
-  ];
+  const picked = other ? 'other' : value;
   return (
-    <FieldRow label={label} top>
-      {options.map(([v, name, found]) => (
-        <Radio
-          key={v || 'shell'}
-          id={`${id}-${v || 'shell'}`}
-          name={id}
-          checked={!other && value === v}
-          onChange={() => {
-            setOther(false);
-            onChange(v);
-          }}
-        >
-          {name}
-          {!found && <span className="t-dim"> · not found</span>}
-        </Radio>
-      ))}
-      <Radio
-        id={`${id}-other`}
-        name={id}
-        checked={other}
-        onChange={() => {
-          setOther(true);
-          onChange('');
+    <FieldRow id={id} label={label} top>
+      <select
+        id={id}
+        className="t-field"
+        value={picked}
+        onChange={(e) => {
+          const v = e.currentTarget.value;
+          setOther(v === 'other');
+          onChange(v === 'other' ? '' : v);
         }}
       >
-        other command
-      </Radio>
+        {allowShell && <option value="">shell</option>}
+        {!allowShell && !value && !other && <option value="">pick one</option>}
+        <optgroup label="on this machine">
+          {here.map((n) => (
+            <option key={n} value={n}>{n}</option>
+          ))}
+        </optgroup>
+        {missing.length > 0 && (
+          <optgroup label="not installed">
+            {missing.map((n) => (
+              <option key={n} value={n}>{n}</option>
+            ))}
+          </optgroup>
+        )}
+        <option value="other">other command…</option>
+      </select>
       {other && (
         <input
           aria-label="Command"
-          className="t-field" spellCheck={false}
-          style={{ marginLeft: '5ch' }}
+          className="t-field"
+          spellCheck={false}
+          autoFocus
           value={value}
           placeholder="my-agent --flag"
           onChange={(e) => onChange(e.currentTarget.value)}

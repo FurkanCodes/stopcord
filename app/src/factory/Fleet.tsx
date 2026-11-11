@@ -629,7 +629,7 @@ function Side({
           <Key k="r" size="sm" onClick={onRename}>
             rename
           </Key>
-          <Key k="x" size="sm" onClick={onStop} style={{ color: stopping ? 'var(--ink)' : undefined }}>
+          <Key k="x" size="sm" danger className={stopping ? 'is-armed' : undefined} onClick={onStop}>
             {t.state === 'exited' ? 'remove' : stopping ? 'stop it? press again' : 'stop'}
           </Key>
         </span>

@@ -649,7 +649,7 @@ function TrackerCard({ ctx, c }: { ctx: Ctx; c: Connection }) {
         {c.signedIn ? (
           <span style={{ display: 'flex', gap: 8, alignItems: 'baseline', flexWrap: 'wrap' }}>
             <span className="t-muted">signed in as {c.signedIn}, in the browser</span>
-            <Key size="xs" onClick={() => void api.oauthSignOut(c.id).then(saved, showProblem)}>sign out</Key>
+            <Key size="xs" danger onClick={() => void api.oauthSignOut(c.id).then(saved, showProblem)}>sign out</Key>
             {!ctx.rows && <Key size="xs" aria-expanded={way === 'key'} onClick={() => setWay(way === 'key' ? 'browser' : 'key')}>use {keyWord} instead</Key>}
           </span>
         ) : (

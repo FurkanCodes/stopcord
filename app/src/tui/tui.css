@@ -356,16 +356,17 @@ textarea::placeholder {
 
 /* ---- Keys: [k] buttons --------------------------------------------------- */
 
+/* Every button has a faint face and an edge, so what can be pressed never reads as plain text. */
 .t-key {
   display: inline-flex;
   align-items: center;
   gap: 6px;
   height: 26px;
   padding: 0 8px;
-  border: 0;
+  border: 1px solid oklch(1 0 0 / 0.17);
   border-radius: 3px;
-  background: transparent;
-  color: var(--ink-2);
+  background: oklch(1 0 0 / 0.045);
+  color: var(--ink);
   text-decoration: none;
   white-space: nowrap;
 }
@@ -377,10 +378,32 @@ textarea::placeholder {
   padding: 0 6px;
 }
 .t-key.is-action {
-  border: 1px solid var(--line);
+  border-color: oklch(1 0 0 / 0.26);
 }
 .t-key:hover:not(:disabled) {
-  background-color: oklch(1 0 0 / 0.08);
+  background-color: oklch(1 0 0 / 0.11);
+  border-color: oklch(1 0 0 / 0.34);
+}
+/* A fold's full-width header is a row, not a box, until you point at it. */
+.t-key.is-fold {
+  border-color: transparent;
+  background: transparent;
+}
+/* Takes something away: red, so it never looks like the safe choice. Armed, it fills. */
+.t-key.is-danger {
+  color: var(--red-text);
+  border-color: var(--red-line);
+  background: oklch(0.68 0.2 22 / 0.06);
+}
+.t-key.is-danger:hover:not(:disabled) {
+  background-color: oklch(0.68 0.2 22 / 0.16);
+  border-color: var(--red);
+}
+.t-key.is-danger.is-armed {
+  background: var(--red);
+  border-color: var(--red);
+  color: oklch(0.15 0.006 260);
+  font-weight: 600;
 }
 .t-key[aria-pressed='true'],
 .t-key[aria-current='page'] {
@@ -414,9 +437,11 @@ textarea::placeholder {
 .t-key[aria-current='page'] .t-name {
   color: inherit;
 }
-/* Disabled reads as quieter text, not faded: fading took it under 3:1. */
+/* Disabled reads as quieter text, not faded: fading took it under 3:1. No face: it can't be pressed. */
 .t-key:disabled {
   color: var(--ink-3);
+  background: transparent;
+  border-color: var(--line-soft);
 }
 
 .t-solid {

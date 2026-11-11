@@ -34,7 +34,7 @@ export function RemoveFactory({ factory }: { factory: Factory }) {
   if (!open) {
     return (
       <span style={{ display: 'flex', gap: 10, alignItems: 'baseline', flexWrap: 'wrap' }}>
-        <Key size="sm" onClick={() => setOpen(true)}>remove this factory…</Key>
+        <Key size="sm" danger onClick={() => setOpen(true)}>remove this factory…</Key>
         <span className="t-dim" style={{ fontSize: 12 }}>asks what to take with it. the project folder and its commits always stay</span>
       </span>
     );

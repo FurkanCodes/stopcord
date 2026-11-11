@@ -451,7 +451,7 @@ function Incoming({ factory, item, starts, stage, marked, onStage, onStart }: { 
           </label>
         )}
         {starts.length > 1 && <Key size="sm" className="is-action" disabled={asking} onClick={() => void suggest()}>{asking ? 'asking…' : 'suggest a stage'}</Key>}
-        <Key k="x" size="sm" className="is-action" onClick={notThis}>{arm.armed ? 'press again' : 'not this'}</Key>
+        <Key k="x" size="sm" danger className={arm.armed ? 'is-action is-armed' : 'is-action'} onClick={notThis}>{arm.armed ? 'press again' : 'not this'}</Key>
         {told && <span role="status" className="t-muted" style={{ marginLeft: 'auto' }}>{told}</span>}
       </div>
     </Pane>
@@ -508,6 +508,8 @@ interface Verb {
   run: () => void;
   primary?: boolean;
   off?: boolean;
+  /** It ends or throws away work: drawn in red. */
+  danger?: boolean;
 }
 
 function Detail({ factory, item, runs, terminals, onSending, onSite }: { factory: Factory; item: WorkItem; runs?: Run[]; terminals: Terminal[]; onSending: (on: boolean) => void; onSite: (key: string, allow: boolean, always: boolean) => void }) {
@@ -589,6 +591,7 @@ function Detail({ factory, item, runs, terminals, onSending, onSite }: { factory
     k: 'D',
     label: arm.armed === 'drop' ? `press again: ends it and closes ${terms.length} terminal${terms.length === 1 ? '' : 's'}` : 'drop',
     run: () => arm.press('drop', () => void act('drop')),
+    danger: true,
   };
   const back: Verb = { k: 's', label: 'send back', run: () => setSending(true) };
   const terminalVerb: Verb | null = terms.length ? { k: 'o', label: 'open the terminal', run: () => openFactory(factory.id, 'terminals', item.terminal ?? terms[0]!.id) } : null;
@@ -650,7 +653,7 @@ function Detail({ factory, item, runs, terminals, onSending, onSite }: { factory
         <span style={{ opacity: 0.65 }}>[{v.k}]</span> {v.label}
       </button>
     ) : (
-      <Key key={v.k} k={v.k} size="sm" className="is-action" disabled={busy || v.off} onClick={v.run}>{v.label}</Key>
+      <Key key={v.k} k={v.k} size="sm" danger={v.danger} className={['is-action', v.danger && v.label.startsWith('press again') ? 'is-armed' : ''].filter(Boolean).join(' ')} disabled={busy || v.off} onClick={v.run}>{v.label}</Key>
     );
 
   return (

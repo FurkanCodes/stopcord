@@ -723,7 +723,7 @@ function Fold({ title, hint, logo, startOpen = false, children }: { title: strin
   const [open, setOpen] = useState(startOpen);
   return (
     <div style={open ? card : undefined}>
-      <button type="button" className="t-key" aria-expanded={open} style={{ width: '100%', justifyContent: 'flex-start', gap: 8 }} onClick={() => setOpen(!open)}>
+      <button type="button" className="t-key is-fold" aria-expanded={open} style={{ width: '100%', justifyContent: 'flex-start', gap: 8 }} onClick={() => setOpen(!open)}>
         <span className="t-dim" aria-hidden="true">{open ? '▾' : '▸'}</span>
         <Logo name={logo} />
         <span className="t-name">{title}</span>

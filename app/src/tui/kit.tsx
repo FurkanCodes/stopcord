@@ -68,14 +68,16 @@ export interface KeyProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   current?: boolean;
   expanded?: boolean;
   size?: 'md' | 'sm' | 'xs';
+  /** It takes something away: drawn in red. */
+  danger?: boolean;
 }
 
 /** A control with its key in front: [k] label. */
-export function Key({ k, pressed, current, expanded, size = 'md', className, children, ...rest }: KeyProps) {
+export function Key({ k, pressed, current, expanded, size = 'md', danger = false, className, children, ...rest }: KeyProps) {
   return (
     <button
       type="button"
-      className={['t-key', size === 'sm' ? 'is-sm' : size === 'xs' ? 'is-xs' : '', className].filter(Boolean).join(' ')}
+      className={['t-key', size === 'sm' ? 'is-sm' : size === 'xs' ? 'is-xs' : '', danger ? 'is-danger' : '', className].filter(Boolean).join(' ')}
       aria-pressed={pressed === undefined ? undefined : pressed}
       aria-current={current ? 'page' : undefined}
       aria-expanded={expanded === undefined ? undefined : expanded}
@@ -106,10 +108,11 @@ export function useArm(ms = 3000) {
 }
 
 /** A key that asks for a second press before it does anything. */
-export function ArmedKey({ onClick, children, ...rest }: KeyProps) {
+export function ArmedKey({ onClick, children, danger = true, className, ...rest }: KeyProps) {
   const { armed, press } = useArm();
+  // Two presses are for what's hard to take back, so it's red unless told otherwise.
   return (
-    <Key {...rest} onClick={(e) => press('go', () => onClick?.(e))}>
+    <Key {...rest} danger={danger} className={[armed ? 'is-armed' : '', className].filter(Boolean).join(' ')} onClick={(e) => press('go', () => onClick?.(e))}>
       {armed ? 'press again' : children}
     </Key>
   );
