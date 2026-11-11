@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { api, failureText, REPORT_EVENTS, type Agent, type BenchResult, type BenchTask, type Choice, type Connection, type Factory, type LineStage, type Part, type PullStatus, type Report, type Skill, type SourceTemplate, type Suite } from '../api';
 import { ConnectionState } from '../Connections';
-import { modelChoices, modelOf, profileFor, runsOn, useHarnessProfiles, withModel } from '../harness';
+import { effortOf, modelChoices, modelOf, profileFor, runsOn, useHarnessProfiles, withEffort, withModel } from '../harness';
 import { FactoryIntegrations } from '../Integrations';
 import { changeFactory, go, refreshFactories, showProblem, useStore } from '../store';
 import { ArmedKey, Check, FieldRow, Key, ListInput, Pane, Screen, Titled } from '../tui/kit';
@@ -135,6 +135,21 @@ function HarnessFields({ id, command, fallback, placeholder, onChange }: { id: s
         />
         <datalist id={`${id}-m-list`}>
           {choices.map((m) => <option key={m} value={m} />)}
+        </datalist>
+      </FieldRow>
+      <FieldRow id={`${id}-e`} label="effort" width="14ch">
+        <input
+          id={`${id}-e`}
+          className="t-field"
+          spellCheck={false}
+          list={`${id}-e-list`}
+          disabled={!profile?.effortArg}
+          value={effortOf(profile, effective)}
+          placeholder={!effective ? 'pick a harness first' : profile?.effortArg ? `the harness's own choice${profile.efforts?.length ? `, or ${profile.efforts.join(', ')}` : ''}` : `sawtooth doesn't know how ${profile?.id ?? effective.split(/\s+/)[0]} sets effort. put it in the command`}
+          onChange={(e) => onChange(withEffort(profile, command.trim() || effective, e.currentTarget.value))}
+        />
+        <datalist id={`${id}-e-list`}>
+          {(profile?.efforts ?? []).map((m) => <option key={m} value={m} />)}
         </datalist>
         {effective && <span className="t-dim" style={{ fontSize: 12 }}>{command.trim() ? 'runs' : 'uses the default'}: {effective}</span>}
       </FieldRow>
@@ -350,6 +365,28 @@ function General({ factory, set, sources, onRemove, onOpen }: { factory: Factory
   );
 }
 
+/** What a stage's agent runs on: its harness, model and effort, changed on the agent, so every stage it does follows. */
+function AgentRuns({ factory, set, agent, stage, i }: { factory: Factory; set: (patch: Partial<Factory>) => void; agent: string; stage: string; i: number }) {
+  const key = factory.agents.some((a) => a.id === agent) ? 'agents' : factory.scorers.some((a) => a.id === agent) ? 'scorers' : null;
+  if (!key) return null;
+  const role = factory[key].find((a) => a.id === agent)!;
+  const others = factory.line.filter((x) => x.agent === agent && x.id !== stage).map((x) => x.id);
+  return (
+    <>
+      <HarnessFields
+        id={`st-${i}-run`}
+        command={role.harness}
+        fallback={factory.defaults.harness}
+        placeholder="the factory's default harness"
+        onChange={(harness) => set({ [key]: factory[key].map((a) => (a.id === agent ? { ...a, harness } : a)) })}
+      />
+      <span className="t-dim" style={{ fontSize: 12, paddingLeft: 'calc(14ch + 12px)' }}>
+        {others.length ? `these are ${agent}'s, so ${others.join(' and ')} change${others.length === 1 ? 's' : ''} too` : `these are ${agent}'s, set under agents too`}
+      </span>
+    </>
+  );
+}
+
 /** The line, left to right. A stage opens for changing when it's clicked. */
 function Line({ factory, set }: { factory: Factory; set: (patch: Partial<Factory>) => void }) {
   const [at, setAt] = useState<number | null>(null);
@@ -409,6 +446,7 @@ function Line({ factory, set }: { factory: Factory; set: (patch: Partial<Factory
           <NameField id={`st-id-${i}`} label="stage" value={s.id} taken={factory.line.map((x) => x.id)} onCommit={(id) => stage(i, { id })} />
           <Pick id={`st-kind-${i}`} label="done by" value={s.kind} options={[['agent', 'an agent'], ['gate', 'the engine: checks that must pass'], ['human', 'a person']]} onChange={(kind) => stage(i, { kind: kind as LineStage['kind'] })} />
           {s.kind === 'agent' && <Pick id={`st-ag-${i}`} label="agent" value={s.agent ?? ''} options={[['', 'pick one'], ...agents]} onChange={(a) => stage(i, { agent: a })} />}
+          {s.kind === 'agent' && s.agent && <AgentRuns factory={factory} set={set} agent={s.agent} stage={s.id} i={i} />}
           {s.kind === 'gate' && (
             <>
               <FieldRow label="checks" width="14ch">

@@ -472,6 +472,10 @@ export interface HarnessProfile {
   modelFlag?: string;
   /** Models to offer. Any other name can be typed. */
   models?: string[];
+  /** How the start command says how hard to think, with {effort} for the level, such as --effort {effort}. */
+  effortArg?: string;
+  /** Effort levels to offer. Any other can be typed. */
+  efforts?: string[];
   trust: { contains: string; answer: string; auto: boolean } | null;
 }
 

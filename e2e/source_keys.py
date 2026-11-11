@@ -42,6 +42,20 @@ try:
     bridge(f"document.querySelector('#st-id-{target}').dispatchEvent(new KeyboardEvent('keydown',{{key:'Enter',bubbles:true}}));return 1"); time.sleep(1)
     check('and renaming it back puts it all back', next(f for f in inv('factories') if f['id'] == fid)['line'] == line0, next(f for f in inv('factories') if f['id'] == fid)['line'])
 
+    # A stage's editor shows its agent's harness, model and effort, and changing them changes the agent.
+    ag = next(i for i, s in enumerate(line0) if s['kind'] == 'agent' and s.get('agent'))
+    who = line0[ag]['agent']
+    bridge(f"document.querySelectorAll('ol[aria-label=\"The line\"] button')[{ag}].click();return 1"); time.sleep(0.4)
+    check("a stage shows its agent's model and effort", bridge(f"return !!document.querySelector('#st-{ag}-run-m') && !!document.querySelector('#st-{ag}-run-e')"))
+    fill(f'#st-{ag}-run-e', 'high'); time.sleep(1)
+    cmd = lambda: next(a for a in next(f for f in inv('factories') if f['id'] == fid)['agents'] if a['id'] == who)['harness']
+    check('picking an effort writes it into the agent\'s command', cmd() == 'claude --effort high', cmd())
+    strip = bridge("return document.querySelector('ol[aria-label=\"The line\"]')?.innerText||''")
+    check('and the line shows it', 'claude · high' in strip, strip)
+    fill(f'#st-{ag}-run-e', ''); time.sleep(1)
+    check('clearing it leaves the harness alone', cmd() == 'claude', cmd())
+    bridge(f"document.querySelectorAll('ol[aria-label=\"The line\"] button')[{ag}].click();return 1"); time.sleep(0.3)
+
     # So does renaming an agent: the stages it does go with it.
     setup_section('agents')
     agents0 = next(f for f in inv('factories') if f['id'] == fid)['agents']

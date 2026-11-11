@@ -55,6 +55,13 @@ pub struct Harness {
     /// Models to offer for it. Any other name can still be typed.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub models: Vec<String>,
+    /// How the start command says how hard to think, with `{effort}` for the level, such as
+    /// `--effort {effort}`. Empty means Sawtooth doesn't know one.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub effort_arg: String,
+    /// Effort levels to offer. Any other can still be typed.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub efforts: Vec<String>,
     pub trust: Option<Trust>,
     /// Environment variables it can log in with, for a VM, where its login on the Mac isn't there.
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -92,6 +99,8 @@ pub fn builtin() -> Vec<Harness> {
             one_shot: "claude {model} -p {prompt}".into(),
             model_flag: "--model".into(),
             models: strings(&["opus", "sonnet", "haiku"]),
+            effort_arg: "--effort {effort}".into(),
+            efforts: strings(&["low", "medium", "high", "xhigh", "max"]),
             login_env: strings(&["CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY"]),
             login_hint: "a token from `claude setup-token` on your mac, or an API key".into(),
             trust: Some(Trust {
@@ -117,6 +126,8 @@ pub fn builtin() -> Vec<Harness> {
             one_shot: "codex exec {model} --skip-git-repo-check --sandbox danger-full-access {prompt}".into(),
             model_flag: "--model".into(),
             models: Vec::new(),
+            effort_arg: "-c model_reasoning_effort={effort}".into(),
+            efforts: strings(&["low", "medium", "high"]),
             login_env: strings(&["OPENAI_API_KEY", "CODEX_API_KEY"]),
             login_hint: "an OpenAI API key".into(),
             trust: Some(Trust {
@@ -139,6 +150,8 @@ pub fn builtin() -> Vec<Harness> {
             one_shot: "gemini {model} -p {prompt}".into(),
             model_flag: "--model".into(),
             models: Vec::new(),
+            effort_arg: String::new(),
+            efforts: Vec::new(),
             login_env: strings(&["GEMINI_API_KEY"]),
             login_hint: "a Gemini API key from Google AI Studio".into(),
             trust: None,
@@ -156,6 +169,8 @@ pub fn builtin() -> Vec<Harness> {
             one_shot: "opencode run {model} {prompt}".into(),
             model_flag: "--model".into(),
             models: Vec::new(),
+            effort_arg: String::new(),
+            efforts: Vec::new(),
             login_env: strings(&["OPENROUTER_API_KEY", "ANTHROPIC_API_KEY", "OPENAI_API_KEY"]),
             login_hint: "the API key of the provider you use with it".into(),
             trust: None,
@@ -225,9 +240,27 @@ pub fn model_of(harness: Option<&Harness>, command: &str) -> Option<String> {
     None
 }
 
-/// The one-shot command for a prompt, keeping the program and the model the start command picked.
+/// The words of `command` that set its effort, by the harness's `effort_arg`, and the level in them.
+fn effort_words(harness: &Harness, command: &str) -> Option<(Vec<String>, String)> {
+    let shape: Vec<&str> = harness.effort_arg.split_whitespace().collect();
+    let at = shape.iter().position(|w| w.contains("{effort}"))?;
+    let (before, after) = shape[at].split_once("{effort}")?;
+    let words: Vec<&str> = command.split_whitespace().collect();
+    (0..words.len().saturating_sub(shape.len() - 1)).find_map(|i| {
+        let here = &words[i..i + shape.len()];
+        let fits = shape.iter().zip(here).enumerate().all(|(j, (s, w))| if j == at { w.starts_with(before) && w.ends_with(after) && w.len() > before.len() + after.len() } else { s == w });
+        fits.then(|| {
+            let level = here[at][before.len()..here[at].len() - after.len()].trim_matches(|c| c == '\'' || c == '"').to_string();
+            (here.iter().map(|w| w.to_string()).collect(), level)
+        })
+    })
+}
+
+/// The one-shot command for a prompt, keeping the program, the model and the effort the start command picked.
 pub fn one_shot_line(harness: &Harness, command: &str, quoted_prompt: &str) -> String {
-    let model = model_of(Some(harness), command).map_or(String::new(), |m| format!("{} {}", harness.model_flag, crate::shell::quote(&m)));
+    let picked = model_of(Some(harness), command).map_or(String::new(), |m| format!("{} {}", harness.model_flag, crate::shell::quote(&m)));
+    let effort = effort_words(harness, command).map_or(String::new(), |(words, _)| words.join(" "));
+    let model = [picked, effort].into_iter().filter(|w| !w.is_empty()).collect::<Vec<_>>().join(" ");
     // The model goes in before the prompt, so a prompt that happens to say {model} stays as it is.
     let line = if model.is_empty() { harness.one_shot.replace(" {model}", "").replace("{model}", "") } else { harness.one_shot.replace("{model}", &model) };
     // `/opt/bin/claude` asks that claude, not whichever one is first on the PATH.
@@ -345,6 +378,20 @@ mod tests {
         assert_eq!(find(&all, "aider").unwrap().write, [".aider"]);
         assert_eq!(problems.len(), 1);
         assert!(problems[0].contains("bad.yaml"), "{problems:?}");
+    }
+
+    #[test]
+    fn a_one_shot_keeps_the_effort_its_start_command_asked_for() {
+        let all = builtin();
+        let claude = find(&all, "claude").unwrap();
+        let codex = find(&all, "codex").unwrap();
+        let level = |h: &Harness, c: &str| effort_words(h, c).map(|(_, l)| l);
+        assert_eq!(level(claude, "claude --model opus --effort high").as_deref(), Some("high"));
+        assert_eq!(level(codex, "codex -c model_reasoning_effort=low --model gpt-5").as_deref(), Some("low"));
+        assert_eq!(level(claude, "claude --model opus"), None);
+        assert_eq!(one_shot_line(claude, "claude --model opus --effort max", "'hi'"), "claude --model 'opus' --effort max -p 'hi'");
+        assert_eq!(one_shot_line(codex, "codex -c model_reasoning_effort=high", "'hi'"), "codex exec -c model_reasoning_effort=high --skip-git-repo-check --sandbox danger-full-access 'hi'");
+        assert_eq!(one_shot_line(claude, "claude", "'hi'"), "claude -p 'hi'");
     }
 
     #[test]

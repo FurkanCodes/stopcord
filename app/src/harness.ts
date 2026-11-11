@@ -64,11 +64,47 @@ export function withModel(profile: HarnessProfile | undefined, command: string, 
   return [kept[0] ?? '', flag, quoted, ...kept.slice(1)].filter(Boolean).join(' ');
 }
 
-/** "claude · haiku", or just "claude" when the command picks no model. */
+/** Where a command's effort words are, by the profile's effortArg: their index, how many, and the level. */
+function effortAt(profile: HarnessProfile | undefined, words: string[]): { at: number; n: number; level: string } | null {
+  const shape = (profile?.effortArg ?? '').split(/\s+/).filter(Boolean);
+  const k = shape.findIndex((w) => w.includes('{effort}'));
+  if (k < 0) return null;
+  const [before, after] = shape[k]!.split('{effort}') as [string, string];
+  for (let i = 0; i + shape.length <= words.length; i++) {
+    const fits = shape.every((s, j) => (j === k ? words[i + j]!.startsWith(before) && words[i + j]!.endsWith(after) && words[i + j]!.length > before.length + after.length : words[i + j] === s));
+    if (fits) {
+      const w = words[i + k]!;
+      return { at: i, n: shape.length, level: unquote(w.slice(before.length, w.length - after.length)) };
+    }
+  }
+  return null;
+}
+
+/** The effort a command asks for, or '' when it asks for none or the harness has no effort setting. */
+export function effortOf(profile: HarnessProfile | undefined, command: string): string {
+  return effortAt(profile, command.trim().split(/\s+/).filter(Boolean))?.level ?? '';
+}
+
+/** The command with its effort set to `effort`, or taken out when it's empty. */
+export function withEffort(profile: HarnessProfile | undefined, command: string, effort: string): string {
+  if (!profile?.effortArg) return command;
+  const words = command.trim().split(/\s+/).filter(Boolean);
+  const found = effortAt(profile, words);
+  const kept = found ? [...words.slice(0, found.at), ...words.slice(found.at + found.n)] : words;
+  const e = effort.trim();
+  if (!e || !/^[\w.-]+$/.test(e)) return kept.join(' ');
+  const added = profile.effortArg.replace('{effort}', e).split(/\s+/);
+  // After the program and any model, so it reads as part of the choice of model.
+  const model = profile.modelFlag ? kept.indexOf(profile.modelFlag) : -1;
+  const at = model > 0 && model + 1 < kept.length ? model + 2 : 1;
+  return [...kept.slice(0, at), ...added, ...kept.slice(at)].join(' ');
+}
+
+/** "claude · haiku · high", or just "claude" when the command picks no model or effort. */
 export function runsOn(all: HarnessProfile[], command: string): string {
   const name = harnessName(all, command);
-  const model = modelOf(profileFor(all, command), command);
-  return [name, model].filter(Boolean).join(' · ');
+  const profile = profileFor(all, command);
+  return [name, modelOf(profile, command), effortOf(profile, command)].filter(Boolean).join(' · ');
 }
 
 /** Models to offer for a harness: its profile's, then any a factory on this machine already uses. */
