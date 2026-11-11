@@ -844,13 +844,12 @@ impl Engine {
             added
         })?;
         if added > 0 {
-            self.log(
-                id,
-                Run::new(
-                    "ticket",
-                    format!("{added} ticket{} fed", if added == 1 { "" } else { "s" }),
-                ),
-            );
+            let run = Run::new("ticket", format!("{added} ticket{} fed", if added == 1 { "" } else { "s" }));
+            // Naming the part it came in through lights that part's line on the map.
+            self.log(id, match source {
+                Some(s) => run.part(s),
+                None => run,
+            });
             let factory = self.store.get(id)?;
             self.fire(&factory, When::TicketFed, None);
         }

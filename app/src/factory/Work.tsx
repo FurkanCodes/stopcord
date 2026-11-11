@@ -8,6 +8,7 @@ import { Logo } from '../tui/Logo';
 import { Markdown } from '../tui/Markdown';
 import { FactoryHeader } from './FactoryHeader';
 import { atStage, stageHarness } from './LineStrip';
+import { nextKey } from './parts';
 import { sourceState, useSourceReady } from './sourceState';
 
 const waitingWord: Record<WorkItem['waiting'], string> = {
@@ -291,11 +292,6 @@ function TicketBody({ item, muted }: { item: WorkItem; muted?: boolean }) {
 /** What's half written, by factory. Cancelling doesn't lose it. */
 const written = new Map<string, { title: string; body: string }>();
 
-/** The next free T-n in this factory. */
-function nextKey(f: Factory): string {
-  const taken = f.work.map((w) => /^T-(\d+)$/.exec(w.ticket.key)?.[1]).map(Number).filter(Boolean);
-  return `T-${Math.max(0, ...taken) + 1}`;
-}
 
 /** A ticket written by hand. It's a person asking, so it starts as soon as there's room. */
 function Compose({ factory, onCancel, onStarted }: { factory: Factory; onCancel: () => void; onStarted: (key: string) => void }) {
@@ -684,6 +680,7 @@ function Detail({ factory, item, runs, terminals, onSending, onSite }: { factory
         <div>
           <div style={{ color: 'var(--ink)', fontWeight: 600 }}>{item.ticket.title}</div>
           <div className="t-dim" style={{ fontSize: 12 }}>
+            {item.source && `from ${factory.parts.find((p) => p.id === item.source)?.name ?? item.source}${item.branch ? ' · ' : ''}`}
             {item.branch && `${item.branch}${evidence?.target ? ` → ${evidence.target}` : ''}`}
             {files.length > 0 && ` · ${files.length} file${files.length === 1 ? '' : 's'} · +${added} −${removed}`}
           </div>

@@ -8,6 +8,7 @@ export const kindWords: Record<PartKind, string> = {
   check: 'Check',
   trigger: 'Trigger',
   tickets: 'Ticket source',
+  inbox: 'Inbox',
 };
 
 export const runsOnWords: Record<RunsOn, string> = {
@@ -58,6 +59,7 @@ export function blankPart(kind: PartKind, name: string): Part {
 
 export type Template =
   | 'terminal'
+  | 'inbox'
   | 'tickets'
   | 'trigger'
   | 'testsQuiet'
@@ -72,6 +74,8 @@ export type Template =
 /** A new part from the drawer. `terminal` isn't a part: the canvas makes a draft for it. */
 export function fromTemplate(t: Exclude<Template, 'terminal'>, testCommand?: string | null): Part {
   switch (t) {
+    case 'inbox':
+      return { ...blankPart('inbox', 'Inbox'), id: 'inbox' };
     case 'tickets':
       return { ...blankPart('tickets', 'Tickets'), command: '' };
     case 'trigger':
@@ -131,6 +135,12 @@ export function drawerGroups(f: Factory): { group: string; items: DrawerItem[] }
       group: 'Intake',
       items: [
         {
+          template: 'inbox',
+          name: 'Inbox',
+          description: 'Work you write in yourself. Each one becomes a ticket at the start of the line.',
+          off: has('inbox') ? 'Already on the canvas. A factory has one.' : f.line.length === 0 ? 'Needs a line first. Add one in setup.' : undefined,
+        },
+        {
           template: 'tickets',
           name: 'Ticket source',
           description: 'Lists your tickets with a command you write, like gh issue list.',
@@ -183,6 +193,11 @@ export function metaOf(p: Part, f: Factory, fileCount?: number): string {
     }
     case 'trigger':
       return p.when === 'schedule' ? p.schedule || 'no schedule yet' : whenWords[p.when].toLowerCase();
+    case 'inbox': {
+      const mine = f.work.filter((w) => w.source === p.id);
+      const open = mine.filter((w) => w.stage !== 'ended').length;
+      return mine.length ? `${mine.length} written · ${open} open` : 'write work in here';
+    }
     case 'tickets': {
       const running = Object.keys(f.running).length;
       const queued = f.queue.length;
@@ -194,7 +209,7 @@ export function metaOf(p: Part, f: Factory, fileCount?: number): string {
 
 /** Intake parts start work; guardrail parts check it. */
 export function laneOf(p: Part): 'intake' | 'guard' | 'library' {
-  if (p.kind === 'trigger' || p.kind === 'tickets') return 'intake';
+  if (p.kind === 'trigger' || p.kind === 'tickets' || p.kind === 'inbox') return 'intake';
   if (p.kind === 'check') return 'guard';
   return 'library';
 }
@@ -206,4 +221,10 @@ export function branchFrom(name: string): string {
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '');
   return slug || 'terminal';
+}
+
+/** The next free T-n in this factory, for a ticket written by hand. */
+export function nextKey(f: Factory): string {
+  const taken = f.work.map((w) => /^T-(\d+)$/.exec(w.ticket.key)?.[1]).map(Number).filter(Boolean);
+  return `T-${Math.max(0, ...taken) + 1}`;
 }

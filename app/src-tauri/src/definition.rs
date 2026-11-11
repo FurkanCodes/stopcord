@@ -42,6 +42,15 @@ fn is_zero(v: &u32) -> bool {
 
 #[derive(Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct InboxDoc {
+    #[serde(default)]
+    id: String,
+    #[serde(default)]
+    name: String,
+}
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct KnowledgeDoc {
     #[serde(default)]
     id: String,
@@ -116,6 +125,8 @@ struct FactoryDoc {
     checks: Vec<CheckDoc>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     sources: Vec<SourceDoc>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    inbox: Option<InboxDoc>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     line: Vec<LineStage>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -319,6 +330,9 @@ pub fn load(dir: &Path) -> Result<Factory> {
         vars: s.vars,
         ..Part::default()
     }));
+    if let Some(i) = doc.inbox {
+        parts.push(Part { id: i.id, kind: Kind::Inbox, name: i.name, ..Part::default() });
+    }
     let autos = dir.join("automations");
     for id in subdirs(&autos) {
         let file = autos.join(&id).join("automation.md");
@@ -618,6 +632,7 @@ fn render(f: &Factory) -> Result<BTreeMap<PathBuf, String>> {
                 vars: p.vars.clone(),
             })
             .collect(),
+        inbox: parts(Kind::Inbox).next().map(|p| InboxDoc { id: p.id.clone(), name: p.name.clone() }),
         line: f.line.clone(),
         reports: f.reports.clone(),
     };
@@ -860,6 +875,7 @@ mod tests {
                     keys: vec!["GH_TOKEN".into()],
                     ..Part::default()
                 },
+                Part { id: "inbox".into(), kind: Kind::Inbox, name: "Inbox".into(), ..Part::default() },
                 Part {
                     id: "nightly".into(),
                     kind: Kind::Trigger,

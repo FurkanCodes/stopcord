@@ -44,6 +44,7 @@ interface Ghost {
 }
 
 const kindLabel: Record<Part['kind'], string> = {
+  inbox: 'inbox',
   tickets: 'tickets',
   trigger: 'trigger',
   check: 'check',
@@ -54,7 +55,9 @@ const kindLabel: Record<Part['kind'], string> = {
 const kindOfTemplate = (t: Template): 'terminal' | Part['kind'] =>
   t === 'terminal'
     ? 'terminal'
-    : t === 'knowledge'
+    : t === 'inbox'
+      ? 'inbox'
+      : t === 'knowledge'
       ? 'knowledge'
       : t === 'folder' || t === 'skills'
         ? 'folder'
@@ -334,6 +337,8 @@ export function FactoryMap(props: FactoryMapProps) {
         return part.when === 'schedule' ? `runs ${part.schedule || 'on a schedule'}` : `when ${whenWords[part.when].toLowerCase()}`;
       case 'tickets':
         return 'lists tickets with your own command · you pick which ones go in';
+      case 'inbox':
+        return `work you write in · each becomes a ticket at ${factory.line[0]?.id ?? 'the start of the line'}`;
     }
   };
 

@@ -30,6 +30,8 @@ pub enum Kind {
     Trigger,
     /// A command that lists tickets. A factory can have several.
     Tickets,
+    /// Where a person writes work in by hand. Each piece becomes a ticket at the start of the line.
+    Inbox,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]

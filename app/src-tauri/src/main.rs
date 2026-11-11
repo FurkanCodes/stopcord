@@ -370,6 +370,11 @@ fn create_factory(
         templates::standard_line(&mut factory, &harness, &reviewer, test.as_deref(), level);
         factory = app.store.save(&factory).map_err(fail)?;
     }
+    // A factory with a line gets an inbox, so there's a place on the map to hand it work.
+    if !factory.line.is_empty() && !factory.parts.iter().any(|p| p.kind == Kind::Inbox) {
+        factory.parts.push(Part { id: "inbox".into(), kind: Kind::Inbox, name: "Inbox".into(), ..Part::default() });
+        factory = app.store.save(&factory).map_err(fail)?;
+    }
     let seed = kb::seed(&factory.name);
     std::fs::write(app.store.knowledge_file(&factory.id), &seed).map_err(|e| fail(e.into()))?;
     std::fs::write(app.store.approved_knowledge_file(&factory.id), &seed)

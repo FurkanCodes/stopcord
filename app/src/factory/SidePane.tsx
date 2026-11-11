@@ -2,13 +2,13 @@
 // A terminal that isn't started yet opens here too, to pick what it runs.
 
 import { useEffect, useState, type ReactNode } from 'react';
-import { api, type Factory, type FileEntry, type Part, type Run, type Terminal } from '../api';
-import { changeFactory, go, lampOf, showProblem, useStore, type Draft } from '../store';
+import { api, failureText, type Factory, type FileEntry, type Part, type Run, type Terminal } from '../api';
+import { changeFactory, go, lampOf, refreshFactories, showProblem, useStore, type Draft } from '../store';
 import { NewTerminal } from './NewTerminal';
 import { ago, clock } from '../time';
 import { tilde } from '../text';
 import { Check, Empty, FieldRow, Glyph, Key, Pane, Radio } from '../tui/kit';
-import { harnessFiles, runsInWords, runsOnWords, whenWords } from './parts';
+import { harnessFiles, nextKey, runsInWords, runsOnWords, whenWords } from './parts';
 
 export interface SidePaneProps {
   factory: Factory;
@@ -22,6 +22,7 @@ export interface SidePaneProps {
 }
 
 const kindWord: Record<Part['kind'], string> = {
+  inbox: 'inbox',
   knowledge: 'knowledge',
   folder: 'folder',
   check: 'check',
@@ -109,6 +110,7 @@ function PartBody(props: SidePaneProps & { part: Part }) {
       {part.kind === 'knowledge' && <KnowledgeBody {...props} />}
       {part.kind === 'folder' && <FolderBody {...props} />}
       {part.kind === 'tickets' && <TicketsBody {...props} />}
+      {part.kind === 'inbox' && <InboxBody {...props} />}
       {(part.kind === 'check' || part.kind === 'trigger') && <ActivityBody {...props} />}
 
       <Section title="settings">
@@ -472,6 +474,126 @@ function FolderBody({ factory, part }: SidePaneProps & { part: Part }) {
         </form>
       )}
     </Section>
+  );
+}
+
+/** Where a person writes work in: each piece becomes a ticket at the start of the line. */
+function InboxBody({ factory, part }: SidePaneProps & { part: Part }) {
+  const [title, setTitle] = useState('');
+  const [details, setDetails] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [problem, setProblem] = useState('');
+  const [sent, setSent] = useState('');
+  const first = factory.line[0]?.id;
+  const mine = factory.work.filter((w) => w.source === part.id).reverse().slice(0, 8);
+
+  async function send() {
+    if (busy) return;
+    if (!title.trim()) return setProblem('say what should be done first');
+    const key = nextKey(factory);
+    setBusy(true);
+    try {
+      await api.feedTickets(factory.id, [{ key, title: title.trim(), body: details.trim(), url: '' }], part.id);
+      await refreshFactories();
+      setTitle('');
+      setDetails('');
+      setProblem('');
+      setSent(key);
+    } catch (e) {
+      setProblem(failureText(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+  const sendOnCmdEnter = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+      e.preventDefault();
+      void send();
+    }
+  };
+  const open = (key: string) => go({ screen: 'factory', id: factory.id, tab: 'work', work: key });
+
+  return (
+    <>
+      <Section title="write work in">
+        {!first ? (
+          <p className="t-muted" style={{ fontSize: 12 }}>this factory has no line yet, so work has nowhere to go. add one in [6] setup.</p>
+        ) : (
+          <form
+            style={{ display: 'flex', flexDirection: 'column', gap: 8 }}
+            onSubmit={(e) => {
+              e.preventDefault();
+              void send();
+            }}
+          >
+            <input
+              id="inbox-title"
+              className="t-field"
+              spellCheck={false}
+              aria-label="What should be done"
+              placeholder="what should be done?"
+              value={title}
+              onChange={(e) => {
+                setTitle(e.currentTarget.value);
+                setProblem('');
+                setSent('');
+              }}
+              onKeyDown={sendOnCmdEnter}
+            />
+            <textarea
+              id="inbox-details"
+              className="t-field"
+              spellCheck={false}
+              rows={4}
+              aria-label="Details"
+              placeholder="details, links, how you'd know it's done. optional"
+              value={details}
+              onChange={(e) => setDetails(e.currentTarget.value)}
+              onKeyDown={sendOnCmdEnter}
+              style={{ resize: 'vertical', lineHeight: 1.5 }}
+            />
+            <span style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+              <button type="submit" className="t-solid is-sm" disabled={busy}>
+                <span style={{ opacity: 0.65 }}>[⌘⏎]</span> send to {first}
+              </button>
+              {problem && <span role="alert" className="t-red" style={{ fontSize: 12 }}>{problem}</span>}
+              {sent && !problem && (
+                <span role="status" className="t-muted" style={{ fontSize: 12 }}>
+                  {sent} is on the line ·{' '}
+                  <button type="button" className="t-key is-xs" onClick={() => open(sent)}>
+                    open it
+                  </button>
+                </span>
+              )}
+            </span>
+            <span className="t-dim" style={{ fontSize: 12 }}>
+              it becomes a ticket and starts at {first} as soon as there&apos;s room.
+            </span>
+          </form>
+        )}
+      </Section>
+      <Section title="written here">
+        {mine.length === 0 ? (
+          <Empty style={{ padding: 0 }}>nothing yet</Empty>
+        ) : (
+          <ul style={{ margin: '0 -14px' }}>
+            {mine.map((w) => (
+              <li key={w.ticket.key}>
+                <button type="button" className="t-row" onClick={() => open(w.ticket.key)} style={{ gap: 10, padding: '2px 14px' }}>
+                  <span className="t-dim" style={{ width: '6ch', flexShrink: 0 }}>
+                    {w.ticket.key}
+                  </span>
+                  <span style={{ flexGrow: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{w.ticket.title}</span>
+                  <span className="t-dim" style={{ fontSize: 12 }}>
+                    {w.stage === 'ended' ? w.outcome || 'done' : w.stage === 'running' ? w.lineStage || 'running' : 'waiting'}
+                  </span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </Section>
+    </>
   );
 }
 

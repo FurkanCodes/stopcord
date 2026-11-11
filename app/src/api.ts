@@ -25,7 +25,7 @@ export interface Terminal {
   started_at: number;
 }
 
-export type PartKind = 'knowledge' | 'folder' | 'check' | 'trigger' | 'tickets';
+export type PartKind = 'knowledge' | 'folder' | 'check' | 'trigger' | 'tickets' | 'inbox';
 export type RunsOn = 'commit' | 'merge' | 'quiet';
 export type When = 'quiet' | 'schedule' | 'checkFails' | 'ticketFed';
 export type RunsIn = 'same' | 'new' | 'own';
