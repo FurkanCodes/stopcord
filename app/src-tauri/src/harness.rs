@@ -62,6 +62,10 @@ pub struct Harness {
     /// Effort levels to offer. Any other can still be typed.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub efforts: Vec<String>,
+    /// A command that prints the models it can use, one to a line, such as `opencode models`.
+    /// What it lists is offered beside `models`.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub models_command: String,
     pub trust: Option<Trust>,
     /// Environment variables it can log in with, for a VM, where its login on the Mac isn't there.
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -73,6 +77,23 @@ pub struct Harness {
 
 fn strings(items: &[&str]) -> Vec<String> {
     items.iter().map(|s| s.to_string()).collect()
+}
+
+/// A harness known from its docs: how it's started, picks a model and an effort, and runs one prompt.
+#[allow(clippy::too_many_arguments)]
+fn simple(id: &str, commands: &[&str], write: &[&str], domains: &[&str], one_shot: &str, model_flag: &str, effort_arg: &str, efforts: &[&str], models_command: &str) -> Harness {
+    Harness {
+        id: id.into(),
+        commands: strings(commands),
+        write: strings(write),
+        domains: strings(domains),
+        one_shot: one_shot.into(),
+        model_flag: model_flag.into(),
+        effort_arg: effort_arg.into(),
+        efforts: strings(efforts),
+        models_command: models_command.into(),
+        ..Harness::default()
+    }
 }
 
 pub fn builtin() -> Vec<Harness> {
@@ -101,6 +122,7 @@ pub fn builtin() -> Vec<Harness> {
             models: strings(&["opus", "sonnet", "haiku"]),
             effort_arg: "--effort {effort}".into(),
             efforts: strings(&["low", "medium", "high", "xhigh", "max"]),
+            models_command: String::new(),
             login_env: strings(&["CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY"]),
             login_hint: "a token from `claude setup-token` on your mac, or an API key".into(),
             trust: Some(Trust {
@@ -128,6 +150,7 @@ pub fn builtin() -> Vec<Harness> {
             models: Vec::new(),
             effort_arg: "-c model_reasoning_effort={effort}".into(),
             efforts: strings(&["low", "medium", "high"]),
+            models_command: String::new(),
             login_env: strings(&["OPENAI_API_KEY", "CODEX_API_KEY"]),
             login_hint: "an OpenAI API key".into(),
             trust: Some(Trust {
@@ -152,6 +175,7 @@ pub fn builtin() -> Vec<Harness> {
             models: Vec::new(),
             effort_arg: String::new(),
             efforts: Vec::new(),
+            models_command: "gemini --list-models".into(),
             login_env: strings(&["GEMINI_API_KEY"]),
             login_hint: "a Gemini API key from Google AI Studio".into(),
             trust: None,
@@ -171,11 +195,117 @@ pub fn builtin() -> Vec<Harness> {
             models: Vec::new(),
             effort_arg: String::new(),
             efforts: Vec::new(),
+            models_command: "opencode models".into(),
             login_env: strings(&["OPENROUTER_API_KEY", "ANTHROPIC_API_KEY", "OPENAI_API_KEY"]),
             login_hint: "the API key of the provider you use with it".into(),
             trust: None,
         },
+        // The rest come from their own --help. A site one of them needs that isn't listed here shows as
+        // blocked in a contained sandbox, where it can be allowed.
+        Harness {
+            id: "copilot".into(),
+            commands: strings(&["copilot"]),
+            write: strings(&[".copilot"]),
+            write_prefix: Vec::new(),
+            read_only: Vec::new(),
+            domains: strings(&["github.com", "api.github.com", "githubcopilot.com"]),
+            quiet_domains: Vec::new(),
+            sandboxed_args: String::new(),
+            own_sandbox_args: String::new(),
+            one_shot: "copilot {model} -p {prompt}".into(),
+            model_flag: "--model".into(),
+            models: strings(&["auto"]),
+            effort_arg: "--reasoning-effort {effort}".into(),
+            efforts: strings(&["none", "minimal", "low", "medium", "high", "xhigh", "max"]),
+            models_command: String::new(),
+            login_env: strings(&["GH_TOKEN", "GITHUB_TOKEN"]),
+            login_hint: "a GitHub token with Copilot access".into(),
+            trust: None,
+        },
+        Harness {
+            id: "cline".into(),
+            commands: strings(&["cline"]),
+            write: strings(&[".cline"]),
+            write_prefix: Vec::new(),
+            read_only: Vec::new(),
+            domains: strings(&["cline.bot"]),
+            quiet_domains: Vec::new(),
+            sandboxed_args: String::new(),
+            own_sandbox_args: String::new(),
+            one_shot: "cline {model} {prompt}".into(),
+            model_flag: "--model".into(),
+            models: Vec::new(),
+            effort_arg: "--thinking {effort}".into(),
+            efforts: strings(&["none", "low", "medium", "high", "xhigh"]),
+            models_command: String::new(),
+            login_env: Vec::new(),
+            login_hint: String::new(),
+            trust: None,
+        },
+        Harness {
+            id: "kilocode".into(),
+            commands: strings(&["kilocode", "kilo"]),
+            write: strings(&[".kilocode", ".config/kilo", ".local/share/kilo", ".local/state/kilo", ".cache/kilo"]),
+            write_prefix: Vec::new(),
+            read_only: Vec::new(),
+            domains: strings(&["kilocode.ai", "kilo.ai", "models.dev"]),
+            quiet_domains: Vec::new(),
+            sandboxed_args: String::new(),
+            own_sandbox_args: String::new(),
+            one_shot: "kilocode run {model} {prompt}".into(),
+            model_flag: "--model".into(),
+            models: Vec::new(),
+            effort_arg: String::new(),
+            efforts: Vec::new(),
+            models_command: "kilocode models".into(),
+            login_env: Vec::new(),
+            login_hint: String::new(),
+            trust: None,
+        },
+        // From their docs (see each comment). Folders and sites marked "guessed" weren't confirmed there:
+        // a missing one shows as blocked in a contained sandbox, where it can be allowed.
+        // aider.chat/docs/config/options.html
+        simple("aider", &["aider"], &[".aider"], &[], "aider {model} --yes-always --message {prompt}", "--model", "--reasoning-effort {effort}", &["low", "medium", "high"], ""),
+        // cursor.com/docs/cli/reference/parameters. Folder and sites guessed.
+        simple("cursor", &["cursor-agent", "agent"], &[".cursor"], &["cursor.com", "cursor.sh"], "cursor-agent -p {model} --output-format text {prompt}", "--model", "", &[], "cursor-agent models"),
+        // goose-docs.ai: the model is only a flag on `goose run`, so a session takes it from goose's settings.
+        simple("goose", &["goose"], &[".config/goose", ".local/share/goose", ".local/state/goose"], &[], "goose run --no-session -t {prompt}", "", "", &[], ""),
+        // qwenlm.github.io/qwen-code-docs: effort is a setting or /effort, not a flag.
+        simple("qwen", &["qwen"], &[".qwen"], &["chat.qwen.ai"], "qwen {model} -p {prompt}", "--model", "", &[], ""),
+        // docs.factory.com/reference/cli-reference: -r is effort only on `droid exec`; in a session it resumes.
+        simple("droid", &["droid"], &[".factory"], &["app.factory.ai", "downloads.factory.ai"], "droid exec {model} {prompt}", "-m", "", &[], ""),
+        // charmbracelet/crush: model and effort are flags on `crush run` only.
+        simple("crush", &["crush"], &[".config/crush", ".local/share/crush"], &[], "crush run {prompt}", "", "", &[], ""),
+        // moonshotai.github.io/kimi-code
+        simple("kimi", &["kimi"], &[".kimi-code"], &["code.kimi.com"], "kimi {model} -p {prompt}", "--model", "", &[], ""),
+        // badlogic/pi-mono docs/cli.md
+        simple("pi", &["pi"], &[".pi"], &[], "pi {model} -p {prompt}", "--model", "--thinking {effort}", &["off", "minimal", "low", "medium", "high", "xhigh", "max"], "pi --list-models"),
+        // kiro.dev/docs/reference/cli-commands. Folder guessed.
+        simple("kiro", &["kiro-cli"], &[".kiro"], &["app.kiro.dev"], "kiro-cli chat --no-interactive --trust-all-tools {model} {prompt}", "--model", "--effort {effort}", &["low", "medium", "high", "xhigh", "max"], "kiro-cli chat --list-models"),
+        // docs.augmentcode.com/cli/reference: its effort levels aren't listed, so they're typed.
+        simple("auggie", &["auggie"], &[".augment"], &[], "auggie {model} -p {prompt}", "--model", "--thinking {effort}", &[], "auggie model list"),
+        // docs.openhands.dev: the model comes from its settings or LLM_MODEL.
+        simple("openhands", &["openhands"], &[".openhands"], &["app.all-hands.dev"], "openhands --headless -t {prompt}", "", "", &[], ""),
     ]
+}
+
+/// The model names in what a `models_command` printed: the first word of each line that isn't
+/// indented and looks like a model id, so headings, descriptions and shell noise drop out.
+pub fn parse_models(text: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for line in text.lines() {
+        if line.starts_with(char::is_whitespace) {
+            continue;
+        }
+        let Some(word) = line.split_whitespace().next() else { continue };
+        let id_like = word.chars().all(|c| c.is_ascii_alphanumeric() || "-._/:@".contains(c))
+            && word.chars().next().is_some_and(|c| c.is_ascii_alphanumeric())
+            && word.chars().any(|c| c.is_ascii_digit() || c == '-' || c == '/');
+        if id_like && !out.iter().any(|m| m == word) {
+            out.push(word.to_string());
+        }
+    }
+    out
 }
 
 /// The built-ins with `dir`'s files on top. Returns what couldn't be read, so it can be shown.
@@ -331,7 +461,7 @@ mod tests {
         assert_eq!(model_of(Some(claude), "claude --model haiku").as_deref(), Some("haiku"));
         assert_eq!(model_of(Some(claude), "/bin/claude --model=opus --verbose").as_deref(), Some("opus"));
         assert_eq!(model_of(Some(claude), "claude"), None);
-        assert_eq!(model_of(None, "aider --model x"), None);
+        assert_eq!(model_of(None, "mytool --model x"), None);
         assert_eq!(one_shot_line(claude, "claude --model haiku", "'hi'"), "claude --model 'haiku' -p 'hi'");
         assert_eq!(one_shot_line(claude, "claude", "'two\n  lines'"), "claude -p 'two\n  lines'");
         assert_eq!(one_shot_line(claude, "/opt/bin/claude --model haiku", "'hi'"), "/opt/bin/claude --model 'haiku' -p 'hi'");
@@ -352,7 +482,7 @@ mod tests {
         assert_eq!(find(&all, "claude").unwrap().id, "claude");
         assert_eq!(find(&all, "/opt/bin/codex --model x").unwrap().id, "codex");
         assert_eq!(find(&all, "FOO=1 opencode").unwrap().id, "opencode");
-        assert!(find(&all, "aider").is_none());
+        assert!(find(&all, "mytool").is_none());
         assert!(find(&all, "").is_none());
     }
 
@@ -364,20 +494,28 @@ mod tests {
         assert!(once.starts_with("codex --model x --sandbox danger-full-access --ask-for-approval never --no-daemon"), "{once}");
         assert!(once.contains(r#"'projects={"/p"={trust_level="trusted"}}'"#), "{once}");
         assert_eq!(sandboxed_command(codex, &once, "/p"), once);
-                assert_eq!(sandboxed_command(None, "aider", "/p"), "aider");
+                assert_eq!(sandboxed_command(None, "mytool", "/p"), "mytool");
     }
 
     #[test]
     fn a_file_replaces_a_builtin_or_adds_a_new_one_and_a_bad_one_is_reported() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("claude.yaml"), "domains: [only.example]\n").unwrap();
-        std::fs::write(dir.path().join("aider.yaml"), "write: [.aider]\n").unwrap();
+        std::fs::write(dir.path().join("mytool.yaml"), "write: [.mytool]\n").unwrap();
         std::fs::write(dir.path().join("bad.yaml"), "nonsense: [\n").unwrap();
         let (all, problems) = load(dir.path());
         assert_eq!(find(&all, "claude").unwrap().domains, ["only.example"]);
-        assert_eq!(find(&all, "aider").unwrap().write, [".aider"]);
+        assert_eq!(find(&all, "mytool").unwrap().write, [".mytool"]);
         assert_eq!(problems.len(), 1);
         assert!(problems[0].contains("bad.yaml"), "{problems:?}");
+    }
+
+    #[test]
+    fn a_models_list_keeps_model_ids_and_drops_the_rest() {
+        let gemini = "Available Gemini Models:\n\nauto (Auto)\n  Description:   Let Gemini CLI decide\ngemini-2.5-pro (gemini-2.5-pro)\n  Context limit: 1.048.576\n";
+        assert_eq!(parse_models(gemini), ["gemini-2.5-pro"]);
+        assert_eq!(parse_models("opencode/big-pickle\nanthropic/claude-sonnet-4-5\nopencode/big-pickle\n"), ["opencode/big-pickle", "anthropic/claude-sonnet-4-5"]);
+        assert!(parse_models("Last login: Tue\nwelcome!\n").is_empty());
     }
 
     #[test]

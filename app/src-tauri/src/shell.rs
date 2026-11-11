@@ -92,6 +92,38 @@ pub fn installed(shell: &str, names: &[String], timeout: Duration) -> Vec<String
         .collect()
 }
 
+/// What `command` prints, run in the login shell the way a terminal would, or nothing if it fails
+/// or runs past `timeout`. Shell start-up files may print too, so callers pick out what they need.
+pub fn output(shell: &str, command: &str, timeout: Duration) -> Option<String> {
+    let mut child = Command::new(shell)
+        .args(["-l", "-i", "-c", command])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .ok()?;
+    let mut stdout = child.stdout.take().expect("stdout is piped");
+    let reading = thread::spawn(move || {
+        let mut text = String::new();
+        let _ = stdout.read_to_string(&mut text);
+        text
+    });
+    let deadline = Instant::now() + timeout;
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) if status.success() => break,
+            Ok(Some(_)) => return None,
+            Ok(None) if Instant::now() < deadline => thread::sleep(Duration::from_millis(20)),
+            _ => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return None;
+            }
+        }
+    }
+    reading.join().ok()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

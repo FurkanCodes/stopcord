@@ -330,7 +330,10 @@ export function connect() {
     async (info) => {
       const agents = [...info.agents].sort();
       setState({ agents });
-      const installed = await api.installed(agents);
+      // Every harness Sawtooth has a profile for, not only the ones it can read the screen of.
+      const profiles = await api.harnesses().catch(() => []);
+      const names = [...new Set([...agents, ...profiles.flatMap((p) => p.commands)])];
+      const installed = await api.installed(names);
       setState({ installed });
     },
     () => undefined,

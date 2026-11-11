@@ -47,12 +47,16 @@ try:
     who = line0[ag]['agent']
     bridge(f"document.querySelectorAll('ol[aria-label=\"The line\"] button')[{ag}].click();return 1"); time.sleep(0.4)
     check("a stage shows its agent's model and effort", bridge(f"return !!document.querySelector('#st-{ag}-run-m') && !!document.querySelector('#st-{ag}-run-e')"))
-    fill(f'#st-{ag}-run-e', 'high'); time.sleep(1)
+    check('they are dropdowns, with the harness\'s own levels', bridge(f"return document.querySelector('#st-{ag}-run-e').tagName") == 'SELECT' and options(f'#st-{ag}-run-e') == ['', 'low', 'medium', 'high', 'xhigh', 'max', 'other'], options(f'#st-{ag}-run-e'))
+    check('and models', 'haiku' in options(f'#st-{ag}-run-m') and 'other' in options(f'#st-{ag}-run-m'), options(f'#st-{ag}-run-m'))
+    hs = options(f'#st-{ag}-run-h')
+    check('the harness list has every harness sawtooth knows', all(h in hs for h in ('claude', 'codex', 'gemini', 'opencode', 'copilot', 'cline', 'kilocode', 'aider', 'cursor', 'goose', 'qwen', 'droid', 'crush', 'kimi', 'pi', 'kiro', 'auggie', 'openhands', 'other')), hs)
+    choose(f'#st-{ag}-run-e', 'high'); time.sleep(1)
     cmd = lambda: next(a for a in next(f for f in inv('factories') if f['id'] == fid)['agents'] if a['id'] == who)['harness']
     check('picking an effort writes it into the agent\'s command', cmd() == 'claude --effort high', cmd())
     strip = bridge("return document.querySelector('ol[aria-label=\"The line\"]')?.innerText||''")
     check('and the line shows it', 'claude · high' in strip, strip)
-    fill(f'#st-{ag}-run-e', ''); time.sleep(1)
+    choose(f'#st-{ag}-run-e', ''); time.sleep(1)
     check('clearing it leaves the harness alone', cmd() == 'claude', cmd())
     bridge(f"document.querySelectorAll('ol[aria-label=\"The line\"] button')[{ag}].click();return 1"); time.sleep(0.3)
 
@@ -69,7 +73,7 @@ try:
     bridge(f"document.querySelector('#agent-id-{ai}').dispatchEvent(new KeyboardEvent('keydown',{{key:'Enter',bubbles:true}}));return 1"); time.sleep(1)
 
     # A role picks its model, which only writes the harness's model flag, and the line shows it.
-    fill(f'#agent-{ai}-m', 'haiku'); time.sleep(1)
+    choose(f'#agent-{ai}-m', 'haiku'); time.sleep(1)
     harness_now = lambda: next(a for a in next(f for f in inv('factories') if f['id'] == fid)['agents'] if a['id'] == name)['harness']
     check('picking a model writes it into the role\'s command', harness_now() == 'claude --model haiku', harness_now())
     setup_section('line')
@@ -77,7 +81,7 @@ try:
     check('and the line shows which model does that stage', 'claude · haiku' in strip, strip)
     setup_section('agents')
     bridge(f"[...document.querySelectorAll('#setup-agents button[aria-expanded]')][{ai}].click();return 1"); time.sleep(0.4)
-    fill(f'#agent-{ai}-m', ''); time.sleep(1)
+    choose(f'#agent-{ai}-m', ''); time.sleep(1)
     check('clearing it leaves the harness alone', harness_now() == 'claude', harness_now())
     bridge(f"[...document.querySelectorAll('#setup-agents button[aria-expanded]')][{ai}].click();return 1"); time.sleep(0.3)
 

@@ -114,3 +114,21 @@ export function modelChoices(all: HarnessProfile[], profile: HarnessProfile | un
   const seen = used.filter((c) => profileFor(all, c)?.id === profile.id).map((c) => modelOf(profile, c));
   return [...new Set([...(profile.models ?? []), ...seen].filter(Boolean))];
 }
+
+const listed = new Map<string, Promise<string[]>>();
+
+/** The models a harness lists itself, asked once per window. Empty while asking, or when it can't list them. */
+export function useListedModels(profile: HarnessProfile | undefined): { models: string[]; asking: boolean } {
+  const id = profile?.modelsCommand ? profile.id : '';
+  const [got, setGot] = useState<{ id: string; models: string[] }>({ id: '', models: [] });
+  useEffect(() => {
+    if (!id) return;
+    if (!listed.has(id)) listed.set(id, api.harnessModels(id).catch(() => []));
+    let live = true;
+    void listed.get(id)!.then((models) => live && setGot({ id, models }));
+    return () => {
+      live = false;
+    };
+  }, [id]);
+  return { models: got.id === id ? got.models : [], asking: !!id && got.id !== id };
+}

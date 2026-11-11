@@ -64,6 +64,10 @@ def setup_section(name):
     """Opens one section of a factory's setup from its list on the left: general, integrations, sources, line, agents,
     scorers, sandboxes, skills, benchmarks, notifications or template. Setup remembers the last one."""
     bridge(f"document.querySelector('[data-setup-section=\"{name}\"]')?.click();return 1"); time.sleep(0.5)
+def choose(sel, v):
+    """Picks an option in a dropdown, the way a person's pick fires React's change."""
+    bridge(f"const e=document.querySelector({json.dumps(sel)});Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype,'value').set.call(e,{json.dumps(v)});e.dispatchEvent(new Event('change',{{bubbles:true}}));return 1"); time.sleep(0.4)
+def options(sel): return bridge(f"return [...(document.querySelector({json.dumps(sel)})?.options||[])].map(o=>o.value)")
 def integration(name):
     """Opens one service on the integrations page from its list on the left: github, sentry, linear or slack."""
     bridge(f"document.querySelector('[data-service=\"{name}\"]')?.click();return 1"); time.sleep(0.6)

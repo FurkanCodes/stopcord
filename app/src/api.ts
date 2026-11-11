@@ -476,6 +476,8 @@ export interface HarnessProfile {
   effortArg?: string;
   /** Effort levels to offer. Any other can be typed. */
   efforts?: string[];
+  /** A command that prints the models it can use. */
+  modelsCommand?: string;
   trust: { contains: string; answer: string; auto: boolean } | null;
 }
 
@@ -642,6 +644,7 @@ export const api = {
   /** Installs Docker Desktop with Homebrew in a terminal of its own. */
   installDocker: () => invoke<unknown>('install_docker'),
   harnesses: () => invoke<HarnessProfile[]>('harnesses'),
+  harnessModels: (id: string) => invoke<string[]>('harness_models', { id }),
   saveHarness: (harness: HarnessProfile) => invoke<void>('save_harness', { harness }),
   nearbyFolders: () => invoke<FolderSuggestion[]>('nearby_folders'),
   detectProject: (path: string) => invoke<ProjectInfo>('detect_project', { path }),

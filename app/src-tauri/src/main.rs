@@ -1003,6 +1003,14 @@ fn harnesses(app: State<'_, App>) -> Vec<harness::Harness> {
     harness::load(&app.store.home().join("harnesses")).0
 }
 
+/// The models a harness says it can use, from its profile's `models_command`. Empty when it has none or it fails.
+#[tauri::command(async)]
+fn harness_models(app: State<'_, App>, id: String) -> Vec<String> {
+    let all = harness::load(&app.store.home().join("harnesses")).0;
+    let Some(h) = all.iter().find(|h| h.id == id).filter(|h| !h.models_command.trim().is_empty()) else { return Vec::new() };
+    shell::output(&shell::user_shell(), &h.models_command, Duration::from_secs(20)).map(|t| harness::parse_models(&t)).unwrap_or_default()
+}
+
 #[tauri::command(async)]
 fn save_harness(app: State<'_, App>, harness: harness::Harness) -> Result<(), Failure> {
     let dir = app.store.home().join("harnesses");
@@ -1193,6 +1201,7 @@ fn main() {
             save_machine,
             set_secret,
             harnesses,
+            harness_models,
             save_harness,
         ])
         .build(tauri::generate_context!())

@@ -8,6 +8,7 @@ import { NewTerminal } from './NewTerminal';
 import { ago, clock } from '../time';
 import { tilde } from '../text';
 import { Check, Empty, FieldRow, Glyph, Key, Pane, Radio } from '../tui/kit';
+import { useHarnessProfiles } from '../harness';
 import { harnessFiles, nextKey, runsInWords, runsOnWords, whenWords } from './parts';
 
 export interface SidePaneProps {
@@ -294,8 +295,13 @@ export function HarnessPick({
   onChange: (value: string) => void;
   allowShell?: boolean;
 }) {
-  const agents = useStore((s) => s.agents);
+  const detected = useStore((s) => s.agents);
   const installed = useStore((s) => s.installed);
+  const profiles = useHarnessProfiles();
+  // Every harness with a profile, and any the screen reader knows: installed ones first.
+  const agents = [...new Set([...detected, ...profiles.map((p) => p.commands[0]!).filter(Boolean)])].sort(
+    (a, b) => Number(!installed || installed.includes(b)) - Number(!installed || installed.includes(a)) || a.localeCompare(b),
+  );
   const known = agents.includes(value) || (allowShell && value === '');
   const [other, setOther] = useState(!known && value !== '');
   const options: [string, string, boolean][] = [
