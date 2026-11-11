@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { open, save } from '@tauri-apps/plugin-dialog';
 import { api, failureText, type FactoryTemplate, type FolderSuggestion, type Level, type ProjectInfo } from './api';
+import { HarnessFields } from './factory/HarnessFields';
 import { runsOn, useHarnessProfiles } from './harness';
 import { harnessFiles } from './factory/parts';
 import { go, openFactory, refreshFactories, sawtoothHome, useStore } from './store';
@@ -371,12 +372,8 @@ export function NewFactory() {
 
           {template === 'line' && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-              <FieldRow id="nf-h" label="harness">
-                <input id="nf-h" className="t-field" spellCheck={false} required value={harness} placeholder={installed?.length ? '' : 'none found. type a harness command'} onChange={(e) => setHarness(e.currentTarget.value)} />
-              </FieldRow>
-              <FieldRow id="nf-r" label="reviewer">
-                <input id="nf-r" className="t-field" spellCheck={false} required value={reviewer} placeholder={installed?.length ? '' : 'none found. type a harness command'} onChange={(e) => setReviewer(e.currentTarget.value)} />
-              </FieldRow>
+              <HarnessFields id="nf" width="9ch" command={harness} placeholder={installed?.length ? 'pick a harness' : 'none found. pick other command'} onChange={setHarness} />
+              <HarnessFields id="nf-r" label="reviewer" width="9ch" command={reviewer} placeholder={installed?.length ? 'pick a harness' : 'none found. pick other command'} onChange={setReviewer} />
               <FieldRow id="nf-l" label="runner">
                 <select id="nf-l" className="t-field" value={level} onChange={(e) => setLevel(e.currentTarget.value as Level)}>
                   <option value="contained">contained: OS sandbox and web filter</option>

@@ -39,6 +39,7 @@ TESTS = [
     ('needs_terminal', []),
     ('asks', []),
     ('remove_factory', []),
+    ('new_factory', []),
     ('terminal', []),
 ]
 ON_REQUEST = [('real_answer', [])]
