@@ -38,6 +38,7 @@ TESTS = [
     ('inbox', []),
     ('needs_terminal', []),
     ('asks', []),
+    ('remove_factory', []),
     ('terminal', []),
 ]
 ON_REQUEST = [('real_answer', [])]

@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react';
-import { confirm } from '@tauri-apps/plugin-dialog';
 import { api, type Pos, type ProjectInfo } from '../api';
-import { changeFactory, go, newDraft, openFactory, refreshFactories, setState, showProblem, terminalsIn, useStore, type Draft, type Route, type Tab } from '../store';
+import { changeFactory, go, newDraft, openFactory, setState, terminalsIn, useStore, type Draft, type Route, type Tab } from '../store';
 import { Brand, Screen } from '../tui/kit';
 import { plain, useKeys } from '../tui/keys';
 import { FactoryMap } from './FactoryMap';
@@ -98,26 +97,10 @@ export function FactoryScreen({ id, onSearch }: { id: string; onSearch: () => vo
     setState({ selected: part.id });
   }
 
-  async function remove() {
-    if (!factory) return;
-    const ok = await confirm(
-      `Remove ${factory.name} from Sawtooth? Its terminals keep running and the project folder stays as it is. Sawtooth takes out its hooks and knowledge base links, and keeps the factory's files in ~/.sawtooth/removed.`,
-      { title: 'Remove factory', kind: 'warning', okLabel: 'Remove', cancelLabel: 'Keep it' },
-    );
-    if (!ok) return;
-    try {
-      await api.removeFactory(factory.id);
-      await refreshFactories();
-      go({ screen: 'home' });
-    } catch (e) {
-      showProblem(e);
-    }
-  }
-
   if (route.tab === 'knowledge') return <Knowledge factory={factory} file={route.file} />;
   if (route.tab === 'runs') return <Runs factory={factory} runs={runs} terminals={terminals} />;
   if (route.tab === 'work') return <Work factory={factory} runs={runs} terminals={terminals} selected={route.work} />;
-  if (route.tab === 'setup') return <Setup factory={factory} onRemove={() => void remove()} />;
+  if (route.tab === 'setup') return <Setup factory={factory} />;
   return (
     <FactoryMap
       factory={factory}

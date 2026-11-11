@@ -56,6 +56,22 @@ export interface Part {
   vars?: Record<string, string>;
 }
 
+/** What removing a factory could take with it. */
+export interface RemovalPreview {
+  worktrees: { dir: string; branch: string; dirty: boolean }[];
+  copies: number;
+  branches: { name: string; merged: boolean }[];
+  keys: string[];
+  kept: number;
+}
+
+export interface RemovalChoices {
+  worktrees: boolean;
+  branches: string[];
+  keys: boolean;
+  keepFiles: boolean;
+}
+
 export type Level = 'worktree' | 'contained' | 'vm' | 'harness';
 
 export interface Runner {
@@ -567,7 +583,9 @@ export const api = {
   exportTemplate: (id: string, path: string) => invoke<void>('export_template', { id, path }),
   importTemplate: (path: string) => invoke<FactoryTemplate>('import_template', { path }),
   saveFactory: (factory: Factory) => invoke<Factory>('save_factory', { factory }),
-  removeFactory: (id: string) => invoke<void>('remove_factory', { id }),
+  /** Removes a factory. Without choices it's a plain remove; with them, it also clears what they say. Returns what couldn't be cleared. */
+  removeFactory: (id: string, choices?: RemovalChoices) => invoke<string[]>('remove_factory', { id, choices }),
+  removalPreview: (id: string) => invoke<RemovalPreview>('removal_preview', { id }),
   startTerminal: (args: {
     factoryId?: string;
     cwd?: string;

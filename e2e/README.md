@@ -32,6 +32,7 @@ No test calls a model unless you ask for `real_answer`, which spends quota. Each
 | `inbox` | A new factory with a line has an inbox on its map. Work written there becomes a ticket at the start of the line, tagged as from the inbox and listed in it, and the drawer offers no second one |
 | `needs_terminal` | A terminal whose agent asks a question turns red itself, and the screen adds no second box to answer in |
 | `asks` | An agent on the line that asks through `st ask`: Work shows the question and sends you to its terminal with enter, the terminal is red, and an answer typed there reaches the agent, which carries on |
+| `remove_factory` | Removing a factory asks what to take with it: its terminals, worktrees, branches (merged ones ticked, unmerged ones not), keys and files. What's ticked goes; unmerged work, shared sign-ins and the project stay |
 | `markdown`, `logos`, `terminal` | Rendering |
 
 ## Stand-in agents

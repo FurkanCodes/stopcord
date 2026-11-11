@@ -29,6 +29,7 @@ mod kb;
 mod leave_key;
 mod line;
 mod project;
+mod removal;
 mod runner;
 mod runs;
 mod saved_templates;
@@ -426,7 +427,7 @@ fn save_factory(app: State<'_, App>, factory: Factory) -> Result<FactoryInfo, Fa
 
 /// Forgets a factory: takes its links and hooks out of the project. Terminals keep running.
 #[tauri::command(async)]
-fn remove_factory(app: State<'_, App>, id: String) -> Result<(), Failure> {
+fn remove_factory(app: State<'_, App>, id: String, choices: Option<removal::Choices>) -> Result<Vec<String>, Failure> {
     let factory = app.store.get(&id).map_err(fail)?;
     if let Some(part) = factory.knowledge() {
         let kb_file = app.store.knowledge_file(&id);
@@ -435,9 +436,18 @@ fn remove_factory(app: State<'_, App>, id: String) -> Result<(), Failure> {
         }
     }
     hooks::uninstall(&factory);
-    app.store.remove(&id).map_err(fail)?;
+    let moved = app.store.remove(&id).map_err(fail)?;
     app.problems.lock().unwrap().remove(&id);
-    Ok(())
+    // Without choices it's a plain remove: everything else stays.
+    let choices = choices.unwrap_or(removal::Choices { keep_files: true, ..removal::Choices::default() });
+    Ok(removal::clear(app.store.home(), &factory, &app.store.worktrees_dir(&id), &moved, &choices))
+}
+
+/// What removing a factory could take with it: its worktrees, branches, keys and kept copies.
+#[tauri::command(async)]
+fn removal_preview(app: State<'_, App>, id: String) -> Result<removal::Preview, Failure> {
+    let factory = app.store.get(&id).map_err(fail)?;
+    Ok(removal::preview(app.store.home(), &factory, &app.store.worktrees_dir(&id)))
 }
 
 #[tauri::command(async)]
@@ -1146,6 +1156,7 @@ fn main() {
             create_factory,
             save_factory,
             remove_factory,
+            removal_preview,
             runs,
             knowledge,
             save_knowledge,

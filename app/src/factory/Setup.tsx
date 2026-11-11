@@ -10,6 +10,7 @@ import { Logo } from '../tui/Logo';
 import { Markdown } from '../tui/Markdown';
 import { FactoryHeader } from './FactoryHeader';
 import { LineStrip } from './LineStrip';
+import { RemoveFactory } from './RemoveFactory';
 import { levelName, SandboxPane, Secrets } from './Sandbox';
 import { sourceState, useSourceReady } from './sourceState';
 
@@ -219,7 +220,7 @@ function HarnessFields({ id, command, fallback, placeholder, onChange }: { id: s
 }
 
 /** Everything a factory is made of, one section at a time, picked from the list on the left. Each change is a commit in the definition folder. */
-export function Setup({ factory, onRemove }: { factory: Factory; onRemove: () => void }) {
+export function Setup({ factory }: { factory: Factory }) {
   const set = (patch: Partial<Factory>) => changeFactory({ ...factory, ...patch });
   const runners: [string, string][] = [['', 'factory default'], ...factory.runners.map((r): [string, string] => [r.id, `${r.id} · ${levelName(r.level)}`])];
   const skill = (i: number, patch: Partial<Skill>) => set({ skills: factory.skills.map((s, j) => (j === i ? { ...s, ...patch } : s)) });
@@ -251,6 +252,7 @@ export function Setup({ factory, onRemove }: { factory: Factory; onRemove: () =>
     ['benchmarks', 'benchmarks', factory.benchmarks.length],
     ['notifications', 'notifications', factory.reports.length],
     ['template', 'template', undefined],
+    ['remove', 'remove', undefined],
   ];
   // Proposed changes wait for a person, so setup opens on them while there are any.
   const [picked, setPicked] = useState(() => (factory.proposals.length ? 'proposals' : sectionWas()));
@@ -309,7 +311,7 @@ export function Setup({ factory, onRemove }: { factory: Factory; onRemove: () =>
               </span>
             </Pane>
           ))}
-        {here === 'general' && <General factory={factory} set={set} sources={sources.length} onRemove={onRemove} onOpen={open} />}
+        {here === 'general' && <General factory={factory} set={set} sources={sources.length} onOpen={open} />}
         {here === 'integrations' && (
           <Pane id="setup-integrations" title="integrations" heading={2} style={paneStyle}>
             <p className="t-muted">GitHub, Linear, Sentry and Slack. Sign in once for every factory, then pick what comes into this one.</p>
@@ -344,6 +346,11 @@ export function Setup({ factory, onRemove }: { factory: Factory; onRemove: () =>
         {here === 'benchmarks' && <BenchPane factory={factory} set={set} />}
         {here === 'notifications' && <Notifications factory={factory} set={set} />}
         {here === 'template' && <TemplatePane factory={factory} />}
+        {here === 'remove' && (
+          <Pane id="setup-remove" title="remove" heading={2} style={paneStyle}>
+            <RemoveFactory factory={factory} />
+          </Pane>
+        )}
       </div>
     </Screen>
   );
@@ -379,7 +386,7 @@ function Readiness({ factory, sources, onOpen }: { factory: Factory; sources: nu
 }
 
 /** The defaults every agent uses unless it has its own, and removing the factory. */
-function General({ factory, set, sources, onRemove, onOpen }: { factory: Factory; set: (patch: Partial<Factory>) => void; sources: number; onRemove: () => void; onOpen: (id: string) => void }) {
+function General({ factory, set, sources, onOpen }: { factory: Factory; set: (patch: Partial<Factory>) => void; sources: number; onOpen: (id: string) => void }) {
   const installed = useStore((s) => s.installed) ?? [];
   const atOnce = factory.defaults.atOnce ?? 1;
   const ownHarness = factory.agents.filter((a) => a.harness.trim()).length;
@@ -414,12 +421,6 @@ function General({ factory, set, sources, onRemove, onOpen }: { factory: Factory
           <span className="t-dim" style={{ fontSize: 12 }}>
             what each can read, write and reach{ownSandbox > 0 ? ` · ${ownSandbox} agent${ownSandbox === 1 ? ' picks its' : 's pick their'} own` : ''}
           </span>
-        </span>
-      </Pane>
-      <Pane title="remove" heading={2} style={paneStyle}>
-        <span style={{ display: 'flex', gap: 10, alignItems: 'baseline', flexWrap: 'wrap' }}>
-          <Key size="sm" onClick={onRemove}>remove this factory</Key>
-          <span className="t-dim" style={{ fontSize: 12 }}>takes it out of sawtooth. the project folder stays as it is</span>
         </span>
       </Pane>
     </>
