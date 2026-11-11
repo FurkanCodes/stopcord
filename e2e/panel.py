@@ -72,8 +72,8 @@ try:
     time.sleep(0.8); open_work(); row('T-2'); time.sleep(0.6)
     shown = bridge("return document.querySelector('[data-panel]')?.innerText||''")
     check('work shows what the panel said', 'plan v1' in shown and 'critique 2' in shown and "critic's turn" in shown, shown[:600])
-    box = bridge("return [...document.querySelectorAll('div')].find(d=>d.innerText.includes(\"didn't settle\") && d.innerText.includes('your answer goes to'))?.innerText||''")
-    check('the box doesn\'t pin the engine\'s words on an agent, and names who gets the answer', 'planner asks' not in box and 'your answer goes to critic' in box, box[:400])
+    box = bridge("return [...document.querySelectorAll('div')].find(d=>d.innerText.includes(\"didn't settle\") && d.innerText.includes('terminal: press'))?.innerText||''")
+    check('the box doesn\'t pin the engine\'s words on an agent, and names whose terminal to answer in', 'planner asks' not in box and "critic's terminal" in box, box[:400])
     shot('panel-talk')
 
     press('6'); time.sleep(1)

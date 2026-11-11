@@ -683,7 +683,7 @@ function Detail({ factory, item, runs, terminals, onSending, onSite }: { factory
               )}
             </div>
             <span className="t-dim" style={{ fontSize: 12 }}>
-              {item.terminal ? 'answer it in its terminal: press ⏎ to open it' : 'its terminal is gone, so there is nowhere to answer'}
+              {item.terminal ? `answer it in ${asked ? 'its' : `${speaker}'s`} terminal: press ⏎ to open it` : 'its terminal is gone, so there is nowhere to answer'}
             </span>
           </div>
         )}
