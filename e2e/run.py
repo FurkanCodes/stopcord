@@ -37,6 +37,7 @@ TESTS = [
     ('panel', []),
     ('toolbox', []),
     ('inbox', []),
+    ('needs_terminal', []),
     ('terminal', []),
 ]
 ON_REQUEST = [('real_answer', [])]

@@ -336,6 +336,11 @@ textarea::placeholder {
   border-color: var(--ink);
   box-shadow: inset 0 0 0 1px var(--ink);
 }
+/* Typing into a terminal that needs you: still red, drawn as strongly as typing. */
+.t-pane.is-hot.is-typing {
+  border-color: var(--red);
+  box-shadow: inset 0 0 0 1px var(--red);
+}
 .t-pane-title,
 .t-pane-right {
   position: absolute;

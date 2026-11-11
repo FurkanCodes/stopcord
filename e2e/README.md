@@ -31,6 +31,7 @@ No test calls a model unless you ask for `real_answer`, which spends quota. Each
 | `panel` | The planner and a critic take turns at plan with `st say`, each hearing the other in its own terminal; a judge that answers once scores each round, one ticket settles in round two with its plan kept, and one that never settles asks a person, who answers the last speaker |
 | `toolbox` | Picking a trigger, a check or a terminal from the map's parts drawer closes the drawer and opens what was added, with the cursor in its first field |
 | `inbox` | A new factory with a line has an inbox on its map. Work written there becomes a ticket at the start of the line, tagged as from the inbox and listed in it, and the drawer offers no second one |
+| `needs_terminal` | A terminal whose agent asks a question turns red itself, and the screen adds no second box to answer in |
 | `markdown`, `logos`, `terminal` | Rendering |
 
 ## Stand-in agents

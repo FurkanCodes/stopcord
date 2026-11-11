@@ -441,7 +441,6 @@ function Current({
   onRename: (name: string) => void;
   typing: boolean;
 }) {
-  const [answer, setAnswer] = useState('');
   const [line, setLine] = useState('');
   const [name, setName] = useState(renaming ?? t.name);
   useEffect(() => setName(renaming ?? t.name), [renaming, t.name]);
@@ -457,6 +456,8 @@ function Current({
   return (
     <Pane
       focus
+      // When it needs you, the terminal itself turns red: its own question is the one to answer.
+      hot={needs}
       aria-label={t.name}
       title={
         renaming !== null ? (
@@ -514,37 +515,6 @@ function Current({
       <div style={{ flex: '1 1 0', minHeight: 0, padding: '8px 4px 4px 12px' }}>
         <TerminalPane id={t.id} label={`Terminal: ${t.name}`} focusKey={focusKey} onLeave={onLeave} />
       </div>
-
-      {needs && (
-        <section aria-labelledby="ask-title" className="t-pane" style={{ margin: '6px 12px 14px', padding: '14px 14px 12px', borderColor: 'var(--red)', display: 'flex', flexDirection: 'column', gap: 10 }}>
-          <h2 id="ask-title" className="t-pane-title" style={{ fontWeight: 600, color: 'var(--red-text)' }}>
-            ! {t.state === 'blocked' ? 'question' : 'turn finished'} · waiting for you
-          </h2>
-          <p style={{ maxWidth: '76ch' }}>
-            {t.state === 'blocked'
-              ? `${t.name} is waiting for an answer. Answer it in the terminal above, or type it here.`
-              : `${t.name} finished its turn. Tell it what to do next.`}
-          </p>
-          <form onSubmit={send(answer, () => setAnswer(''))} style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '6px 10px' }}>
-            <span style={{ flex: '1 1 220px', display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
-              <label htmlFor="answer" className="t-red">
-                ›<span className="sr-only">Answer {t.name}</span>
-              </label>
-              <input
-                id="answer"
-                className="t-field" spellCheck={false}
-                style={{ flexGrow: 1 }}
-                placeholder="type an answer"
-                value={answer}
-                onChange={(e) => setAnswer(e.currentTarget.value)}
-              />
-            </span>
-            <button type="submit" className="t-solid" disabled={!answer.trim()}>
-              ⏎ send
-            </button>
-          </form>
-        </section>
-      )}
 
       <form onSubmit={send(line, () => setLine(''))} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 14px', borderTop: '1px solid var(--line-soft)' }}>
         <label htmlFor="term-input" className="t-dim">
