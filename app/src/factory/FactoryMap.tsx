@@ -238,6 +238,13 @@ export function FactoryMap(props: FactoryMapProps) {
     return { x: snapX(g.x - z.w / 2), y: snapY(g.y - z.h / 2) };
   }
 
+  // Adding something closes the drawer and opens what was added, with the cursor in its first field.
+  const addAndEdit = (t: Template, at?: Pos) => {
+    onAdd(t, at);
+    setDrawer(false);
+    window.setTimeout(() => document.querySelector<HTMLElement>('aside.t-drawer :is(input, textarea, select):not(:disabled)')?.focus({ preventScroll: true }), 60);
+  };
+
   const drawerItem = (t: Template, off: boolean, name: string) => ({
     onPointerDown: (e: ReactPointerEvent<HTMLElement>) => {
       if (off || e.button !== 0) return;
@@ -263,8 +270,8 @@ export function FactoryMap(props: FactoryMapProps) {
       const at = dropAt(t, e.clientX, e.clientY);
       setGhost(null);
       if (!at) return;
-      if (t === 'terminal') onAdd('terminal');
-      else onAdd(t, at);
+      if (t === 'terminal') addAndEdit('terminal');
+      else addAndEdit(t, at);
     },
     onPointerCancel: () => {
       pdrag.current = null;
@@ -276,7 +283,7 @@ export function FactoryMap(props: FactoryMapProps) {
         partDragged.current = false;
         return;
       }
-      onAdd(t);
+      addAndEdit(t);
     },
   });
 

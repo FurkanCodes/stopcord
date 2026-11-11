@@ -35,6 +35,7 @@ TESTS = [
     ('answers_once', []),
     ('race', []),
     ('panel', []),
+    ('toolbox', []),
     ('terminal', []),
 ]
 ON_REQUEST = [('real_answer', [])]
