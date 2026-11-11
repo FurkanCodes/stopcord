@@ -444,7 +444,9 @@ function Current({
   const [name, setName] = useState(renaming ?? t.name);
   useEffect(() => setName(renaming ?? t.name), [renaming, t.name]);
   const status = lampOf(t);
-  const needs = t.needs_you;
+  // Asking on its own screen, or through st ask when its harness has no screen the app can read.
+  const asked = !!factory?.work.some((w) => w.stage === 'running' && w.terminal === t.id && w.waiting === 'question');
+  const needs = t.needs_you || asked;
 
   return (
     <Pane
@@ -490,7 +492,7 @@ function Current({
         ) : (
         <span style={{ display: 'inline-flex', gap: 8, color: needs ? 'var(--red-text)' : 'var(--ink-2)' }}>
           <Glyph status={status} style={{ width: 'auto' }} />
-          {needs ? (t.state === 'blocked' ? 'waiting for you' : 'turn finished') : stateWords(t).toLowerCase()}
+          {needs ? (t.state === 'blocked' || asked ? 'waiting for you' : 'turn finished') : stateWords(t).toLowerCase()}
         </span>
         )
       }

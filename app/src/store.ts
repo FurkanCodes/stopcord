@@ -419,6 +419,8 @@ export interface Need {
   work?: string;
   /** When it started waiting, for decisions. */
   at?: number;
+  /** A question, answered in the terminal that asked it. */
+  question?: boolean;
 }
 
 export interface FleetNeed extends Need {
@@ -446,7 +448,7 @@ export function openNextNeed(): boolean {
   if (needs.length === 0) return false;
   const r = state.route;
   const at = needs.findIndex(
-    (n) => r.screen === 'factory' && n.factoryId === r.id && ((n.kind === 'work' && r.tab === 'work' && n.work === r.work) || (n.kind === 'terminal' && r.tab === 'terminals' && n.target === r.terminal)),
+    (n) => r.screen === 'factory' && n.factoryId === r.id && ((n.kind === 'work' && r.tab === 'work' && n.work === r.work) || (n.kind === 'terminal' && r.tab === 'terminals' && n.target === r.terminal) || (!!n.question && r.tab === 'terminals' && n.terminal === r.terminal)),
   );
   openNeed(needs[(at + 1) % needs.length]!);
   return true;
@@ -457,6 +459,7 @@ export function openNeed(n: FleetNeed) {
   if (n.kind === 'terminal') openFactory(n.factoryId, 'terminals', n.target);
   else if (n.kind === 'proposal') openFactory(n.factoryId, 'setup');
   else if (n.kind === 'knowledge') openFactory(n.factoryId, 'knowledge');
+  else if (n.kind === 'work' && n.question && n.terminal) openFactory(n.factoryId, 'terminals', n.terminal);
   else if (n.kind === 'work') go({ screen: 'factory', id: n.factoryId, tab: 'work', work: n.work });
   else if (n.kind === 'denied') go({ screen: 'factory', id: n.factoryId, tab: 'work', work: n.work });
   else {
@@ -490,8 +493,9 @@ export function needsOf(f: Factory | undefined, terminals: Terminal[]): Need[] {
       const owner = f?.work.find((w) => a.terminal && Object.values(w.agents).includes(a.terminal));
       out.push({ text: a.text, target: a.key, kind: 'denied', terminal: a.terminal, work: owner?.ticket.key });
     } else if (a.work) {
-      const key = f?.work.find((w) => w.id === a.work)?.ticket.key;
-      out.push({ text: a.text, target: a.key, kind: 'work', terminal: a.terminal, work: key, at: a.at });
+      const w = f?.work.find((x) => x.id === a.work);
+      const question = a.kind === 'question' && !!w?.terminal;
+      out.push({ text: a.text, target: a.key, kind: 'work', terminal: question ? w!.terminal : a.terminal, work: w?.ticket.key, at: a.at, question });
     } else {
       out.push({ text: a.text, target: a.key, kind: 'alert', terminal: a.terminal });
     }

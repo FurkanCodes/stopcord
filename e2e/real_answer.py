@@ -1,4 +1,4 @@
-"""One real run with a real model: an answer typed on Work reaches the agent. Spends quota, so run.py skips it unless named."""
+"""One real run with a real model: a question is answered in the terminal that asked it. Spends quota, so run.py skips it unless named."""
 from harness import *
 try:
     shutil.rmtree(ROOT, ignore_errors=True); os.makedirs(H); os.makedirs(R)
@@ -17,18 +17,14 @@ try:
     bridge("return 1"); go = {'screen': 'factory', 'id': 'a', 'tab': 'work', 'work': 'T-1'}
     wait('home shows the question', lambda: 'red or blue' in text(), 15)
     press('n')
-    wait('n opens it with an answer box', lambda: bridge('return !!document.querySelector(\'input[aria-label="Your answer"]\')'), 10)
-    t = text(); check('the question is on screen with its words', 'red or blue' in t, t[:500]); shot('ux-real-question')
-    for _ in range(40):
-        w = item('T-1'); print('  state', time.strftime('%H:%M:%S'), w['waiting'], w['lineStage'], [(x['state'], x['needs_you']) for x in inv('daemon', method='terminal.list', params={})['terminals']], bridge('return !!document.querySelector(\'input[aria-label="Your answer"]\')'), flush=True)
-        time.sleep(0.5)
-        if _ == 3: break
-    print('  body', text()[:260].replace('\n', ' | '), flush=True)
-    press('Enter'); fill('input[aria-label="Your answer"]', 'blue')
-    bridge("document.activeElement.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true}));return 1")
+    wait('n opens the terminal that asked', lambda: bridge('return document.title').startswith('a: terminals'), 10)
+    t = text(); check('the terminal is red and waiting for you', 'waiting for you' in t and bridge("return !!document.querySelector('.t-pane.is-hot')"), t[:500]); shot('ux-real-question')
+    term = item('T-1')['terminal']
+    data = __import__('base64').b64encode(b'blue').decode()
+    inv('daemon', method='terminal.send', params={'id': term, 'data': data}); time.sleep(0.3)
+    inv('daemon', method='terminal.send', params={'id': term, 'data': __import__('base64').b64encode(b'\r').decode()})
     wait('the answer reaches the agent and it finishes', lambda: item('T-1')['waiting'] == 'approve', 180)
     check('it used the answer', 'blue' in item('T-1')['summary'].lower(), item('T-1')['summary'])
-    time.sleep(1); check('the timeline says it plainly', any(r['text'] == 'answered T-1: blue' for r in inv('runs', id='a', limit=50)), [r['text'] for r in inv('runs', id='a', limit=50)][:8])
     shot('ux-real-approve')
     print('EXIT', FAILS, flush=True)
 except Exception:

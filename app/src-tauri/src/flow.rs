@@ -36,11 +36,10 @@ fn person_said(action: &str, key: &str, note: &str) -> String {
         "drop" => "dropped",
         "merge" => "asked to merge",
         "landed" => "marked as merged",
-        "answer" => "answered",
         other => other,
     };
     let note = note.trim();
-    if note.is_empty() || !matches!(action, "sendBack" | "answer") {
+    if note.is_empty() || action != "sendBack" {
         format!("{word} {key}")
     } else {
         format!("{word} {key}: {note}")
@@ -49,11 +48,6 @@ fn person_said(action: &str, key: &str, note: &str) -> String {
 
 pub fn alert_key(work: &str) -> String {
     format!("work:{work}")
-}
-
-/// A person's answer that couldn't be typed. It's about one try: the next try, or the agent moving on, ends it.
-pub fn answer_alert(key: &str) -> String {
-    format!("answer:{key}")
 }
 
 /// Tells an agent in a throwaway copy what will survive it.
@@ -126,7 +120,6 @@ impl Engine {
         let Some(w) = item_of(&f, key).cloned() else { return };
         if step != Step::Nothing {
             self.clear_alert(factory, &alert_key(&w.id));
-            self.clear_alert(factory, &answer_alert(key));
         }
         match step {
             Step::Nothing => {}
@@ -915,9 +908,9 @@ impl Engine {
                         let st = if in_vm { "st".to_string() } else { me.store.home().join("bin/st").display().to_string() };
                         let on_panel = me.store.get(&factory).ok().is_some_and(|f| item_of(&f, &key).is_some_and(|w| f.line.iter().any(|s| s.id == w.line_stage && !s.panel.is_empty())));
                         let nudge = if on_panel {
-                            format!("You stopped without reporting. Finish your turn with: {st} say \"what you think\". If you need a person, run: {st} ask \"your question\".")
+                            format!("You stopped without reporting. Finish your turn with: {st} say \"what you think\". If you need a person, ask the way you normally would and wait. If you can't, run: {st} ask \"your question\".")
                         } else {
-                            format!("You stopped without reporting. If you've finished, run: {st} done \"one line on what you did\". If you need a person, run: {st} ask \"your question\".")
+                            format!("You stopped without reporting. If you've finished, run: {st} done \"one line on what you did\". If you need a person, ask the way you normally would and wait. If you can't, run: {st} ask \"your question\".")
                         };
                         if me.type_engine_turn(&terminal, &nudge).is_ok() {
                             me.log(&factory, Run::new("line", format!("{key} stopped without reporting, so it was reminded once")).by("engine"));
@@ -943,7 +936,6 @@ impl Engine {
             let id = w.id.clone();
             let _ = self.store.update(&factory, |fa| line::agent_resumed(fa, &key));
             self.clear_alert(&factory, &alert_key(&id));
-            self.clear_alert(&factory, &answer_alert(&key));
         }
     }
 
@@ -1024,22 +1016,11 @@ impl Engine {
             return Err(format!("{key} has already ended"));
         }
         let guard = (factory.to_string(), key.to_string());
-        if action == "answer" {
-            if w.waiting != Waiting::Question {
-                return Err(format!("{key} isn't asking anything right now"));
-            }
-            if note.trim().is_empty() {
-                return Err("Write an answer first.".to_string());
-            }
-            if w.terminal.is_none() {
-                return Err(format!("{key} has no terminal to answer in. Send it back instead."));
-            }
-        }
         if action == "merge" && w.waiting != Waiting::Handoff {
             return Err(format!("{key} isn't ready to merge"));
         }
         // A second press while this is still happening is the same press.
-        if matches!(action, "merge" | "answer") && !self.state.lock().unwrap().stepping.insert(guard.clone()) {
+        if action == "merge" && !self.state.lock().unwrap().stepping.insert(guard.clone()) {
             return Ok(());
         }
         self.log(factory, Run::new("line", person_said(action, key, note)).work(&w.id).by("person"));
@@ -1049,24 +1030,6 @@ impl Engine {
             "treatAsDone" => Action::TreatAsDone,
             "drop" => Action::Drop,
             "landed" => Action::Merged,
-            "answer" => {
-                let me = Arc::clone(self);
-                let (fid, key, term, text) = (factory.to_string(), key.to_string(), w.terminal.clone().unwrap_or_default(), note.to_string());
-                std::thread::spawn(move || {
-                    me.clear_alert(&fid, &answer_alert(&key));
-                    match me.type_engine_turn(&term, &text) {
-                        // An agent can ask mid-turn and carry on, and then no new turn starts to clear the question.
-                        Ok(()) => me.line_turn_began(&term),
-                        Err(e) => {
-                            let said = format!("{key}: the answer didn't reach the agent. {e}");
-                            me.log(&fid, Run::new("line", said.clone()).ok(false).by("engine"));
-                            me.alert(&fid, &answer_alert(&key), &said, Some(&term));
-                        }
-                    }
-                    me.state.lock().unwrap().stepping.remove(&(fid.clone(), key.clone()));
-                });
-                return Ok(());
-            }
             "merge" => {
                 let me = Arc::clone(self);
                 let (fid, key) = (factory.to_string(), key.to_string());

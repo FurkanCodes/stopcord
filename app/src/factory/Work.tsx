@@ -20,7 +20,18 @@ const waitingWord: Record<WorkItem['waiting'], string> = {
   failed: 'stopped, needs you',
 };
 
-function statusOf(w: WorkItem): string {
+/** Its agent is asking on its own screen: a question the line didn't hear about, but a person still has to answer. */
+function asking(w: WorkItem, terminals: Terminal[]): boolean {
+  return w.stage === 'running' && w.waiting === 'no' && !!w.terminal && terminals.some((t) => t.id === w.terminal && t.state === 'blocked');
+}
+
+/** What a person is waiting on for this work, counting a question asked on the agent's own screen. */
+function waitingOf(w: WorkItem, terminals: Terminal[]): WorkItem['waiting'] {
+  return asking(w, terminals) ? 'question' : w.waiting;
+}
+
+function statusOf(w: WorkItem, terminals: Terminal[] = []): string {
+  if (asking(w, terminals)) return `${w.lineStage || 'running'} · asking you in its terminal`;
   if (w.stage === 'ended') return w.outcome || 'ended';
   if (w.stage === 'proposed') return 'waiting to start';
   if (w.stage === 'queued' || w.stage === 'starting') return w.stage;
@@ -34,8 +45,8 @@ function sitesFor(f: Factory, w: WorkItem) {
   return f.alerts.filter((a) => a.kind === 'denied' && a.terminal && Object.values(w.agents).includes(a.terminal));
 }
 
-function needsPerson(f: Factory, w: WorkItem): boolean {
-  return w.stage === 'running' && ((w.waiting !== 'no' && w.waiting !== 'landing') || sitesFor(f, w).length > 0);
+function needsPerson(f: Factory, w: WorkItem, terminals: Terminal[]): boolean {
+  return w.stage === 'running' && ((w.waiting !== 'no' && w.waiting !== 'landing') || sitesFor(f, w).length > 0 || asking(w, terminals));
 }
 
 const waitingSince = (f: Factory, w: WorkItem) => f.alerts.find((a) => a.work === w.id && a.kind !== 'denied')?.at ?? 0;
@@ -47,8 +58,8 @@ interface Groups {
   done: WorkItem[];
 }
 
-function groupsOf(f: Factory): Groups {
-  const needs = f.work.filter((w) => needsPerson(f, w)).sort((a, b) => waitingSince(f, a) - waitingSince(f, b));
+function groupsOf(f: Factory, terminals: Terminal[]): Groups {
+  const needs = f.work.filter((w) => needsPerson(f, w, terminals)).sort((a, b) => waitingSince(f, a) - waitingSince(f, b));
   return {
     needs,
     line: f.work.filter((w) => !needs.includes(w) && w.stage !== 'proposed' && w.stage !== 'ended'),
@@ -57,25 +68,25 @@ function groupsOf(f: Factory): Groups {
   };
 }
 
-function hintsFor(w: WorkItem | undefined, sending: boolean, composing: boolean, canWrite: boolean): Hint[] {
+function hintsFor(w: WorkItem | undefined, terminals: Terminal[], sending: boolean, composing: boolean, canWrite: boolean): Hint[] {
   const around: Hint[] = [['n', 'next decision'], ['1-6', 'sections'], ['esc', 'every factory'], ['?', 'all keys']];
   if (composing) return [['tab', 'next field'], ['⌘⏎', 'start', false], ['esc', 'cancel', false]];
   if (sending) return [['⏎', 'send back', false], ['esc', 'cancel', false]];
   const open: Record<string, Hint[]> = {
     approve: [['a', 'approve'], ['s', 'send back'], ['D', 'drop']],
     handoff: [['m', 'merge'], ['s', 'send back'], ['D', 'drop']],
-    question: [['⏎', 'answer', false], ['d', 'mark done'], ['s', 'send back'], ['D', 'drop']],
+    question: [['⏎', 'answer in its terminal', false], ['d', 'mark done'], ['s', 'send back'], ['D', 'drop']],
     failed: [['s', 'send back'], ['D', 'drop']],
     landing: [['L', "it's merged"], ['s', 'send back'], ['D', 'drop']],
     no: [['D', 'drop']],
   };
-  const verbs: Hint[] = !w || w.stage === 'ended' ? [] : w.stage === 'proposed' ? [['a', 'start'], ['space', 'mark'], ['x', 'not this']] : open[w.waiting] ?? [];
+  const verbs: Hint[] = !w || w.stage === 'ended' ? [] : w.stage === 'proposed' ? [['a', 'start'], ['space', 'mark'], ['x', 'not this']] : open[waitingOf(w, terminals)] ?? [];
   return [['j/k', 'move'], ...verbs, ...(w && w.stage !== 'proposed' ? ([['t', 'timeline']] as Hint[]) : []), ...(canWrite ? ([['w', 'write a ticket']] as Hint[]) : []), ['p', 'pull sources'], ...around];
 }
 
 /** What's waiting for a person, what's running, and everything needed to decide about one piece of work. */
 export function Work({ factory, runs, terminals, selected }: { factory: Factory; runs?: Run[]; terminals: Terminal[]; selected?: string }) {
-  const groups = groupsOf(factory);
+  const groups = groupsOf(factory, terminals);
   const flat = [...groups.needs, ...groups.line, ...groups.incoming, ...groups.done];
   const picked = flat.find((w) => w.ticket.key === selected) ?? flat[0];
   const unowned = factory.alerts.filter((a) => a.kind === 'denied' && !factory.work.some((w) => sitesFor(factory, w).includes(a)));
@@ -160,7 +171,7 @@ export function Work({ factory, runs, terminals, selected }: { factory: Factory;
   });
 
   const row = (w: WorkItem) => {
-    const hot = needsPerson(factory, w);
+    const hot = needsPerson(factory, w, terminals);
     const sites = sitesFor(factory, w);
     const on = picked?.id === w.id;
     return (
@@ -168,7 +179,7 @@ export function Work({ factory, runs, terminals, selected }: { factory: Factory;
         <button type="button" data-work-row className="t-row" aria-current={on ? 'true' : undefined} style={{ display: 'block', width: '100%', textAlign: 'left', padding: '3px 12px' }} onClick={() => pick(w.ticket.key)}>
           <span style={{ color: 'var(--ink)' }}>{w.stage === 'proposed' ? (marked.includes(w.ticket.key) ? '[x] ' : '[ ] ') : ''}<Logo name={w.source} size={12} style={{ marginRight: 5 }} />{w.ticket.key}</span> <span className="t-muted">{w.ticket.title}</span>
           <span style={{ display: 'block', fontSize: 12 }} className={hot ? 't-red' : 't-muted'}>
-            {w.waiting === 'no' && sites.length > 0 ? `wants ${sites[0]!.host}` : statusOf(w)}
+            {w.waiting === 'no' && sites.length > 0 ? `wants ${sites[0]!.host}` : statusOf(w, terminals)}
             {hot && waitingSince(factory, w) > 0 && <span className="t-dim"> · {ago(waitingSince(factory, w))}</span>}
           </span>
         </button>
@@ -188,7 +199,7 @@ export function Work({ factory, runs, terminals, selected }: { factory: Factory;
     <Screen
       header={<FactoryHeader factory={factory} tab="work" />}
       bodyStyle={{ overflow: 'hidden', padding: '10px 8px 8px', display: 'flex', flexDirection: 'column', gap: 10 }}
-      hints={hintsFor(picked, sending, composing, canWrite)}
+      hints={hintsFor(picked, terminals, sending, composing, canWrite)}
       message={message ? <div role="status" className="t-message">{message}</div> : undefined}
       status={{ mode: 'WORK', path: factory.name, info: `${groups.needs.length + groups.line.length} on the line · ${groups.incoming.length} to start` }}
     >
@@ -450,7 +461,6 @@ function Incoming({ factory, item, starts, stage, marked, onStage, onStart }: { 
 /** Notes survive moving between tickets, until they're sent. */
 const notes = new Map<string, string>();
 /** The last answer sent for each ticket, so one that can't be typed comes back to the box. */
-const lastAnswers = new Map<string, string>();
 
 function useEvidence(factoryId: string, item: WorkItem): Evidence | null {
   const [evidence, setEvidence] = useState<Evidence | null>(null);
@@ -505,14 +515,11 @@ function Detail({ factory, item, runs, terminals, onSending, onSite }: { factory
   const needs = useStore(allNeeds);
   const arm = useArm();
   const [note, setNoteState] = useState(notes.get(item.id) ?? '');
-  const [answer, setAnswer] = useState('');
-  const [sent, setSent] = useState('');
   const [busy, setBusy] = useState(false);
   const [sending, setSendingState] = useState(false);
   const [showTimeline, setShowTimeline] = useState(false);
   const [showTerminals, setShowTerminals] = useState(false);
   const noteField = useRef<HTMLInputElement>(null);
-  const answerField = useRef<HTMLInputElement>(null);
 
   const setNote = (v: string) => {
     notes.set(item.id, v);
@@ -529,7 +536,7 @@ function Detail({ factory, item, runs, terminals, onSending, onSite }: { factory
 
   const stage = factory.line.find((s) => s.id === item.lineStage);
   const open = item.stage !== 'ended';
-  const w = item.waiting;
+  const w = waitingOf(item, terminals);
   const timeline = (runs ?? []).filter((r) => r.work === item.id);
   const checks = latestChecks(timeline);
   const terms = Object.entries(item.agents)
@@ -541,7 +548,6 @@ function Detail({ factory, item, runs, terminals, onSending, onSite }: { factory
   const asked = !raw || raw.startsWith(`${item.ticket.key} asks: `);
   const question = raw?.replace(`${item.ticket.key} asks: `, '');
   const stopped = factory.alerts.find((a) => a.work === item.id && a.kind === 'failed')?.text;
-  const answerFailed = factory.alerts.find((a) => a.key === `answer:${item.ticket.key}`);
   const findings: Finding[] = item.findings.filter((f) => f.stage !== 'approve' || w === 'approve').sort((a, b) => (severityRank[a.severity] ?? 3) - (severityRank[b.severity] ?? 3));
   const highs = findings.filter((f) => f.severity === 'high').length;
   const uncommitted = evidence?.uncommitted ?? [];
@@ -557,21 +563,6 @@ function Detail({ factory, item, runs, terminals, onSending, onSite }: { factory
     return factory.line.slice(0, Math.max(0, at) + 1).reverse().find((s) => s.kind === 'agent')?.agent ?? 'agent';
   })();
   const nextNeed = needs.find((n) => n.kind === 'work' && n.work !== item.ticket.key);
-
-  // A new question needs a new answer. The timer outlasts the engine's wait for the agent,
-  // which ends in an alert: a box that came back sooner would swallow a second answer.
-  useEffect(() => setSent(''), [question]);
-  useEffect(() => {
-    if (!sent) return;
-    const timer = window.setTimeout(() => setSent(''), 120_000);
-    return () => window.clearTimeout(timer);
-  }, [sent]);
-  // The engine couldn't type it, so it isn't sent: the words come back, with the reason beside them.
-  useEffect(() => {
-    if (!answerFailed) return;
-    setSent('');
-    setAnswer((now) => now || (lastAnswers.get(item.id) ?? ''));
-  }, [answerFailed?.at]);
 
   async function act(action: WorkVerb, text = ''): Promise<boolean> {
     setBusy(true);
@@ -592,19 +583,6 @@ function Detail({ factory, item, runs, terminals, onSending, onSite }: { factory
     notes.delete(item.id);
     setNoteState('');
     setSending(false);
-  }
-
-  async function sendAnswer() {
-    if (sent) return;
-    const text = answer;
-    if (!text.trim()) return answerField.current?.focus();
-    lastAnswers.set(item.id, text);
-    setSent(text);
-    setAnswer('');
-    if (!(await act('answer', text))) {
-      setSent('');
-      setAnswer(text);
-    }
   }
 
   const drop: Verb = {
@@ -631,8 +609,11 @@ function Detail({ factory, item, runs, terminals, onSending, onSite }: { factory
       verbs = item.mergeError || blocked || highs > 0 ? [{ ...back, primary: true, label: 'send back' }, merge, ...(terminalVerb ? [terminalVerb] : []), drop] : [merge, back, drop];
       say = blocked || item.mergeError ? '' : highs > 0 ? `${highs} high finding${highs === 1 ? '' : 's'}` : stage?.merge ? 'gates run again, then your merge command' : 'gates run once more before merging';
     } else if (w === 'question') {
-      verbs = [{ k: '⏎', label: sent ? 'answer sent' : 'answer', run: () => void sendAnswer(), primary: true, off: !!sent }, { k: 'd', label: 'mark done anyway', run: () => void act('treatAsDone') }, back, drop];
-      say = 'your answer goes straight to the agent';
+      const answerIn: Verb = item.terminal
+        ? { k: '⏎', label: 'answer in its terminal', run: () => openFactory(factory.id, 'terminals', item.terminal!), primary: true }
+        : { k: '⏎', label: 'no terminal to answer in', run: () => {}, off: true };
+      verbs = [answerIn, { k: 'd', label: 'mark done anyway', run: () => void act('treatAsDone') }, { ...back, primary: !item.terminal }, drop];
+      say = item.terminal ? 'you answer it where it asked' : 'its terminal is gone: send it back or mark it done';
     } else if (w === 'failed') {
       const gate = stage?.kind === 'gate';
       verbs = [
@@ -646,7 +627,7 @@ function Detail({ factory, item, runs, terminals, onSending, onSite }: { factory
       say = 'sawtooth finishes this when the branch lands';
     } else {
       verbs = [...(terminalVerb ? [terminalVerb] : []), drop];
-      say = item.lineStage ? `${item.lineStage} is working` : statusOf(item);
+      say = item.lineStage ? `${item.lineStage} is working` : statusOf(item, terminals);
     }
   }
 
@@ -654,11 +635,9 @@ function Detail({ factory, item, runs, terminals, onSending, onSite }: { factory
     if (!plain(e)) return;
     if (e.key === 't') return setShowTimeline((v) => !v), true;
     if (e.key === 'n' && !open) return openNextNeed(), true;
-    if (e.key === 'Enter' && w === 'question' && open && !(e.target instanceof HTMLElement && e.target.closest('button, a, select'))) {
-      answerField.current?.focus();
-      return true;
-    }
-    const verb = verbs.find((v) => v.k === e.key);
+    // Enter on a button presses that button; anywhere else it's the ⏎ verb.
+    if (e.key === 'Enter' && e.target instanceof HTMLElement && e.target.closest('button, a, select, input, textarea')) return;
+    const verb = verbs.find((v) => v.k === (e.key === 'Enter' ? '⏎' : e.key));
     if (verb && !verb.off && !busy) {
       verb.run();
       return true;
@@ -675,7 +654,7 @@ function Detail({ factory, item, runs, terminals, onSending, onSite }: { factory
     );
 
   return (
-    <Pane title={item.ticket.key} right={<span className="t-muted">{statusOf(item)}</span>} style={{ display: 'flex', flexDirection: 'column', minWidth: 0, minHeight: 0, height: '100%', paddingTop: 10 }}>
+    <Pane title={item.ticket.key} right={<span className="t-muted">{statusOf(item, terminals)}</span>} style={{ display: 'flex', flexDirection: 'column', minWidth: 0, minHeight: 0, height: '100%', paddingTop: 10 }}>
       <div style={{ flex: '1 1 0', minHeight: 0, overflow: 'auto', padding: '4px 12px 12px', display: 'flex', flexDirection: 'column', gap: 12 }}>
         <div>
           <div style={{ color: 'var(--ink)', fontWeight: 600 }}>{item.ticket.title}</div>
@@ -692,31 +671,20 @@ function Detail({ factory, item, runs, terminals, onSending, onSite }: { factory
         ))}
 
         {open && w === 'question' && (
-          <div style={{ border: '1px solid var(--red-line)', padding: '8px 10px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <div style={{ border: '1px solid var(--red-line)', padding: '8px 10px', display: 'flex', flexDirection: 'column', gap: 4 }}>
             <div style={{ color: 'var(--ink)', maxWidth: '90ch' }}>
-              {asked && `${speaker} asks: `}<Markdown text={question ?? 'it stopped without saying what it needs'} breaks className="is-lead" />
-              {!asked && <span className="t-dim" style={{ fontSize: 12 }}>your answer goes to {speaker}</span>}
+              {item.waiting === 'question' ? (
+                <>
+                  {asked && `${speaker} asks: `}
+                  <Markdown text={question ?? 'it stopped without saying what it needs'} breaks className="is-lead" />
+                </>
+              ) : (
+                `${speaker} is asking you something in its terminal.`
+              )}
             </div>
-            {sent ? (
-              <div role="status" className="t-muted">sent: {sent} · {speaker} gets it as soon as it stops to read</div>
-            ) : (
-            <>
-            {answerFailed && <div role="alert" className="t-red">{answerFailed.text.replace(`${item.ticket.key}: `, '')}</div>}
-            <input
-              ref={answerField}
-              className="t-field"
-              aria-label="Your answer"
-              spellCheck={false}
-              placeholder="your answer…"
-              value={answer}
-              onChange={(e) => setAnswer(e.currentTarget.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') void sendAnswer();
-                if (e.key === 'Escape') e.currentTarget.blur();
-              }}
-            />
-            </>
-            )}
+            <span className="t-dim" style={{ fontSize: 12 }}>
+              {item.terminal ? 'answer it in its terminal: press ⏎ to open it' : 'its terminal is gone, so there is nowhere to answer'}
+            </span>
           </div>
         )}
 

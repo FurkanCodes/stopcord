@@ -534,7 +534,7 @@ pub fn brief(prompt: &str, w: &WorkItem, skills: &[(String, String, String)], st
         format!(" To hand the work to another stage with a message instead, run: {st} send <stage> \"what it needs to know\". The stages: {}.", others.join(", "))
     };
     format!(
-        "{}{finding}\n\nIf your role changes files, commit them. If it says not to, leave every file alone. When you've finished, run: {st} done \"your note\". The stages after you read it, so say what you did, what you aren't sure of, and what they should check. For a long note, pipe it in: {st} done - < note.md.{send} If you need a person, run: {st} ask \"your question\".",
+        "{}{finding}\n\nIf your role changes files, commit them. If it says not to, leave every file alone. When you've finished, run: {st} done \"your note\". The stages after you read it, so say what you did, what you aren't sure of, and what they should check. For a long note, pipe it in: {st} done - < note.md.{send} If you need a person, ask the way you normally would and wait for the answer. If you can't ask that way, run: {st} ask \"your question\" and wait.",
         brief_body(prompt, w, skills)
     )
 }

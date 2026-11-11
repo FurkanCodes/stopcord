@@ -20,7 +20,6 @@ BUILD = 'in app/: npx tauri build --debug --no-bundle'
 TESTS = [
     ('work_screen', []),
     ('work_states', []),
-    ('answer_failure', []),
     ('isolation', ['worktree']),
     ('isolation', ['contained']),
     ('sandbox', []),
@@ -38,6 +37,7 @@ TESTS = [
     ('toolbox', []),
     ('inbox', []),
     ('needs_terminal', []),
+    ('asks', []),
     ('terminal', []),
 ]
 ON_REQUEST = [('real_answer', [])]

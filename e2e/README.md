@@ -17,7 +17,6 @@ No test calls a model unless you ask for `real_answer`, which spends quota. Each
 |---|---|
 | `work_screen` | Decisions, diffs, merges, keys, search, and writing a ticket |
 | `work_states` | The send-back box, landing, and a gate that keeps failing |
-| `answer_failure` | An answer that can't be typed says so, keeps the words, and clears when one lands |
 | `isolation` | A misbehaving planner and reviewer change nothing real, with and without a sandbox |
 | `sandbox` | Testing a sandbox from setup reports what really held, for each kind of runner |
 | `vm` | Agents in Docker work on a copy, only their work comes back, and the copies go when the work ends. Needs Docker running |
@@ -32,6 +31,7 @@ No test calls a model unless you ask for `real_answer`, which spends quota. Each
 | `toolbox` | Picking a trigger, a check or a terminal from the map's parts drawer closes the drawer and opens what was added, with the cursor in its first field |
 | `inbox` | A new factory with a line has an inbox on its map. Work written there becomes a ticket at the start of the line, tagged as from the inbox and listed in it, and the drawer offers no second one |
 | `needs_terminal` | A terminal whose agent asks a question turns red itself, and the screen adds no second box to answer in |
+| `asks` | An agent on the line that asks through `st ask`: Work shows the question and sends you to its terminal with enter, the terminal is red, and an answer typed there reaches the agent, which carries on |
 | `markdown`, `logos`, `terminal` | Rendering |
 
 ## Stand-in agents

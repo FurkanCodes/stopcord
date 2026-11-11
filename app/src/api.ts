@@ -297,7 +297,7 @@ export interface WorkItem {
   panel?: Panel | null;
 }
 
-export type WorkVerb = 'approve' | 'sendBack' | 'treatAsDone' | 'drop' | 'merge' | 'landed' | 'answer';
+export type WorkVerb = 'approve' | 'sendBack' | 'treatAsDone' | 'drop' | 'merge' | 'landed';
 
 export interface DiffLine {
   kind: 'add' | 'del' | 'same' | 'gap';
