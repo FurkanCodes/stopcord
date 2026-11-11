@@ -1,5 +1,9 @@
 """One real run with a real model: a question is answered in the terminal that asked it. Spends quota, so run.py skips it unless named."""
 from harness import *
+# The cheapest real model: this test spends quota on purpose.
+HAIKU = 'claude --model haiku'
+# This test's factory is a, not the p the shared helper looks in.
+def item(k): return next(w for w in next(f for f in inv('factories') if f['id'] == 'a')['work'] if w['ticket']['key'] == k)
 try:
     shutil.rmtree(ROOT, ignore_errors=True); os.makedirs(H); os.makedirs(R)
     for a in (['init', '-q', '-b', 'main'], ['config', 'user.email', 't@e.c'], ['config', 'user.name', 'T']): sh('git', *a, cwd=R)
