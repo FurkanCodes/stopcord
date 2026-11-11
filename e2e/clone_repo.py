@@ -26,6 +26,15 @@ try:
     check('and the name follows the repo', bridge("return document.querySelector('#f-name')?.value || document.querySelector('input[placeholder=\"my-project\"]')?.value") == 'web')
     press('g'); time.sleep(0.5); fill('#clone-url', url); clone()
     wait('cloning again never touches the folder already there', lambda: 'already there' in text(), 15)
+
+    # A repo picked but not cloned yet: creating clones it, then makes the factory.
+    shutil.copytree(R, ROOT + '/shop', symlinks=True)
+    bridge("document.querySelector('#f-folder').focus();return 1")
+    fill('#f-folder', ''); time.sleep(0.3)
+    fill('#clone-url', 'file://' + os.path.realpath(ROOT + '/shop')); time.sleep(0.3)
+    check('create says it will clone first', 'clone and create factory' in text(), text()[-400:])
+    bridge("[...document.querySelectorAll('button')].find(b=>b.innerText.includes('clone and create factory')).click();return 1")
+    wait('it clones, then makes the factory', lambda: any(f['path'].endswith('/projects/shop') for f in inv('factories')), 40)
     print('EXIT', FAILS)
 except Exception:
     import traceback; traceback.print_exc(); FAILS.append('crashed')

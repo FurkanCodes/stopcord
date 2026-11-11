@@ -151,7 +151,7 @@ try:
     press('Escape'); time.sleep(0.5)
     t = text(); check('home says cards and line counts', 'cards' in t and 'canvas' not in t and 'on the line' in t and 'to start' in t, t[:800]); shot('ux-home-after')
     press('+'); time.sleep(0.6); t = text()
-    check('new factory opens the folder list and says why not', 'folders nearby' in t and 'choose a folder first' in t, t[:700]); shot('ux-new')
+    check('new factory opens the folder list and says why not', 'folders nearby' in t and 'choose a folder or clone a repo first' in t, t[:700]); shot('ux-new')
     check('harness comes from what is installed', bridge("return document.getElementById('nf-h').value.length>0"))
     press('Escape'); time.sleep(0.5)
     press(','); time.sleep(0.8); t = text(); check('settings copy', 'open integrations' in t and 'trust project folders' in t, t[:900]); shot('ux-settings')

@@ -373,7 +373,7 @@ export function Knowledge({ factory, file }: { factory: Factory; file?: string }
               })()}
             </div>
           )}
-          {canRender && rendered && <Markdown text={text} style={{ padding: '12px 14px 24px', maxWidth: '90ch' }} />}
+          {canRender && rendered && <Markdown text={text} style={{ padding: '12px 14px 24px' }} />}
           {canRender && !rendered && (
             <div style={{ display: 'flex', alignItems: 'flex-start', padding: '8px 0 24px', minWidth: 'max-content' }}>
               <pre aria-hidden="true" className="t-faint" style={{ padding: '0 12px 0 14px', flexShrink: 0, textAlign: 'right', fontSize: 13, lineHeight: 1.7, userSelect: 'none' }}>

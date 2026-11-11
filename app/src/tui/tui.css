@@ -846,9 +846,13 @@ textarea.t-field {
   border-top: 1px solid var(--line);
 }
 .t-md table {
-  display: block;
-  overflow-x: auto;
+  width: 100%;
   border-collapse: collapse;
+}
+/* A path or a name in a cell stays on one line: broken in the middle it can't be read. */
+.t-md td code,
+.t-md th code {
+  white-space: nowrap;
 }
 .t-md th,
 .t-md td {

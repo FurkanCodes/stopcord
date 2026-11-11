@@ -295,9 +295,8 @@ function SiteRequest({ text, onAnswer }: { text: string; onAnswer: (allow: boole
 
 /** A ticket's text. Sentry's is a raw stack trace, where Markdown would eat names like __init__. */
 function TicketBody({ item, muted }: { item: WorkItem; muted?: boolean }) {
-  const style = { maxWidth: '90ch' };
-  if (item.source.startsWith('sentry')) return <p className={muted ? 't-muted' : undefined} style={{ ...style, whiteSpace: 'pre-wrap', margin: 0 }}>{item.ticket.body}</p>;
-  return <Markdown text={item.ticket.body} breaks className={muted ? 't-muted' : undefined} style={style} />;
+  if (item.source.startsWith('sentry')) return <p className={muted ? 't-muted' : undefined} style={{ whiteSpace: 'pre-wrap', margin: 0 }}>{item.ticket.body}</p>;
+  return <Markdown text={item.ticket.body} breaks className={muted ? 't-muted' : undefined} />;
 }
 
 /** What's half written, by factory. Cancelling doesn't lose it. */
@@ -675,7 +674,7 @@ function Detail({ factory, item, runs, terminals, onSending, onSite }: { factory
 
         {open && w === 'question' && (
           <div style={{ border: '1px solid var(--red-line)', padding: '8px 10px', display: 'flex', flexDirection: 'column', gap: 4 }}>
-            <div style={{ color: 'var(--ink)', maxWidth: '90ch' }}>
+            <div style={{ color: 'var(--ink)' }}>
               {item.waiting === 'question' ? (
                 <>
                   {asked && `${speaker} asks: `}
@@ -696,7 +695,7 @@ function Detail({ factory, item, runs, terminals, onSending, onSite }: { factory
         {w === 'approve' && (
           <section aria-label="The plan">
             <h2 className="t-dim" style={{ fontSize: 12, fontWeight: 400, marginBottom: 4 }}>the plan</h2>
-            <div style={{ border: '1px solid var(--line-soft)', padding: '8px 10px', color: 'var(--ink)', maxWidth: '90ch' }}>
+            <div style={{ border: '1px solid var(--line-soft)', padding: '8px 10px', color: 'var(--ink)' }}>
               <Markdown text={evidence?.plan ?? item.summary ?? ''} />
               {evidence && !evidence.plan && !item.summary && <span className="t-dim">the planner didn't write a plan</span>}
             </div>
@@ -704,7 +703,7 @@ function Detail({ factory, item, runs, terminals, onSending, onSite }: { factory
         )}
 
         {w !== 'approve' && item.summary && (
-          <div style={{ maxWidth: '90ch' }}>
+          <div>
             <span className="t-dim">{speaker}: </span>
             <Markdown text={item.summary} breaks className="is-lead" />
           </div>
@@ -931,7 +930,7 @@ function SourceLine({ factory, p }: { factory: Factory; p: Factory['parts'][numb
 function StageNotes({ notes }: { notes: NonNullable<WorkItem['notes']> }) {
   const [open, setOpen] = useState(false);
   return (
-    <section aria-label="Notes from each stage" data-stage-notes style={{ maxWidth: '90ch', display: 'flex', flexDirection: 'column', gap: 6 }}>
+    <section aria-label="Notes from each stage" data-stage-notes style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
       <span>
         <Key size="xs" aria-expanded={open} onClick={() => setOpen(!open)}>
           <span aria-hidden="true">{open ? '▾' : '▸'}</span> notes from each stage · {notes.length}

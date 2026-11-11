@@ -40,6 +40,8 @@ export function NewFactory() {
   const [nearby, setNearby] = useState<FolderSuggestion[] | null>(null);
   const [pickerOpen, setPickerOpen] = useState(true);
   const [cloning, setCloning] = useState(false);
+  // A repo picked or pasted to clone. With no folder yet, creating clones it first.
+  const [repo, setRepo] = useState('');
   const [info, setInfo] = useState<ProjectInfo | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -85,8 +87,9 @@ export function NewFactory() {
     if (typeof picked === 'string') choose(picked);
   }
 
-  const whyNot = !folder.trim()
-    ? 'choose a folder first'
+  const willClone = !folder.trim() && cloning && !!repo.trim();
+  const whyNot = !folder.trim() && !willClone
+    ? cloning ? 'pick or paste a repo, or choose a folder' : 'choose a folder or clone a repo first'
     : links.length === 0
       ? 'pick a name to link as'
       : template === 'line' && !harness.trim()
@@ -101,9 +104,15 @@ export function NewFactory() {
     setBusy(true);
     setError(null);
     try {
+      let path = folder.trim();
+      if (willClone) {
+        path = await api.cloneRepo(repo.trim());
+        choose(path);
+        setCloning(false);
+      }
       const factory = from
-        ? await api.createFactory({ path: folder.trim(), name: name.trim(), template: 'line', readAs: links, from })
-        : await api.createFactory({ path: folder.trim(), name: name.trim(), template: template as 'open' | 'reviewed' | 'line', readAs: links, harness, reviewer, level });
+        ? await api.createFactory({ path, name: name.trim() || (path.split('/').pop() ?? ''), template: 'line', readAs: links, from })
+        : await api.createFactory({ path, name: name.trim() || (path.split('/').pop() ?? ''), template: template as 'open' | 'reviewed' | 'line', readAs: links, harness, reviewer, level });
       await refreshFactories();
       openFactory(factory.id, template === 'line' || from ? 'work' : 'overview');
     } catch (e) {
@@ -249,7 +258,7 @@ export function NewFactory() {
                 clone
               </Key>
             </div>
-            {cloning && <CloneRepo onCloned={(path) => { setCloning(false); choose(path); void api.nearbyFolders().then(setNearby, () => undefined); }} />}
+            {cloning && <CloneRepo repo={repo} setRepo={setRepo} onCloned={(path) => { setCloning(false); choose(path); void api.nearbyFolders().then(setNearby, () => undefined); }} />}
             {pickerOpen && (
               <div id="folder-picker" className="t-pane" style={{ margin: '14px 0 0 calc(9ch + 12px)', padding: '12px 0 6px' }}>
                 <span className="t-pane-title" style={{ left: 8 }}>
@@ -427,7 +436,7 @@ export function NewFactory() {
 
           <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8, paddingTop: 12, borderTop: '1px dashed var(--line-dash)' }}>
             <button type="submit" className="t-solid" disabled={!canCreate}>
-              {busy ? 'creating…' : '⏎ create factory'}
+              {busy ? (willClone ? 'cloning, then creating…' : 'creating…') : willClone ? '⏎ clone and create factory' : '⏎ create factory'}
             </button>
             <Key k="esc" onClick={() => go({ screen: 'home' })} style={{ height: 28 }}>
               cancel
@@ -450,9 +459,8 @@ export function NewFactory() {
 }
 
 /** Clones a repo from GitHub, or any git host, next to the person's other projects. */
-function CloneRepo({ onCloned }: { onCloned: (path: string) => void }) {
+function CloneRepo({ repo, setRepo, onCloned }: { repo: string; setRepo: (repo: string) => void; onCloned: (path: string) => void }) {
   const [mine, setMine] = useState<string[] | null>(null);
-  const [repo, setRepo] = useState('');
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState('');
   useEffect(() => {
