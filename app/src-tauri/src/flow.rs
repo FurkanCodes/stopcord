@@ -27,6 +27,17 @@ const REPORT_GRACE: Duration = Duration::from_secs(4);
 const TRUST_SETTLE: Duration = Duration::from_millis(1200);
 const TRUST_STEP: Duration = Duration::from_millis(250);
 
+/// What a gate says about a protected test the branch changed, until a person accepts it.
+const PROTECTED_CHANGED: &str = "This protected test was changed. The gate ran the base branch's copy.";
+
+/// A person accepted the work's test changes, and nothing since has changed a protected test again.
+/// Other commits, such as taking the plan out before a merge, keep the acceptance.
+fn tests_accepted(w: &WorkItem, protect: &[String]) -> bool {
+    !w.accepted_tests.is_empty()
+        && !w.worktree.is_empty()
+        && gate::changed_protected(Path::new(&w.worktree), &w.accepted_tests, protect).is_ok_and(|c| c.is_empty())
+}
+
 /// A person's action, the way the timeline says it.
 fn person_said(action: &str, key: &str, note: &str) -> String {
     let word = match action {
@@ -36,6 +47,7 @@ fn person_said(action: &str, key: &str, note: &str) -> String {
         "drop" => "dropped",
         "merge" => "asked to merge",
         "landed" => "marked as merged",
+        "acceptTests" => "accepted the test changes of",
         other => other,
     };
     let note = note.trim();
@@ -589,7 +601,8 @@ impl Engine {
     /// Runs a gate's checks on a clean snapshot of `dir`'s commit, made in `into`.
     pub(crate) fn checks_in(self: &Arc<Self>, f: &Factory, w: &WorkItem, stage: &LineStage, dir: &Path, into: &Path) -> (bool, String) {
         let project = PathBuf::from(&f.path);
-        let snap = match gate::snapshot(&project, dir, &w.base, &stage.protect, into) {
+        let protect = if tests_accepted(w, &stage.protect) { Vec::new() } else { stage.protect.clone() };
+        let snap = match gate::snapshot(&project, dir, &w.base, &protect, into) {
             Ok(s) => s,
             Err(e) => return (false, format!("{e:#}")),
         };
@@ -690,11 +703,11 @@ impl Engine {
             let w = item_of(&f, key)?.clone();
             let stage = f.line.iter().find(|s| s.id == stage_id)?.clone();
             let (passed, output) = self.gate_checks(&f, &w, &stage);
-            // A changed test is a person's business, whatever the result.
-            if let Ok(changed) = gate::changed_protected(Path::new(&w.worktree), &w.base, &stage.protect) {
+            // A changed test is a person's business, whatever the result, until they accept it.
+            if let Some(changed) = (!tests_accepted(&w, &stage.protect)).then(|| gate::changed_protected(Path::new(&w.worktree), &w.base, &stage.protect).ok()).flatten() {
                 let _ = self.store.update(factory, |fa| {
                     for file in &changed {
-                        let text = "This protected test was changed. The gate ran the base branch's copy.".to_string();
+                        let text = PROTECTED_CHANGED.to_string();
                         line::add_finding(
                             fa,
                             key,
@@ -1008,6 +1021,45 @@ impl Engine {
         Ok(())
     }
 
+    /// A person accepts the work's changes to protected tests: the ticket asked for them. From its
+    /// current commit on, gates run the branch's own tests, which still have to pass. A gate that
+    /// stopped the work runs again at once.
+    fn accept_tests(self: &Arc<Self>, factory: &str, f: &Factory, w: &WorkItem) -> Result<(), String> {
+        let key = w.ticket.key.clone();
+        if w.worktree.is_empty() {
+            return Err(format!("{key} has no worktree, so there are no test changes to accept"));
+        }
+        let patterns: Vec<String> = f.line.iter().filter(|s| s.kind == StageKind::Gate).flat_map(|s| s.protect.clone()).collect();
+        let changed = gate::changed_protected(Path::new(&w.worktree), &w.base, &patterns).map_err(|e| format!("{e:#}"))?;
+        if changed.is_empty() {
+            return Err(format!("{key} hasn't changed any protected test"));
+        }
+        let head = worktree::git(Path::new(&w.worktree), &["rev-parse", "HEAD"]).map_err(|e| format!("{e:#}"))?;
+        let _ = self.store.update(factory, |fa| {
+            if let Some(i) = fa.work.iter_mut().find(|i| i.ticket.key == key) {
+                i.accepted_tests = head.clone();
+                for finding in i.findings.iter_mut().filter(|x| x.text.starts_with(PROTECTED_CHANGED)) {
+                    finding.severity = "low".into();
+                    finding.text = "You accepted this change to a protected test, so the gates run the branch's copy.".into();
+                }
+            }
+        });
+        self.log(factory, Run::new("line", person_said("acceptTests", &key, "")).work(&w.id).by("person"));
+        let at_gate = f.line.iter().find(|s| s.id == w.line_stage).filter(|s| s.kind == StageKind::Gate).map(|s| s.id.clone());
+        if let (Some(stage), Waiting::Failed) = (at_gate, w.waiting) {
+            let _ = self.store.update(factory, |fa| {
+                if let Some(i) = fa.work.iter_mut().find(|i| i.ticket.key == key) {
+                    i.waiting = Waiting::No;
+                }
+            });
+            self.clear_alert(factory, &alert_key(&w.id));
+            let me = Arc::clone(self);
+            let fid = factory.to_string();
+            std::thread::spawn(move || me.run_gate(&fid, &key, &stage));
+        }
+        Ok(())
+    }
+
     /// A person acted on a work item from the window.
     pub fn work_action(self: &Arc<Self>, factory: &str, key: &str, action: &str, note: &str) -> Result<(), String> {
         let f = self.store.get(factory).map_err(|e| format!("{e:#}"))?;
@@ -1016,6 +1068,9 @@ impl Engine {
             return Err(format!("{key} has already ended"));
         }
         let guard = (factory.to_string(), key.to_string());
+        if action == "acceptTests" {
+            return self.accept_tests(factory, &f, &w);
+        }
         if action == "merge" && w.waiting != Waiting::Handoff {
             return Err(format!("{key} isn't ready to merge"));
         }
@@ -1102,10 +1157,29 @@ impl Engine {
         self.merge_status(factory, key, "merging".to_string());
         let how = stage_of(&f, &w).map(|s| s.merge.clone()).unwrap_or_default();
         let project = Path::new(&f.path);
+        // What stages kept only for each other, such as the plan, stays out of the project.
+        let kept: Vec<String> = f.line.iter().flat_map(|s| s.keep.clone()).collect();
+        if !kept.is_empty() && !w.worktree.is_empty() {
+            let target = worktree::git(project, &["rev-parse", "HEAD"]).unwrap_or_default();
+            match worktree::leave_out(Path::new(&w.worktree), &target, &kept, &format!("Leave {} out of the merge for {key}", kept.join(", "))) {
+                Ok(left) if !left.is_empty() => self.log(factory, Run::new("line", format!("{key}: left {} out of the merge", left.join(", "))).work(&w.id).by("engine")),
+                Err(e) => {
+                    say(format!("{key} couldn't merge: taking {} out of the branch failed: {e:#}", kept.join(", ")));
+                    return;
+                }
+                _ => {}
+            }
+        }
         if how.trim().is_empty() {
             if let Err(e) = worktree::git(project, &["merge", "--no-ff", "--no-edit", &w.branch]) {
+                let conflicts = worktree::git(project, &["diff", "--name-only", "--diff-filter=U"]).unwrap_or_default();
                 let _ = worktree::git(project, &["merge", "--abort"]);
-                say(format!("{key} couldn't merge, so nothing changed: {e:#}"));
+                if conflicts.trim().is_empty() {
+                    say(format!("{key} couldn't merge, so nothing changed: {e:#}"));
+                } else {
+                    let files: Vec<&str> = conflicts.lines().collect();
+                    say(format!("{key} conflicts with what's on the project's branch now, in {}, so nothing changed. Send it back so its builder brings the branch up to date.", files.join(", ")));
+                }
                 return;
             }
         } else {

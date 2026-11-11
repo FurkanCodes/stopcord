@@ -13,7 +13,9 @@ pub fn git(dir: &Path, args: &[&str]) -> Result<String> {
     if out.status.success() {
         Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
     } else {
-        bail!("{}", String::from_utf8_lossy(&out.stderr).trim())
+        // Some failures, such as a merge that conflicts, are told on stdout only.
+        let err = String::from_utf8_lossy(&out.stderr).trim().to_string();
+        bail!("{}", if err.is_empty() { String::from_utf8_lossy(&out.stdout).trim().to_string() } else { err })
     }
 }
 
@@ -147,6 +149,32 @@ pub fn commit_files(dir: &Path, files: &[String], message: &str) -> Result<bool>
     Ok(true)
 }
 
+/// Takes files the line only kept for its own stages, such as PLAN.md, back out of a branch before
+/// it's merged, so they never reach `target`: put back as `target` has them, or removed. Commits
+/// that on the branch, and says which files it touched.
+pub fn leave_out(dir: &Path, target: &str, files: &[String], message: &str) -> Result<Vec<String>> {
+    let mut touched = Vec::new();
+    for file in files {
+        if git(dir, &["cat-file", "-e", &format!("HEAD:{file}")]).is_err() {
+            continue;
+        }
+        let there = git(dir, &["cat-file", "-e", &format!("{target}:{file}")]).is_ok();
+        if there && git(dir, &["diff", "--quiet", target, "HEAD", "--", file]).is_ok() {
+            continue;
+        }
+        if there {
+            git(dir, &["checkout", target, "--", file])?;
+        } else {
+            git(dir, &["rm", "-q", "--", file])?;
+        }
+        touched.push(file.clone());
+    }
+    if !touched.is_empty() {
+        git(dir, &["commit", "-q", "--no-verify", "-m", message])?;
+    }
+    Ok(touched)
+}
+
 /// Removes a finished worktree, but only when nothing can be lost: it's still on
 /// `branch`, it has no uncommitted or untracked files, and the branch is merged
 /// into what the project has checked out. The branch itself stays. Returns
@@ -176,6 +204,32 @@ pub mod tests {
         let copy = holder.path().join("copies/plan");
         throwaway_copy(project.path(), &real, "t-1", &copy).unwrap();
         (project, holder, real, copy)
+    }
+
+    #[test]
+    fn the_plan_stays_out_of_a_merge_and_the_work_stays_in() {
+        let project = repo();
+        let holder = tempfile::tempdir().unwrap();
+        let wt = ensure(project.path(), &holder.path().join("trees"), "t-1").unwrap();
+        std::fs::write(wt.join("PLAN.md"), "the plan").unwrap();
+        std::fs::write(wt.join("work.txt"), "the work").unwrap();
+        git(&wt, &["add", "-A"]).unwrap();
+        git(&wt, &["commit", "-qm", "plan and work"]).unwrap();
+        let main = git(project.path(), &["rev-parse", "HEAD"]).unwrap();
+        assert_eq!(leave_out(&wt, &main, &["PLAN.md".into()], "leave it out").unwrap(), ["PLAN.md"]);
+        assert!(!wt.join("PLAN.md").exists() && wt.join("work.txt").exists());
+        assert!(leave_out(&wt, &main, &["PLAN.md".into()], "again").unwrap().is_empty(), "nothing left to take out");
+
+        // When the project already has one, the branch gets the project's copy back.
+        std::fs::write(project.path().join("PLAN.md"), "an old plan").unwrap();
+        git(project.path(), &["add", "-A"]).unwrap();
+        git(project.path(), &["commit", "-qm", "an old plan"]).unwrap();
+        let main = git(project.path(), &["rev-parse", "HEAD"]).unwrap();
+        std::fs::write(wt.join("PLAN.md"), "a new plan").unwrap();
+        git(&wt, &["add", "-A"]).unwrap();
+        git(&wt, &["commit", "-qm", "new plan"]).unwrap();
+        leave_out(&wt, &main, &["PLAN.md".into()], "leave it out").unwrap();
+        assert_eq!(std::fs::read_to_string(wt.join("PLAN.md")).unwrap(), "an old plan");
     }
 
     #[test]

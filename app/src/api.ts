@@ -313,7 +313,7 @@ export interface WorkItem {
   panel?: Panel | null;
 }
 
-export type WorkVerb = 'approve' | 'sendBack' | 'treatAsDone' | 'drop' | 'merge' | 'landed';
+export type WorkVerb = 'approve' | 'sendBack' | 'treatAsDone' | 'drop' | 'merge' | 'landed' | 'acceptTests';
 
 export interface DiffLine {
   kind: 'add' | 'del' | 'same' | 'gap';

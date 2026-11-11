@@ -459,6 +459,9 @@ pub struct WorkItem {
     pub stage_note: String,
     /// The commit it started from.
     pub base: String,
+    /// The commit at which a person accepted its changes to protected tests. While the branch is
+    /// still there, gates run the branch's own tests; a later commit needs accepting again.
+    pub accepted_tests: String,
     /// What scorers said. Shown at handoff and never decides anything.
     pub scores: Vec<Score>,
     /// Set when this item is a benchmark task.

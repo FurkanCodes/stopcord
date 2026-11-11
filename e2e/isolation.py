@@ -69,7 +69,8 @@ try:
     row('T-1'); time.sleep(0.6); press('m')
     must('T-1 merges', lambda: item('T-1')['stage'] == 'ended', 40)
     time.sleep(1.5)
-    check('the project has the real work', os.path.exists(R + '/work.txt') and os.path.exists(R + '/PLAN.md'), os.listdir(R))
+    check('the project has the real work', os.path.exists(R + '/work.txt'), os.listdir(R))
+    check("and not the plan, which only the line's stages needed", not os.path.exists(R + '/PLAN.md'), os.listdir(R))
     check('the project has none of the misbehaviour', not os.path.exists(R + '/planner-evil.txt') and not os.path.exists(R + '/reviewer-evil.txt') and open(R + '/a.txt').read() == 'x\n', os.listdir(R))
     left = os.listdir(copies() + '/' + item('T-1')['id']) if os.path.exists(copies() + '/' + item('T-1')['id']) else []
     check('the copies are deleted when the work ends', not left, left)

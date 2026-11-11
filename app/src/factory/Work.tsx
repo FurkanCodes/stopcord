@@ -595,6 +595,11 @@ function Detail({ factory, item, runs, terminals, onSending, onSite }: { factory
   const back: Verb = { k: 's', label: 'send back', run: () => setSending(true) };
   const terminalVerb: Verb | null = terms.length ? { k: 'o', label: 'open the terminal', run: () => openFactory(factory.id, 'terminals', item.terminal ?? terms[0]!.id) } : null;
 
+  // Tests the branch changed that a gate guards. When the ticket asked for that, a person accepts them.
+  const testChanges = findings.filter((f) => f.severity === 'high' && f.text.startsWith('This protected test was changed'));
+  const acceptTests: Verb = { k: 'T', label: `accept its test change${testChanges.length === 1 ? '' : 's'}`, run: () => void act('acceptTests'), primary: true };
+  const acceptSay = `it changed ${testChanges.map((f) => f.file).join(', ')}. accept if the ticket asked for that: the gates then run its own tests`;
+
   let verbs: Verb[] = [];
   let say = '';
   if (open && !item.merging) {
@@ -608,8 +613,10 @@ function Detail({ factory, item, runs, terminals, onSending, onSite }: { factory
       const merge: Verb = highs > 0
         ? { k: 'm', label: arm.armed === 'merge' ? 'press again to merge' : 'merge anyway', run: () => arm.press('merge', () => void act('merge')), off: blocked }
         : { k: 'm', label: item.mergeError ? 'try again' : label, run: () => void act('merge'), primary: !item.mergeError, off: blocked };
-      verbs = item.mergeError || blocked || highs > 0 ? [{ ...back, primary: true, label: 'send back' }, merge, ...(terminalVerb ? [terminalVerb] : []), drop] : [merge, back, drop];
-      say = blocked || item.mergeError ? '' : highs > 0 ? `${highs} high finding${highs === 1 ? '' : 's'}` : stage?.merge ? 'gates run again, then your merge command' : 'gates run once more before merging';
+      verbs = testChanges.length
+        ? [acceptTests, merge, back, drop]
+        : item.mergeError || blocked || highs > 0 ? [{ ...back, primary: true, label: 'send back' }, merge, ...(terminalVerb ? [terminalVerb] : []), drop] : [merge, back, drop];
+      say = testChanges.length ? acceptSay : blocked || item.mergeError ? '' : highs > 0 ? `${highs} high finding${highs === 1 ? '' : 's'}` : stage?.merge ? 'gates run again, then your merge command' : 'gates run once more before merging';
     } else if (w === 'question') {
       const answerIn: Verb = item.terminal
         ? { k: '⏎', label: 'answer in its terminal', run: () => openFactory(factory.id, 'terminals', item.terminal!), primary: true }
@@ -618,8 +625,10 @@ function Detail({ factory, item, runs, terminals, onSending, onSite }: { factory
       say = item.terminal ? 'you answer it where it asked' : 'its terminal is gone: send it back or mark it done';
     } else if (w === 'failed') {
       const gate = stage?.kind === 'gate';
+      if (gate && testChanges.length) say = acceptSay;
       verbs = [
-        { ...back, primary: true },
+        ...(gate && testChanges.length ? [acceptTests] : []),
+        { ...back, primary: !(gate && testChanges.length) },
         ...(gate ? [{ k: 'l', label: arm.armed === 'let' ? 'press again to skip this gate' : 'let it through', run: () => arm.press('let', () => void act('approve')) }] : []),
         ...(terminalVerb ? [terminalVerb] : []),
         drop,
