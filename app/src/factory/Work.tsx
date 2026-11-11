@@ -872,6 +872,8 @@ function FindingLine({ f }: { f: Finding }) {
   const where = f.file === 'worktree' ? '' : `${f.file}${f.line ? `:${f.line}` : ''} `;
   return (
     <>
+      {/* Which stage found it, so a reviewer's "no findings" never reads as contradicting what a gate found. */}
+      {f.stage && <span className="t-dim">{f.stage} · </span>}
       <span className={f.severity === 'high' ? 't-red' : 't-muted'}>{f.severity}</span> {f.kind === 'clear' && <span className="t-dim">clear fix </span>}
       {where && <span className="t-dim">{where}</span>}
       <Markdown text={f.text} breaks className="is-lead" />

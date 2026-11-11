@@ -33,6 +33,10 @@ pub struct Policy {
     /// `.git` of the main checkout, for a linked worktree. Only objects, refs, logs, worktrees, packed-refs,
     /// index and similar become writable. `hooks` and `config` stay read-only.
     pub git_common_dir: Option<PathBuf>,
+    /// The project's own branch, such as `main`. Work in a worktree can't move it: only a merge,
+    /// made outside the sandbox, does. Its ref and `packed-refs` stay read-only.
+    #[serde(default)]
+    pub protected_branch: Option<String>,
     pub home: PathBuf,
     /// Extra writable paths, such as a harness's own state folder.
     pub write: Vec<PathBuf>,
@@ -94,6 +98,7 @@ impl Policy {
         Policy {
             worktree,
             git_common_dir: None,
+            protected_branch: None,
             home,
             write,
             write_prefix: Vec::new(),

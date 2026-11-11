@@ -67,6 +67,17 @@ pub(crate) fn protected_git_paths(policy: &Policy) -> Vec<PathBuf> {
     if let Some(common) = &policy.git_common_dir {
         paths.push(common.join("hooks"));
         paths.push(common.join("config"));
+        // The project's branch moves by a merge, never from a worktree. Packed refs hold every branch
+        // at once, so they can't be written either; a branch's own commits only need its loose ref.
+        if let Some(branch) = policy.protected_branch.as_deref().filter(|b| !b.is_empty() && !b.contains("..")) {
+            let refs = common.join("refs/heads");
+            paths.push(refs.join(branch));
+            paths.push(refs.join(format!("{branch}.lock")));
+            paths.push(common.join("logs/refs/heads").join(branch));
+            for name in ["packed-refs", "packed-refs.lock", "packed-refs.new"] {
+                paths.push(common.join(name));
+            }
+        }
     }
     paths
 }

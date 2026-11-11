@@ -106,6 +106,48 @@ fn owner_name(path: &Path) -> String {
         .unwrap_or_else(|| "another factory".into())
 }
 
+/// The hook that keeps work in the factory's worktrees from moving the project's branch: only a merge,
+/// which Sawtooth makes in the project folder, may. Plain shell, so it holds even with the app gone.
+const GUARD: &str = "reference-transaction";
+
+fn guard_script(factory: &Factory, branch: &str, worktrees: &Path) -> String {
+    format!(
+        "#!/bin/sh\n{MARKER}\n# The Sawtooth factory \"{name}\" ({id}): work in its worktrees can't move {branch}.\n\
+         # {branch} changes by merging, in the project folder. Sawtooth rewrites this file.\n\
+         [ \"$1\" = prepared ] || exit 0\n\
+         case \"$(pwd -P)/\" in {trees}/*) ;; *) exit 0 ;; esac\n\
+         while read -r old new ref; do\n\
+         \x20 if [ \"$ref\" = {target} ]; then\n\
+         \x20   echo \"sawtooth: {branch} only changes by merging it in Sawtooth, not from a worktree.\" >&2\n\
+         \x20   exit 1\n\
+         \x20 fi\n\
+         done\n\
+         exit 0\n",
+        name = factory.name.replace('\n', " "),
+        id = quote(&factory.id),
+        trees = quote(&worktrees.canonicalize().unwrap_or_else(|_| worktrees.to_path_buf()).display().to_string()),
+        target = quote(&format!("refs/heads/{branch}")),
+    )
+}
+
+/// Puts the branch guard in place, or says why it couldn't. A repo's own hook of that name stays.
+fn install_guard(factory: &Factory, dir: &Path, home: &Path) -> Option<String> {
+    let project = Path::new(&factory.path);
+    let branch = git(project, &["branch", "--show-current"]).ok().filter(|b| !b.is_empty())?;
+    let path = dir.join(GUARD);
+    if path.exists() && !ours(&path) {
+        return Some(format!("This repo already has a {GUARD} hook, so Sawtooth couldn't add the one that stops agents moving {branch} from their worktrees."));
+    }
+    // Every factory's worktrees, so two factories in one repo share the one guard.
+    let trees = home.join("worktrees");
+    let _ = std::fs::create_dir_all(&trees);
+    let write = std::fs::create_dir_all(dir).and_then(|_| std::fs::write(&path, guard_script(factory, &branch, &trees))).and_then(|_| {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755))
+    });
+    write.err().map(|e| format!("couldn't write {}: {e}", path.display()))
+}
+
 /// Writes the hooks the factory's checks need and removes ours that it no longer needs.
 /// Returns problems in words. Outside git there's nothing to hook, so checks on commit can't run.
 pub fn install(factory: &Factory, program: &Path, home: &Path) -> Vec<String> {
@@ -179,6 +221,7 @@ pub fn install(factory: &Factory, program: &Path, home: &Path) -> Vec<String> {
             let _ = std::fs::remove_file(&path);
         }
     }
+    problems.extend(install_guard(factory, &dir, home));
     problems
 }
 
@@ -186,7 +229,7 @@ pub fn install(factory: &Factory, program: &Path, home: &Path) -> Vec<String> {
 pub fn uninstall(factory: &Factory) {
     let project = Path::new(&factory.path);
     if let Ok(dir) = hooks_dir(project) {
-        for (hook, _) in HOOKS {
+        for hook in HOOKS.iter().map(|(h, _)| *h).chain([GUARD]) {
             let path = dir.join(hook);
             if ours(&path)
                 && std::fs::read_to_string(&path).is_ok_and(|t| t.contains(&quote(&factory.id)))
@@ -424,6 +467,30 @@ mod tests {
 
     fn factory(store: &Store, path: &Path, parts: Vec<Part>) -> Factory {
         store.create(path, "demo", parts).unwrap()
+    }
+
+    #[test]
+    fn work_in_a_worktree_cant_move_the_projects_branch_but_a_merge_in_the_project_can() {
+        let repo = repo();
+        let home = tempfile::tempdir().unwrap();
+        let store = Store::new(home.path().to_path_buf());
+        let f = factory(&store, repo.path(), vec![]);
+        assert!(install(&f, Path::new("/no/such/app"), home.path()).is_empty());
+        let wt = crate::worktree::ensure(repo.path(), &store.worktrees_dir(&f.id), "t-1").unwrap();
+        std::fs::write(wt.join("work.txt"), "x").unwrap();
+        git(&wt, &["add", "-A"]).unwrap();
+        git(&wt, &["commit", "-qm", "work"]).expect("its own branch takes commits");
+        let main = git(repo.path(), &["rev-parse", "main"]).unwrap();
+        // Git refuses these itself while main is checked out in the project.
+        assert!(git(&wt, &["branch", "-f", "main", "HEAD"]).is_err());
+        assert!(git(&wt, &["push", ".", "HEAD:main"]).is_err());
+        // This one gets past git's own checks, so the guard is what stops it.
+        let e = git(&wt, &["update-ref", "refs/heads/main", "HEAD"]).unwrap_err().to_string();
+        assert!(e.contains("only changes by merging"), "{e}");
+        assert_eq!(git(repo.path(), &["rev-parse", "main"]).unwrap(), main, "main didn't move");
+        git(repo.path(), &["merge", "-q", "--no-ff", "--no-edit", "t-1"]).expect("a merge in the project still works");
+        uninstall(&f);
+        assert!(!common_dir(repo.path()).unwrap().join("hooks").join(GUARD).exists(), "removing the factory takes the guard");
     }
 
     #[test]

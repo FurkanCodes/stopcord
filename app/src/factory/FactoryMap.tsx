@@ -366,7 +366,7 @@ export function FactoryMap(props: FactoryMapProps) {
         aria-pressed={picked}
         aria-label={`${kindLabel[part.kind]}: ${part.name}, ${meta}${tag ? `, ${tag.text}` : ''}. Drag or use arrow keys to move it`}
         {...draggable(part.id, r)}
-        onClick={unlessDragged(() => onSelect(picked ? null : part.id))}
+        onClick={unlessDragged(() => onSelect(part.id))}
         className="t-node"
         style={{
           position: 'absolute',
@@ -558,7 +558,7 @@ export function FactoryMap(props: FactoryMapProps) {
                 aria-label="Sandbox. Drag or use arrow keys to move it"
                 aria-pressed={sbPicked}
                 {...sbDrag}
-                onClick={unlessDragged(() => onSelect(sbPicked ? null : SANDBOX_ID))}
+                onClick={unlessDragged(() => onSelect(SANDBOX_ID))}
                 style={{
                   position: 'absolute',
                   top: -10,
@@ -646,7 +646,7 @@ export function FactoryMap(props: FactoryMapProps) {
                   className="t-line"
                   aria-pressed={selected === d.id}
                   aria-label={`${d.name}, not started. Opens it to start`}
-                  onClick={() => onSelect(selected === d.id ? null : d.id)}
+                  onClick={() => onSelect(d.id)}
                   style={{
                     display: 'flex',
                     flexDirection: 'column',

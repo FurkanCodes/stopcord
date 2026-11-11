@@ -125,6 +125,8 @@ pub fn policy_for(
 ) -> Policy {
     let mut p = Policy::new(cwd.to_path_buf(), home.to_path_buf(), program.to_path_buf());
     p.git_common_dir = crate::worktree::common_dir(cwd);
+    // Whatever the project has checked out moves only by a merge, which Sawtooth makes outside the sandbox.
+    p.protected_branch = crate::worktree::git(Path::new(&factory.path), &["branch", "--show-current"]).ok().filter(|b| !b.is_empty());
     if let Some(h) = harness {
         p.write.extend(h.write.iter().map(|w| home.join(w)));
         p.write_prefix.extend(h.write_prefix.iter().map(|w| home.join(w)));
