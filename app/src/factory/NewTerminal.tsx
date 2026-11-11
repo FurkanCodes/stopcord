@@ -4,7 +4,7 @@
 import { useState } from 'react';
 import { api, type Factory } from '../api';
 import { lastSize } from '../TerminalPane';
-import { enterWhenShown, openFactory, putTerminal, queueTask, setState, showProblem, terminalsIn, useStore, type Draft } from '../store';
+import { enterWhenShown, openFactory, putTerminal, setState, showProblem, terminalsIn, useStore, type Draft } from '../store';
 import { ArmedKey, FieldRow } from '../tui/kit';
 import { branchFrom } from './parts';
 import { HarnessPick, Section } from './SidePane';
@@ -62,7 +62,9 @@ export function NewTerminal({ factory, draft, git, onDiscard }: { factory: Facto
         selected: null,
       }));
       // With a task it gets to work; without one, the keys go straight in so you can type.
-      if (task) queueTask(t.id, task);
+      // The backend waits until the agent has sat ready for a moment: typed sooner, a harness still
+      // starting can clear it.
+      if (task) void api.typeTask(t.id, task).catch(showProblem);
       else enterWhenShown(t.id);
       openFactory(factory.id, 'terminals', t.id);
     } catch (e) {

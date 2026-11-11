@@ -727,6 +727,12 @@ fn suggest_start(engine: State<'_, Arc<Engine>>, id: String, key: String) -> Res
     engine.suggest_start(&id, &key).map_err(|e| Failure::new("suggest", e))
 }
 
+/// Types a person's first ask into a terminal they just started, once its agent is ready for it.
+#[tauri::command(async)]
+fn type_task(engine: State<'_, Arc<Engine>>, id: String, task: String) -> Result<(), Failure> {
+    engine.type_task(&id, &task).map_err(|e| Failure::new("terminal", e))
+}
+
 #[tauri::command(async)]
 fn work_action(
     app: State<'_, App>,
@@ -1219,6 +1225,7 @@ fn main() {
             clone_repo,
             detect_project,
             work_action,
+            type_task,
             work_evidence,
             accept_proposal,
             reject_proposal,

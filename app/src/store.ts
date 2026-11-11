@@ -3,7 +3,7 @@
 
 import { useSyncExternalStore } from 'react';
 import { listen } from '@tauri-apps/api/event';
-import { api, daemon, failureText, sendLine, type Changes, type Factory, type Run, type Terminal } from './api';
+import { api, daemon, failureText, type Changes, type Factory, type Run, type Terminal } from './api';
 
 export type LampState = 'working' | 'needs' | 'idle';
 export type Tab = 'work' | 'overview' | 'terminals' | 'knowledge' | 'runs' | 'setup';
@@ -160,33 +160,6 @@ export function newDraft(factoryId: string): Draft {
   };
   setState((st) => ({ drafts: { ...st.drafts, [factoryId]: [...(st.drafts[factoryId] ?? []), draft] }, selected: draft.id }));
   return draft;
-}
-
-// ---- A first task, typed in once the agent is ready -------------------------
-
-const pendingTasks = new Map<string, { text: string; since: number }>();
-
-/** Types `text` into a new terminal once its agent shows its prompt (or soon, for a shell). */
-export function queueTask(id: string, text: string) {
-  if (!text.trim()) return;
-  pendingTasks.set(id, { text: text.trim(), since: Date.now() });
-  const poll = () => {
-    deliverTask(id);
-    if (pendingTasks.has(id)) setTimeout(poll, 400);
-  };
-  setTimeout(poll, 400);
-}
-
-function deliverTask(id: string) {
-  const job = pendingTasks.get(id);
-  const t = state.terminals[id];
-  if (!job) return;
-  const waited = Date.now() - job.since;
-  const ready = t && (t.agent ? t.state === 'idle' && waited > 1200 : waited > 1500);
-  if (!ready && waited < 30_000) return;
-  pendingTasks.delete(id);
-  if (!t || t.state === 'exited') return;
-  void sendLine(id, job.text).catch(showProblem);
 }
 
 /** Asks the terminals screen to put the keys straight into this terminal once it shows. */

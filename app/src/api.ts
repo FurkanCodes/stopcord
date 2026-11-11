@@ -662,6 +662,8 @@ export const api = {
   /** Installs Docker Desktop with Homebrew in a terminal of its own. */
   installDocker: () => invoke<unknown>('install_docker'),
   harnesses: () => invoke<HarnessProfile[]>('harnesses'),
+  /** Types a first ask into a terminal once its agent is steadily ready, and retries once if it was dropped. */
+  typeTask: (id: string, task: string) => invoke<void>('type_task', { id, task }),
   harnessModels: (id: string) => invoke<string[]>('harness_models', { id }),
   saveHarness: (harness: HarnessProfile) => invoke<void>('save_harness', { harness }),
   nearbyFolders: () => invoke<FolderSuggestion[]>('nearby_folders'),

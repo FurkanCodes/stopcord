@@ -35,6 +35,7 @@ No test calls a model unless you ask for `real_answer`, which spends quota. Each
 | `remove_factory` | Removing a factory asks what to take with it: its terminals, worktrees, branches (merged ones ticked, unmerged ones not), keys and files. What's ticked goes; unmerged work, shared sign-ins and the project stay |
 | `new_factory` | New factory picks harness, model and effort from dropdowns for the builder and the reviewer, and the factory's agents run what was picked |
 | `clone_repo` | New factory clones a repo by its link into the projects folder and fills in the folder; a link that isn't a repo, or a folder already there, says so. A local repo stands in for GitHub |
+| `first_ask` | A new terminal's first ask reaches an agent that drops what's typed while it starts, as Claude Code clears its input box, and arrives once |
 | `markdown`, `logos`, `terminal` | Rendering |
 
 ## Stand-in agents

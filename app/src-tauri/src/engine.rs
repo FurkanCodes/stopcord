@@ -803,6 +803,20 @@ impl Engine {
             .type_prompt(&self.bridge, id, prompt, &self.name_of(id), &|| ())
     }
 
+    /// Types a person's first ask into a terminal they just started, once its agent is steadily
+    /// ready. A harness still settling can clear what was typed, so when Enter starts no turn and
+    /// the ask isn't on the screen, it's typed once more. On the screen means the agent is just slow.
+    pub fn type_task(&self, id: &str, task: &str) -> Result<(), String> {
+        match self.type_prompt(id, task) {
+            Err(e) if e.contains("didn't start on it") => {
+                let start: String = task.trim().chars().take(40).collect();
+                let shown = self.bridge.call("terminal.read", json!({ "id": id, "lines": 60 })).ok().and_then(|s| s["text"].as_str().map(|t| t.contains(start.as_str())));
+                if shown == Some(true) { Ok(()) } else { self.type_prompt(id, task) }
+            }
+            r => r,
+        }
+    }
+
     /// Types a prompt and counts the turn it starts as the engine's own. The mark goes on
     /// only at the moment of typing: put on while waiting, it'd be used up by the turn
     /// still running, and the engine's own turn would look like a person's.
