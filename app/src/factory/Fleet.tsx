@@ -1,7 +1,7 @@
 // Every terminal in every factory, one live terminal, and what it's doing:
 // how long it's run, where it is in the loop, and the files it changed.
 
-import { useEffect, useState, type FormEvent } from 'react';
+import { useEffect, useState } from 'react';
 import { listen } from '@tauri-apps/api/event';
 import { invoke } from '@tauri-apps/api/core';
 import { api, daemon, sendLine, type Changes, type Factory, type Run, type Terminal, type Touched } from '../api';
@@ -441,17 +441,10 @@ function Current({
   onRename: (name: string) => void;
   typing: boolean;
 }) {
-  const [line, setLine] = useState('');
   const [name, setName] = useState(renaming ?? t.name);
   useEffect(() => setName(renaming ?? t.name), [renaming, t.name]);
   const status = lampOf(t);
   const needs = t.needs_you;
-
-  const send = (text: string, done: () => void) => (e: FormEvent) => {
-    e.preventDefault();
-    if (!text.trim()) return;
-    void sendLine(t.id, text).then(done, (err) => showProblem(err));
-  };
 
   return (
     <Pane
@@ -516,19 +509,6 @@ function Current({
         <TerminalPane id={t.id} label={`Terminal: ${t.name}`} focusKey={focusKey} onLeave={onLeave} />
       </div>
 
-      <form onSubmit={send(line, () => setLine(''))} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 14px', borderTop: '1px solid var(--line-soft)' }}>
-        <label htmlFor="term-input" className="t-dim">
-          $<span className="sr-only">Type into {t.name}</span>
-        </label>
-        <input
-          id="term-input"
-          className="t-bare" spellCheck={false}
-          style={{ flexGrow: 1, height: 26 }}
-          placeholder="type a line into this terminal · ⏎ sends it"
-          value={line}
-          onChange={(e) => setLine(e.currentTarget.value)}
-        />
-      </form>
     </Pane>
   );
 }

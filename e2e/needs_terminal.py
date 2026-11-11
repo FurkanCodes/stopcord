@@ -17,6 +17,7 @@ try:
     check('the terminal itself turns red', bridge(f"return {pane}?.classList.contains('is-hot')"), bridge(f"return {pane}?.className"))
     check('and says it is waiting for you', 'waiting for you' in text())
     check('with no second box to answer in', not bridge("return !!document.querySelector('#answer')") and 'type an answer' not in text())
+    check('and no line box under the terminal either', not bridge("return !!document.querySelector('#term-input')") and 'type a line' not in text())
     shot('needs-terminal')
     print('EXIT', FAILS)
 except Exception:
