@@ -78,7 +78,7 @@ try:
     # The fake stands in for sentry.io, so Sentry's API calls go there too.
     inv('set_connection_field', connection='sentry', name='SENTRY_URL', value=FAKE)
     stop(); launch(); time.sleep(1.5)
-    press('i'); time.sleep(1.2)
+    press('i'); time.sleep(1.2); integration('sentry')
     card = lambda id: bridge(f"return document.querySelector('[data-integration=\"{id}\"]')?.innerText||''")
     secret = lambda name: os.path.exists(f'{H}/secrets/{name}')
 
@@ -99,6 +99,7 @@ try:
     shot('oauth-sentry')
 
     # Linear: one press, the browser comes back to sawtooth, and the code needs the right verifier.
+    integration('linear')
     wait('linear offers to sign in in the browser', lambda: 'sign in with linear' in card('linear'))
     click_in('linear', 'sign in with linear')
     wait('it waits for the browser', lambda: 'approve it in your browser' in card('linear'))
@@ -126,6 +127,7 @@ try:
     wait('signing out goes back to the sign-in button', lambda: 'sign in with linear' in card('linear'))
     check('and forgets the tokens', not secret('connection.linear.oauth.access') and not secret('connection.linear.oauth.refresh'))
     # Either way stays open: switch Sentry from the browser sign-in to a pasted token.
+    integration('sentry')
     bridge("[...document.querySelectorAll('[data-integration=\"sentry\"] [data-step=\"1\"] button')].find(b=>b.innerText.trim()==='change').click();return 1"); time.sleep(0.4)
     click_in('sentry', 'use a token instead')
     wait('the paste side says it replaces the sign-in', lambda: 'signs you out of the browser sign-in' in card('sentry'))

@@ -40,7 +40,7 @@ export function App() {
       {route.screen === 'home' && <Home onSearch={() => setOverlay('search')} />}
       {route.screen === 'new' && <NewFactory />}
       {route.screen === 'settings' && <MachineSettings />}
-      {route.screen === 'integrations' && <Integrations />}
+      {route.screen === 'integrations' && <Integrations service={route.service} />}
       {route.screen === 'factory' && <FactoryScreen key={route.id} id={route.id} onSearch={() => setOverlay('search')} />}
       {overlay === 'search' && <Search onClose={() => setOverlay(null)} />}
       {overlay === 'help' && <Help onClose={() => setOverlay(null)} />}

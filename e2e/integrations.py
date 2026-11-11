@@ -43,15 +43,18 @@ try:
     stop(); launch(); time.sleep(1.5)
 
     press('i'); time.sleep(1.2)
-    cards = lambda: bridge("return [...document.querySelectorAll('[data-integration]')].map(e=>e.dataset.integration)")
-    wait('i on home opens integrations, with a card for each service', lambda: cards() == ['github', 'sentry', 'linear', 'slack'])
+    services = lambda: bridge("return [...document.querySelectorAll('[data-service]')].map(e=>e.dataset.service)")
+    wait('i on home opens integrations, with every service listed on the left', lambda: services() == ['github', 'sentry', 'linear', 'slack'])
     card = lambda id: bridge(f"return document.querySelector('[data-integration=\"{id}\"]')?.innerText||''")
     state = lambda id: bridge(f"return document.querySelector('[data-integration-state=\"{id}\"]')?.innerText||''")
+    integration('slack')
+    check('slack starts at making the app', 'copy the manifest' in card('slack'), card('slack')[:300])
+    check('one service shows at a time', not card('sentry'))
+    integration('sentry')
     check('sentry starts as not set up', 'not set up' in state('sentry'), state('sentry'))
     # Signing in in the browser comes first; this test takes the other way, a pasted token.
     bridge("const b=[...document.querySelectorAll('[data-integration=\"sentry\"] button')].find(b=>b.innerText.trim()==='or paste a token');if(b)b.click();return 1"); time.sleep(0.4)
     check('its first step says exactly what to make', 'event:read, project:read and org:read' in card('sentry'), card('sentry')[:300])
-    check('slack starts at making the app', 'copy the manifest' in card('slack'), card('slack')[:300])
 
     # Self-hosted, so the fake answers. Then the token: that's the only thing typed.
     bridge("[...document.querySelectorAll('[data-integration=\"sentry\"] button')].find(b=>b.innerText.includes('self-hosted')).click();return 1"); time.sleep(0.4)
@@ -76,6 +79,7 @@ try:
     wait('and the factory says it is ready to pull', lambda: 'ready' in card('sentry'))
     shot('integrations-sentry')
 
+    integration('github')
     gh = card('github')
     check('github says whether gh is signed in, with nothing to paste', 'signed in to gh' in gh or 'gh auth login' in gh, gh[:300])
     if 'signed in to gh' in gh:
@@ -91,7 +95,7 @@ try:
     cline = bridge("return document.querySelector('#src-cn-sentry')?.innerText||''")
     check("the factory's setup shows the same source, signed in once for every factory", 'set once for every factory' in cline, cline)
 
-    press('Escape'); time.sleep(0.5); press('i'); time.sleep(1)
+    press('Escape'); time.sleep(0.5); press('i'); time.sleep(1); integration('sentry')
     bridge(f"document.querySelector('#ig-f-sentry-{fid}').click();return 1"); time.sleep(1.2)
     check('unticking takes the source out again', part() is None, part())
     print('EXIT', FAILS)

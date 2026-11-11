@@ -64,6 +64,9 @@ def setup_section(name):
     """Opens one section of a factory's setup from its list on the left: general, integrations, sources, line, agents,
     scorers, sandboxes, skills, benchmarks, notifications or template. Setup remembers the last one."""
     bridge(f"document.querySelector('[data-setup-section=\"{name}\"]')?.click();return 1"); time.sleep(0.5)
+def integration(name):
+    """Opens one service on the integrations page from its list on the left: github, sentry, linear or slack."""
+    bridge(f"document.querySelector('[data-service=\"{name}\"]')?.click();return 1"); time.sleep(0.6)
 def fill(sel, v):
     bridge(f"const e=document.querySelector({json.dumps(sel)});const p=e.tagName==='TEXTAREA'?HTMLTextAreaElement.prototype:HTMLInputElement.prototype;Object.getOwnPropertyDescriptor(p,'value').set.call(e,{json.dumps(v)});e.focus();e.dispatchEvent(new Event('input',{{bubbles:true}}));return 1"); time.sleep(0.4)
 

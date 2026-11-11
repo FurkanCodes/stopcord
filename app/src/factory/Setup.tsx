@@ -505,7 +505,7 @@ function Notifications({ factory, set }: { factory: Factory; set: (patch: Partia
       heading={2}
       right={
         <span style={{ display: 'inline-flex', gap: 6 }}>
-          {channels ? <Key size="xs" onClick={() => add('slack')}>+ a slack channel</Key> : <Key size="xs" title="Slack is set up once, for every factory" onClick={() => go({ screen: 'integrations' })}>set up slack ›</Key>}
+          {channels ? <Key size="xs" onClick={() => add('slack')}>+ a slack channel</Key> : <Key size="xs" title="Slack is set up once, for every factory" onClick={() => go({ screen: 'integrations', service: 'slack' })}>set up slack ›</Key>}
           <Key size="xs" onClick={() => add('command')}>+ a command</Key>
         </span>
       }
@@ -815,7 +815,7 @@ function ConnectionLine({ id, name, c }: { id: string; name: string; c?: Connect
                 ? `your ${c.name} connection: ${c.how}`
                 : `your ${c.name} connection, set once for every factory`}
         </ConnectionState>
-        <Key size="xs" onClick={() => go({ screen: 'integrations' })}>{missing.length > 0 ? 'set it up in integrations' : 'integrations'}</Key>
+        <Key size="xs" onClick={() => go({ screen: 'integrations', service: c?.id ?? name })}>{missing.length > 0 ? 'set it up in integrations' : 'integrations'}</Key>
       </span>
     </FieldRow>
   );

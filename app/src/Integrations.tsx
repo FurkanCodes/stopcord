@@ -4,8 +4,8 @@ import { ConnectionState } from './Connections';
 import { sourceState, useSourceReady } from './factory/sourceState';
 import { go, refreshFactories, saveNow, showProblem, useStore } from './store';
 import { ago } from './time';
-import { Brand, Check, Key, Pane, Screen, Sep } from './tui/kit';
-import { useKeys } from './tui/keys';
+import { Brand, Check, Key, Pane, Screen, Sep, Titled } from './tui/kit';
+import { plain, useKeys } from './tui/keys';
 import { Logo } from './tui/Logo';
 
 const paneStyle: CSSProperties = { padding: '14px 12px 12px', maxWidth: 860, width: '100%', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 10 };
@@ -57,6 +57,7 @@ function useIntegrations(only?: string, rows = false) {
   return { ctx, message };
 }
 
+/** Every service, one row each, for a factory's setup. */
 function Cards({ ctx }: { ctx: Ctx }) {
   const find = (id: string) => ctx.connections.find((c) => c.id === id);
   return (
@@ -69,19 +70,53 @@ function Cards({ ctx }: { ctx: Ctx }) {
   );
 }
 
+// The service last open, kept per window for convenience only: without it, the page opens on the first.
+const SERVICE = 'sawtooth.integrations.service';
+function serviceWas(): string {
+  try {
+    return localStorage.getItem(SERVICE) ?? '';
+  } catch {
+    return '';
+  }
+}
+function rememberService(id: string) {
+  try {
+    localStorage.setItem(SERVICE, id);
+  } catch {
+    // Nothing kept: it opens on the first service next time.
+  }
+}
+
 /**
  * One place to set up every outside service: sign in once, pick what comes in, and pick the
- * factories it goes to. Each card walks through its steps in order and ticks them off, so nobody
- * needs a guide.
+ * factories it goes to. The services are listed on the left, like a factory's setup, and one shows
+ * at a time; each walks through its steps in order and ticks them off, so nobody needs a guide.
  */
-export function Integrations() {
+export function Integrations({ service }: { service?: string }) {
   const { ctx, message } = useIntegrations();
+  const find = (id: string) => ctx?.connections.find((c) => c.id === id);
+  const services: [string, string][] = [['github', 'GitHub'], ...(['sentry', 'linear', 'slack'] as const).filter((id) => find(id)).map((id): [string, string] => [id, find(id)!.name])];
+  const [picked, setPicked] = useState(() => service || serviceWas());
+  const here = services.some(([id]) => id === picked) ? picked : 'github';
+  const open = (id: string) => {
+    setPicked(id);
+    rememberService(id);
+  };
+  useEffect(() => {
+    if (service) rememberService(service);
+  }, [service]);
   useKeys((e) => {
     if (e.key === 'Escape') {
       go({ screen: 'home' });
       return true;
     }
   }, { priority: -1 });
+  useKeys((e) => {
+    if (!plain(e) || (e.key !== 'j' && e.key !== 'k')) return;
+    const i = services.findIndex(([id]) => id === here);
+    open(services[Math.max(0, Math.min(services.length - 1, i + (e.key === 'j' ? 1 : -1)))]![0]);
+    return true;
+  });
   const header = (
     <>
       <Brand />
@@ -91,18 +126,43 @@ export function Integrations() {
       <Key k="esc" onClick={() => go({ screen: 'home' })}>back</Key>
     </>
   );
+  const name = services.find(([id]) => id === here)?.[1] ?? here;
   return (
-    <Screen header={header} bodyStyle={{ overflow: 'auto', padding: '16px 8px 10px', display: 'flex', flexDirection: 'column', gap: 18 }} hints={[['esc', 'back']]} status={{ mode: 'INTEGRATIONS', path: 'this machine', info: message }}>
-      {!ctx ? (
-        <p className="t-dim" style={{ padding: 20 }}>loading…</p>
-      ) : (
-        <>
-          <p className="t-muted" style={{ ...paneStyle, padding: '0 12px' }}>
-            sign in to a service once here, and pick which factories its work goes to. tokens stay on this machine, in sawtooth's secrets.
-          </p>
-          <Cards ctx={ctx} />
-        </>
-      )}
+    <Screen
+      header={header}
+      bodyStyle={{ flexDirection: 'row', gap: 8, alignItems: 'stretch', padding: '12px 8px 8px', overflow: 'hidden' }}
+      hints={[['j/k', 'services'], ['esc', 'back']]}
+      status={{ mode: 'INTEGRATIONS', path: `this machine/${name.toLowerCase()}`, info: message }}
+    >
+      <Pane as="nav" aria-label="Services" title={<Titled>services</Titled>} scroll style={{ flex: '0 0 220px', minHeight: 0, maxHeight: '100%', overflow: 'auto', padding: '14px 4px 10px' }}>
+        <ul>
+          {services.map(([id, label]) => (
+            <li key={id}>
+              <button type="button" data-service={id} className="t-row" aria-current={here === id ? 'page' : undefined} aria-pressed={here === id} onClick={() => open(id)} style={{ gap: 8, padding: '2px 8px' }}>
+                <span aria-hidden="true" style={{ width: 10, flexShrink: 0 }}>
+                  {here === id ? '›' : ' '}
+                </span>
+                <Logo name={id} size={12} />
+                <span style={{ flexGrow: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{label.toLowerCase()}</span>
+              </button>
+            </li>
+          ))}
+        </ul>
+        <p className="t-dim" style={{ margin: '14px 8px 0', paddingTop: 8, borderTop: '1px dashed var(--line-dash)', fontSize: 12 }}>
+          sign in once here, and pick which factories its work goes to. tokens stay on this machine, in sawtooth&apos;s secrets.
+        </p>
+      </Pane>
+      <div data-integrations-main style={{ flex: '1 1 0', minWidth: 0, minHeight: 0, overflow: 'auto', display: 'flex', flexDirection: 'column', gap: 18, padding: '2px 4px 10px' }}>
+        {!ctx ? (
+          <p className="t-dim" style={{ padding: 20 }}>loading…</p>
+        ) : here === 'github' ? (
+          <GitHubCard ctx={ctx} />
+        ) : here === 'slack' ? (
+          <SlackCard ctx={ctx} c={find('slack')!} />
+        ) : (
+          <TrackerCard key={here} ctx={ctx} c={find(here)!} />
+        )}
+      </div>
     </Screen>
   );
 }
@@ -733,7 +793,7 @@ function SlackCard({ ctx, c }: { ctx: Ctx; c: Connection }) {
     ) : (
       state
     );
-    return <Card id="slack" name="Slack" rows state={rowState} action={working ? null : <Key size="xs" onClick={() => go({ screen: 'integrations' })}>set up in integrations</Key>} />;
+    return <Card id="slack" name="Slack" rows state={rowState} action={working ? null : <Key size="xs" onClick={() => go({ screen: 'integrations', service: 'slack' })}>set up in integrations</Key>} />;
   }
 
   return (
