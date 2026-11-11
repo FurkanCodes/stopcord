@@ -665,6 +665,9 @@ export const api = {
   harnessModels: (id: string) => invoke<string[]>('harness_models', { id }),
   saveHarness: (harness: HarnessProfile) => invoke<void>('save_harness', { harness }),
   nearbyFolders: () => invoke<FolderSuggestion[]>('nearby_folders'),
+  githubRepos: () => invoke<string[]>('github_repos'),
+  /** Clones a GitHub link, owner/repo or git URL next to the person's projects, and returns the folder. */
+  cloneRepo: (repo: string) => invoke<string>('clone_repo', { repo }),
   detectProject: (path: string) => invoke<ProjectInfo>('detect_project', { path }),
   installed: (names: string[]) => invoke<string[]>('installed', { names }),
   branch: (path: string) => invoke<string | null>('branch', { path }),

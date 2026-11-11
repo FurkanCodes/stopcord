@@ -40,6 +40,7 @@ TESTS = [
     ('asks', []),
     ('remove_factory', []),
     ('new_factory', []),
+    ('clone_repo', []),
     ('terminal', []),
 ]
 ON_REQUEST = [('real_answer', [])]

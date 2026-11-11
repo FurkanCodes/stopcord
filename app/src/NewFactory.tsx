@@ -39,6 +39,7 @@ export function NewFactory() {
   const [links, setLinks] = useState<string[]>(['AGENTS.md', 'CLAUDE.md']);
   const [nearby, setNearby] = useState<FolderSuggestion[] | null>(null);
   const [pickerOpen, setPickerOpen] = useState(true);
+  const [cloning, setCloning] = useState(false);
   const [info, setInfo] = useState<ProjectInfo | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -128,6 +129,12 @@ export function NewFactory() {
     if (!plain(e)) return;
     if (e.key === 'o') {
       setPickerOpen((p) => !p);
+      setCloning(false);
+      return true;
+    }
+    if (e.key === 'g') {
+      setCloning((c) => !c);
+      setPickerOpen(false);
       return true;
     }
   });
@@ -188,7 +195,7 @@ export function NewFactory() {
       bodyStyle={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', alignItems: 'flex-start', gap: '18px 10px', overflow: 'auto', padding: '18px 8px 10px' }}
       hints={[
         ['tab', 'next field'],
-        ['o', 'choose a folder'],
+        ['o', 'choose a folder'], ['g', 'clone a repo'],
         ['⌘O', 'browse'],
         ['space', 'pick'],
         ['⏎', 'create'],
@@ -235,10 +242,14 @@ export function NewFactory() {
                   if (!nameTouched) setName(v.split('/').filter(Boolean).pop() ?? '');
                 }}
               />
-              <Key k="o" expanded={pickerOpen} aria-controls="folder-picker" onClick={() => setPickerOpen(!pickerOpen)}>
+              <Key k="o" expanded={pickerOpen} aria-controls="folder-picker" onClick={() => { setPickerOpen(!pickerOpen); setCloning(false); }}>
                 choose
               </Key>
+              <Key k="g" expanded={cloning} aria-controls="clone-repo" onClick={() => { setCloning(!cloning); setPickerOpen(false); }}>
+                clone
+              </Key>
             </div>
+            {cloning && <CloneRepo onCloned={(path) => { setCloning(false); choose(path); void api.nearbyFolders().then(setNearby, () => undefined); }} />}
             {pickerOpen && (
               <div id="folder-picker" className="t-pane" style={{ margin: '14px 0 0 calc(9ch + 12px)', padding: '12px 0 6px' }}>
                 <span className="t-pane-title" style={{ left: 8 }}>
@@ -435,5 +446,71 @@ export function NewFactory() {
         </p>
       </Pane>
     </Screen>
+  );
+}
+
+/** Clones a repo from GitHub, or any git host, next to the person's other projects. */
+function CloneRepo({ onCloned }: { onCloned: (path: string) => void }) {
+  const [mine, setMine] = useState<string[] | null>(null);
+  const [repo, setRepo] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [problem, setProblem] = useState('');
+  useEffect(() => {
+    api.githubRepos().then(setMine, () => setMine([]));
+  }, []);
+  const name = repo.trim().replace(/\/+$/, '').replace(/\.git$/, '').split(/[/:]/).pop() ?? '';
+  async function start() {
+    if (!repo.trim() || busy) return;
+    setBusy(true);
+    setProblem('');
+    try {
+      onCloned(await api.cloneRepo(repo.trim()));
+    } catch (e) {
+      setProblem(failureText(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <div id="clone-repo" data-clone className="t-pane" style={{ margin: '14px 0 0 calc(9ch + 12px)', padding: '14px 12px 10px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+      <span className="t-pane-title" style={{ left: 8 }}>
+        clone a repo
+      </span>
+      {mine && mine.length > 0 && (
+        <select id="clone-mine" className="t-field" value={mine.includes(repo) ? repo : ''} onChange={(e) => setRepo(e.currentTarget.value)}>
+          <option value="">your repos on GitHub ({mine.length})</option>
+          {mine.map((r) => (
+            <option key={r} value={r}>{r}</option>
+          ))}
+        </select>
+      )}
+      <input
+        id="clone-url"
+        className="t-field"
+        spellCheck={false}
+        autoFocus
+        value={repo}
+        placeholder={mine?.length ? 'or paste a link: github.com/owner/repo, owner/repo, any git URL' : 'github.com/owner/repo, owner/repo, or any git URL'}
+        onChange={(e) => {
+          setRepo(e.currentTarget.value);
+          setProblem('');
+        }}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            void start();
+          }
+        }}
+      />
+      <span style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+        <button type="button" className="t-solid is-sm" disabled={!repo.trim() || busy} onClick={() => void start()}>
+          {busy ? 'cloning…' : 'clone'}
+        </button>
+        <span className="t-dim" style={{ fontSize: 12 }}>
+          {busy ? 'this can take a while for a big repo' : name ? `into your projects folder, as ${name}/. private repos use your gh sign-in` : mine === null ? 'looking for your repos…' : 'it goes next to your other projects'}
+        </span>
+      </span>
+      {problem && <span role="alert" className="t-red" style={{ fontSize: 12, whiteSpace: 'pre-wrap' }}>{problem}</span>}
+    </div>
   );
 }

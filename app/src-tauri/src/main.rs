@@ -10,6 +10,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod bridge;
+mod clone;
 mod connections;
 mod definition;
 mod engine;
@@ -1029,6 +1030,20 @@ fn save_harness(app: State<'_, App>, harness: harness::Harness) -> Result<(), Fa
     std::fs::write(dir.join(format!("{}.yaml", factories::slug(&harness.id))), text).map_err(|e| fail(e.into()))
 }
 
+/// The GitHub repos the person's gh can see, for New factory to offer. Empty without gh.
+#[tauri::command(async)]
+fn github_repos() -> Vec<String> {
+    clone::mine(&clone::person_home())
+}
+
+/// Clones a pasted repo next to the person's other projects, and returns where it went.
+#[tauri::command(async)]
+fn clone_repo(repo: String) -> Result<String, Failure> {
+    let home = clone::person_home();
+    let parsed = clone::parse(&repo).ok_or_else(|| Failure::new("clone", "that doesn't look like a repo. paste a GitHub link, owner/repo, or a git URL"))?;
+    clone::clone(&parsed, &clone::parent(&home), &home).map(|p| p.display().to_string()).map_err(fail)
+}
+
 #[tauri::command(async)]
 fn nearby_folders(app: State<'_, App>) -> Vec<FolderSuggestion> {
     let Some(home) = std::env::var_os("HOME") else {
@@ -1200,6 +1215,8 @@ fn main() {
             answer_proposal,
             feed_tickets,
             nearby_folders,
+            github_repos,
+            clone_repo,
             detect_project,
             work_action,
             work_evidence,
