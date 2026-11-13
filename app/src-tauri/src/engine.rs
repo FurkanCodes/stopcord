@@ -647,12 +647,11 @@ impl Engine {
                 return;
             }
             for part in checks {
-                let (ok, output) = hooks::run_command(
-                    &hooks::login_command(&shell::user_shell(), &part.command),
-                    Path::new(&cwd),
-                    &mut std::io::sink(),
-                    Some(QUIET_CHECK_TIMEOUT),
-                );
+                // The check runs in the agent's folder, on files the agent wrote, so it gets a sandbox like a gate does.
+                let (ok, output) = match crate::flow::confined_check(self.store.home(), Path::new(&cwd), &part.command, part.network, &self.program) {
+                    Ok(command) => hooks::run_command(&command, Path::new(&cwd), &mut std::io::sink(), Some(QUIET_CHECK_TIMEOUT)),
+                    Err(e) => (false, format!("couldn't start the check {}: {e}", part.name)),
+                };
                 self.log(
                     &factory.id,
                     Run::new(

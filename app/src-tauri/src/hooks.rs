@@ -74,9 +74,7 @@ fn script(factory: &Factory, program: &Path, home: &Path, hook: &str) -> String 
 }
 
 fn hooks_dir(project: &Path) -> Result<PathBuf, String> {
-    if let Ok(path) = git(project, &["config", "core.hooksPath"])
-        && !path.is_empty()
-    {
+    if let Some(path) = crate::worktree::config(project, "core.hooksPath") {
         return Err(format!(
             "This repo keeps its git hooks in {path} (core.hooksPath), so Sawtooth didn't add its checks there. \
              Call `sawtooth-app hook <factory> pre-commit` from your own hook to run them."
@@ -477,15 +475,20 @@ mod tests {
         let f = factory(&store, repo.path(), vec![]);
         assert!(install(&f, Path::new("/no/such/app"), home.path()).is_empty());
         let wt = crate::worktree::ensure(repo.path(), &store.worktrees_dir(&f.id), "t-1").unwrap();
+        // The agent's git, unlike the engine's, runs the repo's hooks, so the guard applies to it.
+        let agent = |args: &[&str]| -> Result<String, String> {
+            let out = Command::new("git").arg("-C").arg(&wt).args(args).output().unwrap();
+            if out.status.success() { Ok(String::new()) } else { Err(String::from_utf8_lossy(&out.stderr).into_owned()) }
+        };
         std::fs::write(wt.join("work.txt"), "x").unwrap();
-        git(&wt, &["add", "-A"]).unwrap();
-        git(&wt, &["commit", "-qm", "work"]).expect("its own branch takes commits");
+        agent(&["add", "-A"]).unwrap();
+        agent(&["commit", "-qm", "work"]).expect("its own branch takes commits");
         let main = git(repo.path(), &["rev-parse", "main"]).unwrap();
         // Git refuses these itself while main is checked out in the project.
-        assert!(git(&wt, &["branch", "-f", "main", "HEAD"]).is_err());
-        assert!(git(&wt, &["push", ".", "HEAD:main"]).is_err());
+        assert!(agent(&["branch", "-f", "main", "HEAD"]).is_err());
+        assert!(agent(&["push", ".", "HEAD:main"]).is_err());
         // This one gets past git's own checks, so the guard is what stops it.
-        let e = git(&wt, &["update-ref", "refs/heads/main", "HEAD"]).unwrap_err().to_string();
+        let e = agent(&["update-ref", "refs/heads/main", "HEAD"]).unwrap_err();
         assert!(e.contains("only changes by merging"), "{e}");
         assert_eq!(git(repo.path(), &["rev-parse", "main"]).unwrap(), main, "main didn't move");
         git(repo.path(), &["merge", "-q", "--no-ff", "--no-edit", "t-1"]).expect("a merge in the project still works");

@@ -367,6 +367,8 @@ fn create_factory(
             Some("contained") => Level::Contained,
             Some("vm") => Level::Vm,
             Some("harness") => Level::Harness,
+            // Named on its own, so a different default for an unknown level never overrides someone who chose this.
+            Some("worktree") => Level::Worktree,
             _ => Level::Worktree,
         };
         templates::standard_line(&mut factory, &harness, &reviewer, test.as_deref(), level);

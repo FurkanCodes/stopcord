@@ -2,7 +2,6 @@
 //! and what a terminal's checkout changed, with git.
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use serde::Serialize;
 
@@ -147,7 +146,7 @@ pub fn evidence(worktree: &Path, base: &str, project: &Path) -> Evidence {
 }
 
 fn run(dir: &Path, args: &[&str]) -> Option<String> {
-    let out = Command::new("git").arg("-C").arg(dir).args(args).output().ok()?;
+    let out = crate::worktree::git_command(dir).args(args).output().ok()?;
     out.status
         .success()
         .then(|| String::from_utf8_lossy(&out.stdout).into_owned())
@@ -308,6 +307,7 @@ mod tests {
     }
 
     use super::*;
+    use std::process::Command;
 
     fn git_in(dir: &Path, args: &[&str]) {
         let ok = Command::new("git").arg("-C").arg(dir).args(args).output().unwrap();

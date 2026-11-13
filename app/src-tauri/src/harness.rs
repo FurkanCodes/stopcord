@@ -107,11 +107,12 @@ pub fn builtin() -> Vec<Harness> {
                 ".claude.json.lock",
                 ".claude.json.backup",
                 ".local/state/claude",
-                ".local/share/claude",
                 ".cache/claude",
             ]),
             write_prefix: strings(&[".claude.json"]),
-            read_only: strings(&[".claude/settings.json", ".claude/settings.local.json", ".claude/hooks"]),
+            // `.local/share/claude` holds the claude program itself, which runs later with no sandbox,
+            // so it updates itself only outside one.
+            read_only: strings(&[".claude/settings.json", ".claude/settings.local.json", ".claude/hooks", ".local/share/claude"]),
             domains: strings(&["anthropic.com", "claude.ai", "claude.com", "datadoghq.com", "statsig.com", "sentry.io"]),
             quiet_domains: strings(&["formulae.brew.sh"]),
             // Not bypass mode: that shows a confirmation we'd have to edit its settings to skip.

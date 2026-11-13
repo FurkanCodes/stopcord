@@ -7,9 +7,29 @@ use anyhow::{Result, bail};
 
 use crate::factories::slug;
 
+/// Git as the engine runs it, outside any sandbox, often in a folder an agent could write to. The
+/// repo's own hooks and fsmonitor would run code the agent may have planted there, and a replace ref
+/// it made would change what a commit holds, so none of them apply to Sawtooth's own git.
+pub fn git_command(dir: &Path) -> Command {
+    let mut c = Command::new("git");
+    c.arg("-C")
+        .arg(dir)
+        .args(["-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false"])
+        .env("GIT_NO_REPLACE_OBJECTS", "1");
+    c
+}
+
+/// The repo's own value for a config key, which [`git_command`]'s overrides would hide. Reading config
+/// runs no hooks.
+pub fn config(dir: &Path, key: &str) -> Option<String> {
+    let out = Command::new("git").arg("-C").arg(dir).args(["config", key]).output().ok()?;
+    let value = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    (out.status.success() && !value.is_empty()).then_some(value)
+}
+
 /// Runs git in `dir` and returns its trimmed output, or its error message.
 pub fn git(dir: &Path, args: &[&str]) -> Result<String> {
-    let out = Command::new("git").arg("-C").arg(dir).args(args).output()?;
+    let out = git_command(dir).args(args).output()?;
     if out.status.success() {
         Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
     } else {
@@ -137,9 +157,21 @@ pub fn take_kept(copy: &Path, real: &Path, keep: &[String]) -> Result<Vec<String
     Ok(taken)
 }
 
+/// Fails unless `dir` has `branch` checked out. An agent can move its worktree's HEAD, and a commit the
+/// engine makes there would then land on whatever branch the agent pointed it at.
+fn on_branch(dir: &Path, branch: &str) -> Result<()> {
+    let head = git(dir, &["symbolic-ref", "-q", "HEAD"]).unwrap_or_default();
+    if head != format!("refs/heads/{branch}") {
+        let now = head.strip_prefix("refs/heads/").map_or_else(|| "no branch".to_string(), |b| format!("branch {b}"));
+        bail!("{} is on {now}, not {branch}, so Sawtooth didn't commit there", dir.display());
+    }
+    Ok(())
+}
+
 /// Commits just these files, skipping hooks because the engine is doing its own bookkeeping.
 /// Returns whether there was anything to commit.
-pub fn commit_files(dir: &Path, files: &[String], message: &str) -> Result<bool> {
+pub fn commit_files(dir: &Path, branch: &str, files: &[String], message: &str) -> Result<bool> {
+    on_branch(dir, branch)?;
     let names: Vec<&str> = files.iter().map(String::as_str).collect();
     git(dir, &[&["add", "--"], names.as_slice()].concat())?;
     if git(dir, &[&["diff", "--cached", "--quiet", "--"], names.as_slice()].concat()).is_ok() {
@@ -152,7 +184,8 @@ pub fn commit_files(dir: &Path, files: &[String], message: &str) -> Result<bool>
 /// Takes files the line only kept for its own stages, such as PLAN.md, back out of a branch before
 /// it's merged, so they never reach `target`: put back as `target` has them, or removed. Commits
 /// that on the branch, and says which files it touched.
-pub fn leave_out(dir: &Path, target: &str, files: &[String], message: &str) -> Result<Vec<String>> {
+pub fn leave_out(dir: &Path, branch: &str, target: &str, files: &[String], message: &str) -> Result<Vec<String>> {
+    on_branch(dir, branch)?;
     let mut touched = Vec::new();
     for file in files {
         if git(dir, &["cat-file", "-e", &format!("HEAD:{file}")]).is_err() {
@@ -216,9 +249,9 @@ pub mod tests {
         git(&wt, &["add", "-A"]).unwrap();
         git(&wt, &["commit", "-qm", "plan and work"]).unwrap();
         let main = git(project.path(), &["rev-parse", "HEAD"]).unwrap();
-        assert_eq!(leave_out(&wt, &main, &["PLAN.md".into()], "leave it out").unwrap(), ["PLAN.md"]);
+        assert_eq!(leave_out(&wt, "t-1", &main, &["PLAN.md".into()], "leave it out").unwrap(), ["PLAN.md"]);
         assert!(!wt.join("PLAN.md").exists() && wt.join("work.txt").exists());
-        assert!(leave_out(&wt, &main, &["PLAN.md".into()], "again").unwrap().is_empty(), "nothing left to take out");
+        assert!(leave_out(&wt, "t-1", &main, &["PLAN.md".into()], "again").unwrap().is_empty(), "nothing left to take out");
 
         // When the project already has one, the branch gets the project's copy back.
         std::fs::write(project.path().join("PLAN.md"), "an old plan").unwrap();
@@ -228,7 +261,7 @@ pub mod tests {
         std::fs::write(wt.join("PLAN.md"), "a new plan").unwrap();
         git(&wt, &["add", "-A"]).unwrap();
         git(&wt, &["commit", "-qm", "new plan"]).unwrap();
-        leave_out(&wt, &main, &["PLAN.md".into()], "leave it out").unwrap();
+        leave_out(&wt, "t-1", &main, &["PLAN.md".into()], "leave it out").unwrap();
         assert_eq!(std::fs::read_to_string(wt.join("PLAN.md")).unwrap(), "an old plan");
     }
 
@@ -298,9 +331,80 @@ pub mod tests {
         std::fs::write(real.join("other.txt"), "x").unwrap();
         git(&real, &["add", "other.txt"]).unwrap();
         let files = ["PLAN.md".to_string()];
-        assert!(commit_files(&real, &files, "plan for T-1").unwrap());
+        assert!(commit_files(&real, "t-1", &files, "plan for T-1").unwrap());
         assert_eq!(git(&real, &["log", "-1", "--format=%s", "--name-only"]).unwrap().lines().filter(|l| !l.is_empty()).collect::<Vec<_>>(), ["plan for T-1", "PLAN.md"]);
-        assert!(!commit_files(&real, &files, "again").unwrap(), "nothing new, so no empty commit");
+        assert!(!commit_files(&real, "t-1", &files, "again").unwrap(), "nothing new, so no empty commit");
+    }
+
+    /// Git as an agent would run it: plain, with the repo's own hooks and replace refs in force.
+    fn plain_git(dir: &Path, args: &[&str]) -> std::process::Output {
+        Command::new("git").arg("-C").arg(dir).args(args).output().unwrap()
+    }
+
+    #[test]
+    fn the_engines_git_runs_no_hook_an_agent_planted() {
+        let project = repo();
+        let holder = tempfile::tempdir().unwrap();
+        let marker = holder.path().join("hook-ran");
+        git(project.path(), &["config", "core.hooksPath", ".husky"]).unwrap();
+        let wt = ensure(project.path(), &holder.path().join("trees"), "t-1").unwrap();
+        // The agent plants hooks on its branch, where a relative hooks path finds them when git runs in its folder.
+        std::fs::create_dir_all(wt.join(".husky")).unwrap();
+        for hook in ["post-commit", "post-checkout", "post-merge", "pre-commit"] {
+            let path = wt.join(".husky").join(hook);
+            std::fs::write(&path, format!("#!/bin/sh\necho {hook} >> '{}'\n", marker.display())).unwrap();
+            std::fs::set_permissions(&path, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+        }
+        std::fs::write(wt.join("PLAN.md"), "the plan").unwrap();
+        git(&wt, &["add", "-A"]).unwrap();
+        git(&wt, &["commit", "-qm", "plan and hooks"]).unwrap();
+        assert!(!marker.exists(), "committing through the engine's git ran {:?}", std::fs::read_to_string(&marker));
+
+        let main = git(project.path(), &["rev-parse", "HEAD"]).unwrap();
+        leave_out(&wt, "t-1", &main, &["PLAN.md".into()], "leave it out").unwrap();
+        git(project.path(), &["merge", "--no-ff", "--no-edit", "t-1"]).unwrap();
+        assert!(!marker.exists(), "the engine ran a planted hook: {:?}", std::fs::read_to_string(&marker));
+
+        // The hooks are live: git run the agent's way in its folder does run them.
+        assert!(plain_git(&wt, &["commit", "-q", "--allow-empty", "-m", "x"]).status.success());
+        assert!(marker.exists(), "control: the planted post-commit should run for plain git");
+    }
+
+    #[test]
+    fn the_engine_wont_commit_where_an_agent_moved_head() {
+        let project = repo();
+        let holder = tempfile::tempdir().unwrap();
+        git(project.path(), &["branch", "other"]).unwrap();
+        let other = git(project.path(), &["rev-parse", "other"]).unwrap();
+        let wt = ensure(project.path(), &holder.path().join("trees"), "t-1").unwrap();
+        std::fs::write(wt.join("PLAN.md"), "the plan").unwrap();
+        git(&wt, &["add", "-A"]).unwrap();
+        git(&wt, &["commit", "-qm", "plan"]).unwrap();
+        // The agent points its worktree at another branch, keeping the plan as a change there.
+        let admin = PathBuf::from(git(&wt, &["rev-parse", "--absolute-git-dir"]).unwrap());
+        std::fs::write(admin.join("HEAD"), "ref: refs/heads/other\n").unwrap();
+        let main = git(project.path(), &["rev-parse", "main"]).unwrap();
+
+        let err = leave_out(&wt, "t-1", &main, &["PLAN.md".into()], "leave it out").unwrap_err();
+        assert!(format!("{err:#}").contains("not t-1"), "{err:#}");
+        let err = commit_files(&wt, "t-1", &["PLAN.md".into()], "plan").unwrap_err();
+        assert!(format!("{err:#}").contains("on branch other"), "{err:#}");
+        assert_eq!(git(project.path(), &["rev-parse", "other"]).unwrap(), other, "other branch untouched");
+    }
+
+    #[test]
+    fn the_engines_git_ignores_replace_refs() {
+        let project = repo();
+        let p = project.path();
+        let first = git(p, &["rev-parse", "HEAD"]).unwrap();
+        git(p, &["commit", "-q", "--allow-empty", "-m", "something else"]).unwrap();
+        let other = git(p, &["rev-parse", "HEAD"]).unwrap();
+        git(p, &["reset", "-q", "--hard", &first]).unwrap();
+        // An agent can write refs, so it could make `first` read as a different commit.
+        assert!(plain_git(p, &["replace", &first, &other]).status.success());
+        let plain = String::from_utf8_lossy(&plain_git(p, &["log", "-1", "--format=%s", &first]).stdout).trim().to_string();
+        assert_eq!(plain, "something else", "control: plain git follows the replace ref");
+        assert_eq!(git(p, &["log", "-1", "--format=%s", &first]).unwrap(), "first");
     }
 
     /// A repo with one commit, in a temp folder.

@@ -94,8 +94,10 @@ pub(crate) fn confined_check(store_dir: &Path, snapshot: &Path, command: &str, n
         return Ok(command_line(&login, &[]));
     }
     let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("/"));
-    let mut p = Policy::new(snapshot.to_path_buf(), home, program.to_path_buf());
+    let mut p = Policy::new(snapshot.to_path_buf(), home.clone(), program.to_path_buf());
     p.network = if network { Network::Open } else { Network::Off };
+    // With the network open, these are the way out: the daemon starts terminals with no sandbox.
+    p.masked_sockets = crate::runner::masked_sockets(&home, store_dir, &sawtooth_daemon::paths::socket());
     p.deny_read.push(store_dir.join("secrets"));
     let wrapped = wrap(&p, &login, &store_dir.join("run")).map_err(|e| format!("{e:#}"))?;
     Ok(command_line(&wrapped.argv, &wrapped.env))
@@ -586,7 +588,7 @@ impl Engine {
         }
         let taken = worktree::take_kept(&copy, &real, &stage.keep).map_err(|e| format!("{e:#}"))?;
         if !taken.is_empty() {
-            worktree::commit_files(&real, &taken, &format!("{} for {key}", stage.id)).map_err(|e| format!("{e:#}"))?;
+            worktree::commit_files(&real, &w.branch, &taken, &format!("{} for {key}", stage.id)).map_err(|e| format!("{e:#}"))?;
         }
         Ok(())
     }
@@ -1161,7 +1163,7 @@ impl Engine {
         let kept: Vec<String> = f.line.iter().flat_map(|s| s.keep.clone()).collect();
         if !kept.is_empty() && !w.worktree.is_empty() {
             let target = worktree::git(project, &["rev-parse", "HEAD"]).unwrap_or_default();
-            match worktree::leave_out(Path::new(&w.worktree), &target, &kept, &format!("Leave {} out of the merge for {key}", kept.join(", "))) {
+            match worktree::leave_out(Path::new(&w.worktree), &w.branch, &target, &kept, &format!("Leave {} out of the merge for {key}", kept.join(", "))) {
                 Ok(left) if !left.is_empty() => self.log(factory, Run::new("line", format!("{key}: left {} out of the merge", left.join(", "))).work(&w.id).by("engine")),
                 Err(e) => {
                     say(format!("{key} couldn't merge: taking {} out of the branch failed: {e:#}", kept.join(", ")));

@@ -53,11 +53,14 @@ fn expand(home: &Path, path: &str) -> PathBuf {
     }
 }
 
-/// Sockets no agent may reach. A contained agent that reached the daemon could ask for an unconfined terminal.
-fn masked_sockets(home: &Path, sawtooth_home: &Path, daemon_socket: &Path) -> Vec<PathBuf> {
+/// Sockets no agent may reach. A contained agent that reached the daemon could ask for an unconfined terminal,
+/// and a debug build's test socket runs whatever it's sent as script in the window.
+pub(crate) fn masked_sockets(home: &Path, sawtooth_home: &Path, daemon_socket: &Path) -> Vec<PathBuf> {
+    let test_socket = std::env::var_os("SAWTOOTH_TEST_SOCKET").map_or_else(|| sawtooth_home.join("app-test.sock"), PathBuf::from);
     vec![
         daemon_socket.to_path_buf(),
         sawtooth_home.join("sawtooth.sock"),
+        test_socket,
         PathBuf::from("/var/run/docker.sock"),
         PathBuf::from("/run/docker.sock"),
         home.join(".docker/run/docker.sock"),
@@ -151,8 +154,8 @@ pub fn policy_for(
         listed.extend(runner.read.iter().map(|r| expand(home, r)));
         p.reads = sawtooth_sandbox::Reads::Listed(listed);
     }
-    // Login shells rewrite their completion cache, and complain on every start if they can't.
-    p.write_prefix.push(home.join(".zcompdump"));
+    // No write to `~/.zcompdump*`: zsh runs that file in every shell the person opens later. A login shell
+    // that can't rewrite it just keeps the old one.
     p.masked_sockets = masked_sockets(home, store.home(), daemon_socket);
     p.report_socket = report;
     p.network = network;
@@ -205,12 +208,14 @@ pub fn test(store: &Store, bridge: &Bridge, factory: &Factory, runner: &Runner, 
         probe::Socket { label: "the daemon".into(), path: daemon.clone() },
         probe::Socket { label: "the app".into(), path: store.home().join("sawtooth.sock") },
     ];
+    let masked = masked_sockets(&home, store.home(), &daemon);
+    sockets.push(probe::Socket { label: "the app's test socket".into(), path: masked[2].clone() });
     // A machine can have several, often one linked to another, so each is named by where it is.
     let tilde = |p: &Path| p.strip_prefix(&home).map_or_else(|_| p.display().to_string(), |r| format!("~/{}", r.display()));
     sockets.extend(
-        masked_sockets(&home, store.home(), &daemon)
+        masked
             .into_iter()
-            .skip(2)
+            .skip(3)
             .map(|path| probe::Socket { label: format!("docker at {}", tilde(&path)), path }),
     );
     let spec = probe::Spec {
@@ -618,10 +623,17 @@ mod tests {
         assert!(p.deny_read.contains(&PathBuf::from("/Users/me/.config/mine")));
         assert!(p.masked_sockets.contains(&PathBuf::from("/Users/me/.sawtooth/sawtooth.sock")));
         assert!(p.masked_sockets.contains(&PathBuf::from("/var/run/docker.sock")));
+        if std::env::var_os("SAWTOOTH_TEST_SOCKET").is_none() {
+            assert!(p.masked_sockets.contains(&store.home().join("app-test.sock")));
+        }
         assert!(p.write.contains(&PathBuf::from("/Users/me/.claude")));
         assert!(p.write.contains(&PathBuf::from("/Users/me/.gradle")));
         assert!(p.write.contains(&store.knowledge_file("f")));
         assert!(p.read_only.contains(&PathBuf::from("/Users/me/.claude/settings.json")));
+        // What the person's own shell and claude run later stays out of reach.
+        assert!(!p.write_prefix.iter().any(|w| w.to_string_lossy().contains(".zcompdump")));
+        assert!(p.read_only.contains(&PathBuf::from("/Users/me/.local/share/claude")));
+        assert!(!p.write.contains(&PathBuf::from("/Users/me/.local/share/claude")));
         assert_eq!(p.report_socket, Some(PathBuf::from("/r.sock")));
     }
 
