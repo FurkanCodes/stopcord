@@ -6,15 +6,15 @@ product
 
 ## Platform
 
-web
+Desktop app (Tauri). macOS is supported. Linux builds from source and is experimental.
 
 ## Users
 
-The first user is the person building it: an engineer who runs coding agents across about ten projects at once. They check the app dozens of times a day, between tasks, often with terminals open beside it. Other agentic engineers may use it later, but they don't shape the first version.
+The first user is the person building it: an engineer who runs coding agents across about ten projects at once. They check the app dozens of times a day, between tasks, often with terminals open beside it. It is now open source, and other engineers who run coding agents can use it, report problems and send changes.
 
 ## Product Purpose
 
-Sawtooth (working title; earlier "Little Factories") puts each project in a factory: its terminals, its knowledge base, its rules, its triggers and its tickets, kept together. The home screen shows every factory at once, so the engineer can see what needs them without opening a pile of terminals. Success means a whole week goes by without opening a terminal outside the app to check on a project.
+Sawtooth puts each project in a factory: its terminals, its knowledge base, its rules, its triggers and its tickets, kept together. The home screen shows every factory at once, so the engineer can see what needs them without opening a pile of terminals. Success means a whole week goes by without opening a terminal outside the app to check on a project.
 
 ## Positioning
 

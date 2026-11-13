@@ -1,7 +1,7 @@
 # Sandbox spike
 
 Run 2026-11-09 on macOS 26.5 (Apple silicon) and in a throwaway Ubuntu 26.04 VM (kernel 7.0, bubblewrap 0.11.1).
-This is stage 0 of the factory roadmap. It decides what the contained runner is built on.
+It decided what the contained runner is built on.
 
 ## Result
 

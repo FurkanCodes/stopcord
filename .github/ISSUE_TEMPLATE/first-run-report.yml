@@ -1,0 +1,67 @@
+name: First run report
+description: Tell us how your first ticket went, whether it worked or not.
+title: "First run: "
+labels: ["first run"]
+body:
+  - type: markdown
+    attributes:
+      value: Thanks for trying Sawtooth. This is the most useful report you can send, even if everything worked.
+  - type: input
+    id: os
+    attributes:
+      label: OS and version
+      placeholder: macOS 26.1
+    validations:
+      required: true
+  - type: dropdown
+    id: install
+    attributes:
+      label: How you installed it
+      options:
+        - Built the app with npx tauri build
+        - Ran it with npm run app
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: harness
+    attributes:
+      label: Agent CLI and version
+      placeholder: claude 2.1.323
+    validations:
+      required: true
+  - type: dropdown
+    id: level
+    attributes:
+      label: Runner level
+      options:
+        - contained
+        - worktree
+        - vm
+    validations:
+      required: true
+  - type: dropdown
+    id: reached
+    attributes:
+      label: How far your first ticket got
+      options:
+        - Didn't get the app running
+        - Couldn't make a factory
+        - plan
+        - approve
+        - build
+        - verify
+        - review
+        - handoff
+        - Merged
+    validations:
+      required: true
+  - type: textarea
+    id: stopped
+    attributes:
+      label: Where it stopped, or what was confusing
+      description: What you saw, what you expected, and any error text.
+  - type: textarea
+    id: else
+    attributes:
+      label: Anything else

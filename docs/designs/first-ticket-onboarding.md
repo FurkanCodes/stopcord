@@ -800,11 +800,10 @@ The first draft left added files out of `changed_protected`.
 
 ## Additional Resources
 
-*   `concepts_brief.md`: the concept review this design comes from. Commit it
-    with this design, since the Decisions section refers to its questions.
+*   [first-ticket-onboarding-brief.md](first-ticket-onboarding-brief.md): the
+    concept review this design comes from. The Decisions section refers to its
+    questions.
 *   `PRODUCT.md`: users, brand and design principles.
-*   The review reports at the repo root: `consolidated_review_report.md` and
-    the five per-stage reports it links to.
 
 --------------------------------------------------------------------------------
 

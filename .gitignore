@@ -17,3 +17,9 @@ __pycache__/
 # The app
 app/dist/
 app/src-tauri/gen/
+
+# Local files that shouldn't be shared
+.env*
+*.log
+.codegraph/
+.claude/settings.local.json

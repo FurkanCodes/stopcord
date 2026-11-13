@@ -3,6 +3,9 @@ name = "sawtooth-app"
 description = "The Sawtooth window onto the terminal daemon."
 version.workspace = true
 edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
 publish.workspace = true
 
 [build-dependencies]

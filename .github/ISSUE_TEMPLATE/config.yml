@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Report a security problem
+    url: https://github.com/FurkanCodes/sawtooth/security/advisories/new
+    about: Ways for an agent to get past its sandbox. Please report these privately.

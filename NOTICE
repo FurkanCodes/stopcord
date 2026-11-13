@@ -1,0 +1,17 @@
+Sawtooth
+Copyright 2026 Furkan
+
+This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+It includes the following third-party material:
+
+- Screen detection rules in crates/detect/rules/*.toml, adapted from herdr
+  (https://github.com/herdrdev/herdr), licensed under the Apache License,
+  Version 2.0. Its license is in crates/detect/rules/LICENSE-herdr.txt.
+
+- IBM Plex Mono, bundled into the app window through @fontsource/ibm-plex-mono,
+  licensed under the SIL Open Font License, Version 1.1.
+
+Built app packages also contain Rust crates and npm packages under their own
+licenses (mostly MIT and Apache-2.0). Their license texts are in Cargo.lock's
+and package-lock.json's sources and in each package's own files.
