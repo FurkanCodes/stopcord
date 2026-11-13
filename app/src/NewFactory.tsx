@@ -4,7 +4,7 @@ import { api, failureText, type FactoryTemplate, type FolderSuggestion, type Lev
 import { HarnessFields } from './factory/HarnessFields';
 import { runsOn, useHarnessProfiles } from './harness';
 import { harnessFiles } from './factory/parts';
-import { go, openFactory, refreshFactories, sawtoothHome, useStore } from './store';
+import { go, openFactory, refreshFactories, stopcordHome, useStore } from './store';
 import { tilde } from './text';
 import { ArmedKey, Brand, Check, FieldRow, Key, Pane, Radio, Screen, Sep } from './tui/kit';
 import { plain, useKeys } from './tui/keys';
@@ -22,7 +22,7 @@ function idOf(name: string): string {
   );
 }
 
-/** Point Sawtooth at a project. Every part can be changed later on the map. */
+/** Point Stopcord at a project. Every part can be changed later on the map. */
 export function NewFactory() {
   const factories = useStore((s) => s.factories);
   const [folder, setFolder] = useState('');
@@ -169,7 +169,7 @@ export function NewFactory() {
 
   // What the app will write, as it really does it.
   const id = idOf(name || folder.split('/').filter(Boolean).pop() || '');
-  const home = tilde(sawtoothHome(factories));
+  const home = tilde(stopcordHome(factories));
   const where = folder.trim() ? tilde(folder.trim()) : `~/projects/${id}`;
   const tree = [
     `${home}/factories/${id}/`,
@@ -348,7 +348,7 @@ export function NewFactory() {
                     size="xs"
                     title="Save it as a file to hand to someone else. It has no secrets in it"
                     onClick={async () => {
-                      const path = await save({ defaultPath: `${t.id}.sawtooth.yaml`, filters: [{ name: 'Sawtooth template', extensions: ['yaml'] }] });
+                      const path = await save({ defaultPath: `${t.id}.stopcord.yaml`, filters: [{ name: 'Stopcord template', extensions: ['yaml'] }] });
                       if (!path) return;
                       await api.exportTemplate(t.id, path).then(() => setShared(`saved ${t.name} to ${tilde(path)}`), (e) => setShared(failureText(e)));
                     }}
@@ -371,7 +371,7 @@ export function NewFactory() {
                 <Key
                   size="xs"
                   onClick={async () => {
-                    const path = await open({ multiple: false, filters: [{ name: 'Sawtooth template', extensions: ['yaml', 'yml'] }] });
+                    const path = await open({ multiple: false, filters: [{ name: 'Stopcord template', extensions: ['yaml', 'yml'] }] });
                     if (typeof path !== 'string') return;
                     try {
                       const t = await api.importTemplate(path);

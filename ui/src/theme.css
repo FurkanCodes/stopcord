@@ -1,9 +1,9 @@
 /*
-  Sawtooth theme for Tailwind v4.
+  Stopcord theme for Tailwind v4.
 
   In the app's main stylesheet:
     @import "tailwindcss";
-    @import "@sawtooth/ui/theme.css";
+    @import "@stopcord/ui/theme.css";
 
   Load the fonts once in the page <head>:
     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
@@ -15,7 +15,7 @@
 @source "./";
 
 @theme {
-  /* Only Sawtooth colours exist. bg-transparent and text-current still work. */
+  /* Only Stopcord colours exist. bg-transparent and text-current still work. */
   --color-*: initial;
 
   /* Grounds, darkest to lightest */
@@ -75,15 +75,15 @@
 
   /* Motion: one thing moves at a time */
   --ease-calm: cubic-bezier(0.2, 0, 0, 1);
-  --animate-breathe: sawtooth-breathe 2.4s ease-in-out infinite;
-  --animate-travel: sawtooth-travel 1.6s cubic-bezier(0.4, 0, 0.2, 1) both;
+  --animate-breathe: stopcord-breathe 2.4s ease-in-out infinite;
+  --animate-travel: stopcord-travel 1.6s cubic-bezier(0.4, 0, 0.2, 1) both;
 
-  @keyframes sawtooth-breathe {
+  @keyframes stopcord-breathe {
     0%, 100% { opacity: 1; }
     50% { opacity: 0.4; }
   }
 
-  @keyframes sawtooth-travel {
+  @keyframes stopcord-travel {
     0% { offset-distance: 0%; opacity: 0; }
     12% { opacity: 1; }
     88% { opacity: 1; }

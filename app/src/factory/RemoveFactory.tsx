@@ -116,7 +116,7 @@ export function RemoveFactory({ factory }: { factory: Factory }) {
           )}
           <div>
             <Check id="rm-keep" checked={keepFiles} onChange={setKeepFiles}>
-              keep a copy of its settings, tickets and log in sawtooth&apos;s removed folder
+              keep a copy of its settings, tickets and log in stopcord&apos;s removed folder
             </Check>
             {!keepFiles && p.kept > 0 && <p className="t-dim" style={{ fontSize: 12, paddingLeft: '4ch' }}>and {count(p.kept, 'copy', 'copies')} kept from an earlier remove go too</p>}
           </div>

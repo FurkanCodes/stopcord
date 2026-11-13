@@ -167,7 +167,7 @@ fn write_profile(profile: &str, dir: &Path) -> anyhow::Result<String> {
         .duration_since(UNIX_EPOCH)
         .map_or(0, |d| d.as_nanos());
     let name = format!(
-        "sawtooth-{}-{nanos}-{}.sb",
+        "stopcord-{}-{nanos}-{}.sb",
         std::process::id(),
         NEXT.fetch_add(1, Ordering::Relaxed)
     );
@@ -202,7 +202,7 @@ fn bwrap_command(policy: &Policy, argv: &[String]) -> anyhow::Result<Vec<String>
         "/bin/sh".to_string(),
         "-c".to_string(),
         SHIELD.to_string(),
-        "sawtooth-sandbox".to_string(),
+        "stopcord-sandbox".to_string(),
         "bwrap".to_string(),
     ];
     command.extend(crate::bwrap_args(policy));

@@ -1,6 +1,6 @@
 # Contributing
 
-Thanks for looking. Sawtooth is early and has one maintainer, so small, focused changes are the easiest to take.
+Thanks for looking. Stopcord is early and has one maintainer, so small, focused changes are the easiest to take.
 
 ## Before you start
 

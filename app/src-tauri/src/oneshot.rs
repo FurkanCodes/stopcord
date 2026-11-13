@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use sawtooth_sandbox::{Network, wrap};
+use stopcord_sandbox::{Network, wrap};
 use serde_json::{Value, json};
 
 use crate::engine::Engine;
@@ -79,9 +79,9 @@ impl Engine {
     /// Runs one prompt through a harness, inside the sandbox. Outside text can be in the prompt,
     /// so this refuses to run at all on a machine that can't confine it.
     pub(crate) fn one_shot(&self, f: &Factory, command: &str, prompt: &str) -> Result<String, String> {
-        sawtooth_sandbox::available().map_err(|e| format!("this needs a sandbox and the machine can't make one: {e}"))?;
+        stopcord_sandbox::available().map_err(|e| format!("this needs a sandbox and the machine can't make one: {e}"))?;
         let (all, _) = harness::load(&self.store.home().join("harnesses"));
-        let h = harness::find(&all, command).ok_or_else(|| format!("Sawtooth doesn't know how to ask {command} a question"))?;
+        let h = harness::find(&all, command).ok_or_else(|| format!("Stopcord doesn't know how to ask {command} a question"))?;
         if h.one_shot.is_empty() {
             return Err(format!("{} has no one-shot command set", h.id));
         }
@@ -95,7 +95,7 @@ impl Engine {
             port: info["port"].as_u64().unwrap_or(0) as u16,
             socket: PathBuf::from(info["filter"].as_str().unwrap_or_default()),
         };
-        let policy = runner::policy_for(&self.store, f, &Runner::default(), Some(h), &dir, &self.program, &home, &sawtooth_daemon::paths::socket(), network, None);
+        let policy = runner::policy_for(&self.store, f, &Runner::default(), Some(h), &dir, &self.program, &home, &stopcord_daemon::paths::socket(), network, None);
         let login = vec![shell::user_shell(), "-l".to_string(), "-c".to_string(), line];
         let result = wrap(&policy, &login, &self.store.home().join("run"))
             .map_err(|e| format!("{e:#}"))

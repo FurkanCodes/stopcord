@@ -2,26 +2,26 @@
 # Mirrors a git folder between the Mac and a VM's volume. The same script runs on both sides,
 # in the folder's top directory.
 #
-#   sawtooth-sync state -- EXCLUDED...
+#   stopcord-sync state -- EXCLUDED...
 #       "empty", or "HEAD TREE": the commit, and the tree of everything in the folder that
 #       git doesn't ignore, committed or not. Trees are content addresses, so two sides with
 #       the same files print the same line whatever their git versions.
-#   sawtooth-sync pack BASE BASEREF -- EXCLUDED...
+#   stopcord-sync pack BASE BASEREF -- EXCLUDED...
 #       A bundle on stdout with the folder's state as a commit on top of its own, and BASEREF's
 #       branch. Commits BASE already has are left out when this side has BASE. A bundle drops a
 #       branch the other side already has, but never the state, so the state's parent is the
 #       commit to be on.
-#   sawtooth-sync unpack [--ff-only] [--expect STATE] [--branch NAME] [--set-base NAME] -- EXCLUDED... < bundle
+#   stopcord-sync unpack [--ff-only] [--expect STATE] [--branch NAME] [--set-base NAME] -- EXCLUDED... < bundle
 #       Makes the folder exactly what the bundle holds. With --ff-only the commit has to follow
 #       on from the folder's own, so history can't be rewritten under it. With --expect, the
 #       folder has to still be at STATE, as `state` printed it, or nothing changes.
-#   sawtooth-sync knowledge NAME < content
+#   stopcord-sync knowledge NAME < content
 #       Writes a plain copy of the knowledge base, kept out of git, unless the repo tracks NAME.
-#   sawtooth-sync read-knowledge NAME
+#   stopcord-sync read-knowledge NAME
 #       "copy" and that copy as it is now, or "none" when NAME isn't a plain copy: tracked, a link,
 #       missing, or too big to be notes.
 #
-# EXCLUDED names belong to Sawtooth, such as knowledge-base links: they never cross and are
+# EXCLUDED names belong to Stopcord, such as knowledge-base links: they never cross and are
 # never touched. Hooks never run, here or on the Mac, and neither do filters.
 set -eu
 
@@ -57,7 +57,7 @@ wip() {
         shift
         g check-ignore -q -- "$n" 2>/dev/null || set -- "$@" ":(exclude,top)$n"
     done
-    idx=$(mktemp "${TMPDIR:-/tmp}/sawtooth-index.XXXXXX")
+    idx=$(mktemp "${TMPDIR:-/tmp}/stopcord-index.XXXXXX")
     real=$(g rev-parse --git-path index)
     # -p keeps the index's time, which is how git knows to look again at a file changed in the
     # same second it last looked. A fresh time would make that change look like nothing.
@@ -65,14 +65,14 @@ wip() {
     GIT_INDEX_FILE=$idx g add -A -- . "$@"
     tree=$(GIT_INDEX_FILE=$idx g write-tree)
     rm -f "$idx"
-    printf 'sawtooth: the folder as it was\n' | GIT_AUTHOR_NAME=sawtooth GIT_AUTHOR_EMAIL=sawtooth@localhost \
-        GIT_COMMITTER_NAME=sawtooth GIT_COMMITTER_EMAIL=sawtooth@localhost \
+    printf 'stopcord: the folder as it was\n' | GIT_AUTHOR_NAME=stopcord GIT_AUTHOR_EMAIL=stopcord@localhost \
+        GIT_COMMITTER_NAME=stopcord GIT_COMMITTER_EMAIL=stopcord@localhost \
         GIT_AUTHOR_DATE='@0 +0000' GIT_COMMITTER_DATE='@0 +0000' g commit-tree "$tree" -p HEAD
 }
 
 has_head() { g rev-parse -q --verify 'HEAD^{commit}' >/dev/null 2>&1; }
 
-dashes() { [ "${1-}" = -- ] || { echo "sawtooth-sync: expected --" >&2; exit 2; }; }
+dashes() { [ "${1-}" = -- ] || { echo "stopcord-sync: expected --" >&2; exit 2; }; }
 
 state() {
     dashes "$@"; shift
@@ -83,25 +83,25 @@ state() {
 
 pack() {
     base=$1 baseref=$2; shift 2; dashes "$@"; shift
-    has_head || { echo "sawtooth-sync: there's nothing committed to send" >&2; exit 2; }
+    has_head || { echo "stopcord-sync: there's nothing committed to send" >&2; exit 2; }
     c=$(wip "$@")
-    g update-ref refs/sawtooth/wip "$c"
-    set -- refs/sawtooth/wip
+    g update-ref refs/stopcord/wip "$c"
+    set -- refs/stopcord/wip
     if [ -n "$baseref" ] && g rev-parse -q --verify "refs/heads/$baseref^{commit}" >/dev/null; then
-        g update-ref refs/sawtooth/base "refs/heads/$baseref"
-        set -- "$@" refs/sawtooth/base
+        g update-ref refs/stopcord/base "refs/heads/$baseref"
+        set -- "$@" refs/stopcord/base
     fi
     if [ "$base" != - ] && g cat-file -e "$base^{commit}" 2>/dev/null; then set -- "$@" "^$base"; fi
-    out=$(mktemp "${TMPDIR:-/tmp}/sawtooth-bundle.XXXXXX")
+    out=$(mktemp "${TMPDIR:-/tmp}/stopcord-bundle.XXXXXX")
     g bundle create -q "$out" "$@"
     cat "$out"
     rm -f "$out"
-    for r in wip base; do g update-ref -d "refs/sawtooth/$r" 2>/dev/null || true; done
+    for r in wip base; do g update-ref -d "refs/stopcord/$r" 2>/dev/null || true; done
 }
 
-# Moves Sawtooth's own files out of the way while the folder changes, and back after.
+# Moves Stopcord's own files out of the way while the folder changes, and back after.
 aside() {
-    keep=$(mktemp -d "${TMPDIR:-/tmp}/sawtooth-keep.XXXXXX")
+    keep=$(mktemp -d "${TMPDIR:-/tmp}/stopcord-keep.XXXXXX")
     for n do
         if [ -e "$n" ] || [ -L "$n" ]; then mv "$n" "$keep/$n"; fi
     done
@@ -115,7 +115,7 @@ back() {
 }
 
 # When the switch fails partway, the folder goes back to how it was, uncommitted work included,
-# and Sawtooth's files come back. Otherwise both sides would look changed from then on, and
+# and Stopcord's files come back. Otherwise both sides would look changed from then on, and
 # nothing could sync again.
 undo() {
     status=$?
@@ -131,7 +131,7 @@ undo() {
     exit "$status"
 }
 
-forget_in() { g for-each-ref --format='%(refname)' refs/sawtooth/in/ | while read -r r; do g update-ref -d "$r"; done; }
+forget_in() { g for-each-ref --format='%(refname)' refs/stopcord/in/ | while read -r r; do g update-ref -d "$r"; done; }
 
 unpack() {
     ff= branch= setbase= expect=
@@ -142,27 +142,27 @@ unpack() {
             --branch) branch=$2; shift ;;
             --set-base) setbase=$2; shift ;;
             --) shift; break ;;
-            *) echo "sawtooth-sync: unknown option $1" >&2; exit 2 ;;
+            *) echo "stopcord-sync: unknown option $1" >&2; exit 2 ;;
         esac
         shift
     done
     g rev-parse --git-dir >/dev/null 2>&1 || g init -q
-    b=$(mktemp "${TMPDIR:-/tmp}/sawtooth-bundle.XXXXXX")
+    b=$(mktemp "${TMPDIR:-/tmp}/stopcord-bundle.XXXXXX")
     cat > "$b"
     g -c transfer.fsckObjects=true -c fetch.fsckObjects=true -c fetch.fsck.hasDotgit=error \
-        fetch -q "$b" '+refs/sawtooth/*:refs/sawtooth/in/*'
+        fetch -q "$b" '+refs/stopcord/*:refs/stopcord/in/*'
     rm -f "$b"
-    new=$(g rev-parse refs/sawtooth/in/wip^1)
+    new=$(g rev-parse refs/stopcord/in/wip^1)
     if [ -n "$ff" ] && has_head && ! g merge-base --is-ancestor HEAD "$new"; then
         forget_in
-        echo "sawtooth-sync: its history was rewritten, so it doesn't follow on from this folder" >&2
+        echo "stopcord-sync: its history was rewritten, so it doesn't follow on from this folder" >&2
         exit 3
     fi
     # The sync decided which way to go from this folder's state a moment ago. If someone has
     # changed it since, switching would throw their edit away.
     if [ -n "$expect" ] && [ "$(state -- "$@")" != "$expect" ]; then
         forget_in
-        echo "sawtooth-sync: the folder changed during the sync, so it wasn't overwritten" >&2
+        echo "stopcord-sync: the folder changed during the sync, so it wasn't overwritten" >&2
         exit 4
     fi
     undo_head= undo_branch= undo_state=
@@ -175,19 +175,19 @@ unpack() {
     trap undo EXIT
     if [ -n "$branch" ]; then g checkout -q -f -B "$branch" "$new"; else g checkout -q -f --detach "$new"; fi
     g clean -fdq
-    g read-tree --reset -u refs/sawtooth/in/wip
+    g read-tree --reset -u refs/stopcord/in/wip
     g reset -q
     trap - EXIT
     back
-    if [ -n "$setbase" ] && [ "$setbase" != "$branch" ] && g rev-parse -q --verify refs/sawtooth/in/base >/dev/null; then
-        g branch -f "$setbase" refs/sawtooth/in/base
+    if [ -n "$setbase" ] && [ "$setbase" != "$branch" ] && g rev-parse -q --verify refs/stopcord/in/base >/dev/null; then
+        g branch -f "$setbase" refs/stopcord/in/base
     fi
     forget_in
 }
 
 knowledge() {
     name=$1
-    content=$(mktemp "${TMPDIR:-/tmp}/sawtooth-kb.XXXXXX")
+    content=$(mktemp "${TMPDIR:-/tmp}/stopcord-kb.XXXXXX")
     cat > "$content"
     if [ -n "$(g ls-files -- "$name")" ]; then rm -f "$content"; return; fi
     rm -rf "$name"
@@ -202,7 +202,7 @@ read_knowledge() {
     if [ -L "$name" ] || [ ! -f "$name" ] || [ -n "$(g ls-files -- "$name")" ]; then echo none; return; fi
     # Read once, and only up to one byte past the limit: an agent can change the file between a
     # check and a read, so what's measured has to be what's sent.
-    copy=$(mktemp "${TMPDIR:-/tmp}/sawtooth-kb.XXXXXX")
+    copy=$(mktemp "${TMPDIR:-/tmp}/stopcord-kb.XXXXXX")
     head -c 1048577 < "$name" > "$copy"
     if [ "$(wc -c < "$copy")" -gt 1048576 ]; then rm -f "$copy"; echo none; return; fi
     echo copy
@@ -218,5 +218,5 @@ case $cmd in
     unpack) unpack "$@" ;;
     knowledge) knowledge "$@" ;;
     read-knowledge) read_knowledge "$@" ;;
-    *) echo "usage: sawtooth-sync state|pack|unpack|knowledge ..." >&2; exit 2 ;;
+    *) echo "usage: stopcord-sync state|pack|unpack|knowledge ..." >&2; exit 2 ;;
 esac

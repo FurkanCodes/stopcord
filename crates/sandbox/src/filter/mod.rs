@@ -244,7 +244,7 @@ fn dispatch(inner: &Arc<Inner>, mut client: Conn) {
         inner.active.fetch_sub(1, Ordering::SeqCst);
         let _ = client.set_write_timeout(Some(Duration::from_secs(1)));
         let _ = client.write_all(
-            b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 28\r\nConnection: close\r\n\r\nsawtooth: too many requests\n",
+            b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 28\r\nConnection: close\r\n\r\nstopcord: too many requests\n",
         );
         return;
     }
@@ -267,7 +267,7 @@ fn handle(inner: &Inner, mut client: Conn) {
             refuse(
                 &mut client,
                 "431 Request Header Fields Too Large",
-                "sawtooth: request header too large",
+                "stopcord: request header too large",
             );
             return;
         }
@@ -277,7 +277,7 @@ fn handle(inner: &Inner, mut client: Conn) {
         refuse(
             &mut client,
             "400 Bad Request",
-            "sawtooth: not a proxy request this filter can read",
+            "stopcord: not a proxy request this filter can read",
         );
         return;
     };
@@ -292,7 +292,7 @@ fn handle(inner: &Inner, mut client: Conn) {
         refuse(
             &mut client,
             "403 Forbidden",
-            &format!("sawtooth: {} is not on the allow list", target.host),
+            &format!("stopcord: {} is not on the allow list", target.host),
         );
         return;
     }
@@ -303,7 +303,7 @@ fn handle(inner: &Inner, mut client: Conn) {
             refuse(
                 &mut client,
                 "502 Bad Gateway",
-                &format!("sawtooth: could not reach {}", target.host),
+                &format!("stopcord: could not reach {}", target.host),
             );
             return;
         }

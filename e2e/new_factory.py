@@ -9,7 +9,7 @@ try:
     launch(); time.sleep(1.5)
     press('+'); time.sleep(1)
     check('harness, model and effort are dropdowns', all(bridge(f"return document.getElementById('{i}')?.tagName") == 'SELECT' for i in ('nf-h', 'nf-m', 'nf-e', 'nf-r-h', 'nf-r-m', 'nf-r-e')))
-    check('every harness sawtooth knows is offered', all(h in options('#nf-h') for h in ('claude', 'codex', 'gemini', 'opencode', 'pi', 'other')), options('#nf-h'))
+    check('every harness stopcord knows is offered', all(h in options('#nf-h') for h in ('claude', 'codex', 'gemini', 'opencode', 'pi', 'other')), options('#nf-h'))
     fill('#f-folder', os.path.realpath(R)); time.sleep(0.5)
     choose('#nf-h', 'claude'); choose('#nf-m', 'opus'); choose('#nf-e', 'high')
     choose('#nf-r-h', 'codex'); choose('#nf-r-e', 'low')

@@ -227,7 +227,7 @@ impl Terminal {
 
         let reading = Arc::clone(&term);
         thread::Builder::new()
-            .name("sawtooth-term-read".into())
+            .name("stopcord-term-read".into())
             .spawn(move || {
                 let mut buf = vec![0u8; 16 * 1024];
                 loop {
@@ -404,7 +404,7 @@ mod tests {
         unsafe { std::env::set_var("CLAUDE_CODE_CHILD_SESSION", "1") };
         let (tx, rx) = mpsc::channel();
         let mut spec = sh("echo \"[${CLAUDE_CODE_CHILD_SESSION}:${HOME:+home}]\"");
-        spec.env.push(("SAWTOOTH_PROBE".into(), "1".into()));
+        spec.env.push(("STOPCORD_PROBE".into(), "1".into()));
         let term = Terminal::spawn(spec, move |e| {
             let _ = tx.send(e);
         })

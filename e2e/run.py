@@ -13,8 +13,8 @@ import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(HERE)
-APP = REPO + '/target/debug/sawtooth-app'
-ROOT = os.environ.get('SAWTOOTH_E2E_ROOT') or os.path.expanduser('~/.sawtooth-e2e')
+APP = REPO + '/target/debug/stopcord-app'
+ROOT = os.environ.get('STOPCORD_E2E_ROOT') or os.path.expanduser('~/.stopcord-e2e')
 BUILD = 'in app/: npx tauri build --debug --no-bundle'
 
 TESTS = [

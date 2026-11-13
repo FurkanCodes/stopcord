@@ -303,7 +303,7 @@ export function connect() {
     async (info) => {
       const agents = [...info.agents].sort();
       setState({ agents });
-      // Every harness Sawtooth has a profile for, not only the ones it can read the screen of.
+      // Every harness Stopcord has a profile for, not only the ones it can read the screen of.
       const profiles = await api.harnesses().catch(() => []);
       const names = [...new Set([...agents, ...profiles.flatMap((p) => p.commands)])];
       const installed = await api.installed(names);
@@ -366,7 +366,7 @@ export function stateWords(t: Terminal): string {
     case 'exited':
       return t.exit_code ? `Ended with code ${t.exit_code}` : 'Ended';
     default:
-      // Sawtooth can't read the state of an agent it doesn't know.
+      // Stopcord can't read the state of an agent it doesn't know.
       return t.running ? `Running ${t.running}` : 'Shell';
   }
 }
@@ -448,10 +448,10 @@ export function openNeed(n: FleetNeed) {
   }
 }
 
-/** Sawtooth's own folder, from where it keeps worktrees. */
-export function sawtoothHome(factories: Factory[]): string {
+/** Stopcord's own folder, from where it keeps worktrees. */
+export function stopcordHome(factories: Factory[]): string {
   const dir = factories[0]?.worktreesDir;
-  return dir ? dir.replace(/\/worktrees\/[^/]+\/?$/, '') : '~/.sawtooth';
+  return dir ? dir.replace(/\/worktrees\/[^/]+\/?$/, '') : '~/.stopcord';
 }
 
 export function needsOf(f: Factory | undefined, terminals: Terminal[]): Need[] {

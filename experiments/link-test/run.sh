@@ -19,7 +19,7 @@ here=$(cd "$(dirname "$0")" && pwd)
 harnesses=claude,codex,gemini,opencode
 cases=control,link,second
 probes=load,follow,write
-root=${TMPDIR:-/tmp}/sawtooth-link-test
+root=${TMPDIR:-/tmp}/stopcord-link-test
 dry=0
 timeout_s=${LINK_TEST_TIMEOUT:-300}
 
@@ -81,7 +81,7 @@ for h in "${H[@]}"; do
     done
     # What the write probe left behind.
     {
-      for f in CLAUDE.md AGENTS.md GEMINI.md CLAUDE.local.md AGENTS.override.md SAWTOOTH.md; do
+      for f in CLAUDE.md AGENTS.md GEMINI.md CLAUDE.local.md AGENTS.override.md STOPCORD.md; do
         if [ -L "$wt/$f" ]; then echo "$f link"; elif [ -e "$wt/$f" ]; then echo "$f file"; fi
       done
       echo "status $(git -C "$wt" status --porcelain | tr '\n' ';')"

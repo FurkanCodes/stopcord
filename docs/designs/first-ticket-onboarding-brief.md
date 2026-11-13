@@ -5,7 +5,7 @@
 
 ## Overview
 
-When Sawtooth opens with no factories, this feature takes a new user from the empty Home screen to one small ticket in their own repo going through the default line (plan, approve, build, verify, review, handoff). The guided steps are:
+When Stopcord opens with no factories, this feature takes a new user from the empty Home screen to one small ticket in their own repo going through the default line (plan, approve, build, verify, review, handoff). The guided steps are:
 
 1. pick a folder
 2. pass a setup check (harness installed and signed in, folder is a git repo, test command runs), with a fix shown for each failure
@@ -15,7 +15,7 @@ When Sawtooth opens with no factories, this feature takes a new user from the em
 
 After approval, the app says where it will show what needs the user. Each stage explains itself in place when the ticket reaches it. The first run ends when the ticket reaches an end. A practice copy or sample project is offered only to people who won't use their own repo.
 
-The target user is an engineer who already uses a coding-agent CLI and has never used Sawtooth. The value claim is that "nothing to look up, nothing fails silently, every step says what happens next" gets them through a first ticket without a docs site.
+The target user is an engineer who already uses a coding-agent CLI and has never used Stopcord. The value claim is that "nothing to look up, nothing fails silently, every step says what happens next" gets them through a first ticket without a docs site.
 
 Six review lenses looked at the concept: design, codebase details, zoom-out, comprehension, implementation readiness and structure. They agree on one thing. Four of the concept's promises are not true of the code today:
 - "the test command runs"
@@ -69,7 +69,7 @@ Those four have to be made true, or reworded, before any onboarding copy is writ
 - **Trust prompts stop the first plan at the `worktree` level.** There, the "trust this folder" prompts of Claude and Codex are not answered automatically (`harness.rs:128-133,156-161`).
 
 **5. "It will tell you when it needs you" has no channel outside the window.**
-- **Notifications exist only inside the app.** The only Tauri plugin is the file dialog (`app/src-tauri/Cargo.toml:23`). The factory's notification setting says "only inside sawtooth" (`app/src/factory/Setup.tsx:500`).
+- **Notifications exist only inside the app.** The only Tauri plugin is the file dialog (`app/src-tauri/Cargo.toml:23`). The factory's notification setting says "only inside stopcord" (`app/src/factory/Setup.tsx:500`).
 - **Closing the window hides it, and the engine keeps working** (`main.rs:1152-1158`).
 - **"Needs you" shows only in Home's "next up" and in Work** (`app/src/Home.tsx:199-214`, `app/src/store.ts:409-419`).
 - The promise fails exactly when the user has stepped away, which is what the concept tells them they can do.
@@ -133,7 +133,7 @@ Those four have to be made true, or reworded, before any onboarding copy is writ
 - **Folder step:** New factory's nearby-folder picker, browse and clone, `detectProject` (git, branch, harness files, test command), and the "will create" pane (`NewFactory.tsx:62-76,151-189,449-456`; `project.rs:34-42,88-139`).
 - **Check UI:** the Integrations `Step` component and `ConnectionState` (`app/src/Integrations.tsx:209,339-343`).
 - **Check result shape:** `probe::Check` (`app/src-tauri/src/probe.rs:45-53`).
-- **Sandbox checks:** `test_runner` (`main.rs:697-701`, needs a factory) and `sawtooth_sandbox::available()` (`crates/sandbox/src/wrap.rs:20`).
+- **Sandbox checks:** `test_runner` (`main.rs:697-701`, needs a factory) and `stopcord_sandbox::available()` (`crates/sandbox/src/wrap.rs:20`).
 - **Writing the ticket:** `Compose` in Work (`Work.tsx:307-390`).
 - **Explaining each step:**
   - Detail's per-state `say` line (`Work.tsx:603-643`);
@@ -213,7 +213,7 @@ Those four have to be made true, or reworded, before any onboarding copy is writ
    - Options: a one-shot "reply ok" ping per harness, which needs `one_shot` to work without a saved factory and costs a model call; an optional auth command in harness profile data; or no check, relying on the terminal's "asking you" state.
    - Decide whether "can't tell" blocks.
 5. **"Tell you when it needs you."**
-   - Options: add OS notifications or a dock badge (a new plugin and permission prompt), or reword it to "it shows on Home under next up; sawtooth doesn't notify outside the app".
+   - Options: add OS notifications or a dock badge (a new plugin and permission prompt), or reword it to "it shows on Home under next up; stopcord doesn't notify outside the app".
    - Also decide what closing the window says the first time.
 6. **Protected tests on a first ticket.** Either change the default line so tests a ticket adds don't raise a finding, or make this a planned, explained stop.
 7. **Empty plan.** Either make the first-run planner always write a short plan, or say plainly what approving means when there is none.

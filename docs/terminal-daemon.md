@@ -1,8 +1,8 @@
 # The terminal daemon
 
-`sawtooth daemon` owns every terminal. Terminals keep running when no window is open. The daemon reads each screen and decides what the agent in it is doing, using the rule files in `crates/detect/rules/`.
+`stopcord daemon` owns every terminal. Terminals keep running when no window is open. The daemon reads each screen and decides what the agent in it is doing, using the rule files in `crates/detect/rules/`.
 
-It listens on `$SAWTOOTH_SOCKET`, or `~/.sawtooth/sawtooth.sock`. The socket file is mode 0600 and its folder is 0700. Rule files in `~/.sawtooth/rules/*.toml` replace the bundled ones with the same `id`.
+It listens on `$STOPCORD_SOCKET`, or `~/.stopcord/stopcord.sock`. The socket file is mode 0600 and its folder is 0700. Rule files in `~/.stopcord/rules/*.toml` replace the bundled ones with the same `id`.
 
 ## States
 
@@ -11,7 +11,7 @@ It listens on `$SAWTOOTH_SOCKET`, or `~/.sawtooth/sawtooth.sock`. The socket fil
 | `working` | Busy with a turn. |
 | `idle` | Waiting for the next instruction. |
 | `blocked` | Stopped on a question only a person can answer. |
-| `unknown` | No agent Sawtooth knows is in front: a plain shell. |
+| `unknown` | No agent Stopcord knows is in front: a plain shell. |
 | `exited` | The program ended. `exit_code` says how. |
 
 `needs_you` is true when the terminal is `blocked`, or when it has finished a turn nobody has looked at (`unseen`). A turn counts only after something was typed into the terminal, so startup spinners never count. A working agent must look idle for 1.2 s before its turn counts as finished.

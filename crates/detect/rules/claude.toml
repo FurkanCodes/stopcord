@@ -1,7 +1,7 @@
 # Screen rules for Claude Code.
 # Adapted from herdr's detection manifest src/detect/manifests/claude.toml
 # (https://github.com/herdrdev/herdr), licensed under the Apache License 2.0;
-# see LICENSE-herdr.txt beside this file. Changed for Sawtooth: added `names`
+# see LICENSE-herdr.txt beside this file. Changed for Stopcord: added `names`
 # and dropped herdr's label aliases. The rule format is otherwise the same.
 
 id = "claude"

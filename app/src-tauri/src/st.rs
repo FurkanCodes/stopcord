@@ -1,6 +1,6 @@
 //! `st`: how an agent tells the factory what it's doing.
 //!
-//! It's this same program, reached through a small script in `~/.sawtooth/bin`.
+//! It's this same program, reached through a small script in `~/.stopcord/bin`.
 //! It talks over the socket its terminal was given, and that socket is what proves
 //! who is speaking.
 
@@ -74,7 +74,7 @@ fn words(rest: &[String]) -> Result<String, String> {
 }
 
 fn send(socket: &str, report: &Value) -> Result<(), String> {
-    let mut s = UnixStream::connect(socket).map_err(|e| format!("couldn't reach Sawtooth: {e}"))?;
+    let mut s = UnixStream::connect(socket).map_err(|e| format!("couldn't reach Stopcord: {e}"))?;
     let _ = s.set_read_timeout(Some(Duration::from_secs(5)));
     writeln!(s, "{report}").map_err(|e| e.to_string())?;
     let mut reply = String::new();
@@ -83,14 +83,14 @@ fn send(socket: &str, report: &Value) -> Result<(), String> {
     if v["ok"] == true {
         Ok(())
     } else {
-        Err(v["error"].as_str().unwrap_or("Sawtooth refused that").to_string())
+        Err(v["error"].as_str().unwrap_or("Stopcord refused that").to_string())
     }
 }
 
-/// What `sawtooth-app st ...` does. Returns the exit code.
+/// What `stopcord-app st ...` does. Returns the exit code.
 pub fn main(args: &[String]) -> i32 {
-    let Ok(socket) = std::env::var("SAWTOOTH_REPORT") else {
-        eprintln!("st: this isn't a Sawtooth factory terminal");
+    let Ok(socket) = std::env::var("STOPCORD_REPORT") else {
+        eprintln!("st: this isn't a Stopcord factory terminal");
         return 2;
     };
     let outcome = parse(args).and_then(|report| send(&socket, &report));

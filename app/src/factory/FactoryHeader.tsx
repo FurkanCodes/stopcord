@@ -12,7 +12,7 @@ const tabs: [Tab, string, string][] = [
   ['setup', '6', 'setup'],
 ];
 
-/** sawtooth › factory │ [1] work [2] map [3] terminals [4] knowledge [5] runs [6] setup */
+/** stopcord › factory │ [1] work [2] map [3] terminals [4] knowledge [5] runs [6] setup */
 export function FactoryHeader({ factory, tab, extra }: { factory: Factory; tab: Tab; extra?: ReactNode }) {
   const waiting = factory.work.filter((w) => w.stage === 'proposed' || (w.stage === 'running' && w.waiting !== 'no' && w.waiting !== 'landing')).length;
   return (

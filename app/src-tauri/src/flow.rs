@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use sawtooth_sandbox::{Network, Policy, wrap};
+use stopcord_sandbox::{Network, Policy, wrap};
 use serde_json::{Value, json};
 
 use crate::engine::{Engine, StartRequest};
@@ -90,14 +90,14 @@ pub(crate) fn command_line(argv: &[String], env: &[(String, String)]) -> String 
 /// The gate is code an agent could have edited, so it never runs unconfined if it can be helped.
 pub(crate) fn confined_check(store_dir: &Path, snapshot: &Path, command: &str, network: bool, program: &Path) -> Result<String, String> {
     let login = vec![shell::user_shell(), "-l".to_string(), "-c".to_string(), command.to_string()];
-    if sawtooth_sandbox::available().is_err() {
+    if stopcord_sandbox::available().is_err() {
         return Ok(command_line(&login, &[]));
     }
     let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("/"));
     let mut p = Policy::new(snapshot.to_path_buf(), home.clone(), program.to_path_buf());
     p.network = if network { Network::Open } else { Network::Off };
     // With the network open, these are the way out: the daemon starts terminals with no sandbox.
-    p.masked_sockets = crate::runner::masked_sockets(&home, store_dir, &sawtooth_daemon::paths::socket());
+    p.masked_sockets = crate::runner::masked_sockets(&home, store_dir, &stopcord_daemon::paths::socket());
     p.deny_read.push(store_dir.join("secrets"));
     let wrapped = wrap(&p, &login, &store_dir.join("run")).map_err(|e| format!("{e:#}"))?;
     Ok(command_line(&wrapped.argv, &wrapped.env))
@@ -315,7 +315,7 @@ impl Engine {
         };
         let mut steps = Vec::new();
         for raw in reports {
-            let Ok(report) = sawtooth_daemon::confine::clean_report(&raw.to_string()) else { continue };
+            let Ok(report) = stopcord_daemon::confine::clean_report(&raw.to_string()) else { continue };
             match self.report_step(factory, key, None, &report) {
                 Some(Step::Nothing) => {}
                 Some(step) => steps.push(step),
@@ -1228,7 +1228,7 @@ impl Engine {
         hooks::run_command(&hooks::login_command(&shell::user_shell(), &landed), &dir, &mut std::io::sink(), Some(LANDED_TIMEOUT)).0
     }
 
-    /// Finishes work that landed, including anything merged outside Sawtooth.
+    /// Finishes work that landed, including anything merged outside Stopcord.
     pub(crate) fn finish_landed(self: &Arc<Self>, f: &Factory) {
         for w in f.work.iter().filter(|w| w.stage == Stage::Running && matches!(w.waiting, Waiting::Handoff | Waiting::Landing)) {
             if w.bench.is_none() && self.has_landed(f, w) {
@@ -1366,7 +1366,7 @@ pub(crate) fn test_report(home: &Path, f: &Factory, r: &crate::factories::Report
         ("ST_STAGE".to_string(), "review".to_string()),
         ("ST_BRANCH".to_string(), "st/test-1".to_string()),
         ("ST_SOURCE".to_string(), "test".to_string()),
-        ("ST_TEXT".to_string(), "This is a test from Sawtooth. Nothing happened to any real work.".to_string()),
+        ("ST_TEXT".to_string(), "This is a test from Stopcord. Nothing happened to any real work.".to_string()),
     ];
     send_report(home, f, r, &env)
 }

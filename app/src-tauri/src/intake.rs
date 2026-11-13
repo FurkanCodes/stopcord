@@ -179,7 +179,7 @@ impl Engine {
                     c
                 } else {
                     let mut c = Command::new("systemd-inhibit");
-                    c.args(["--what=idle:sleep", "--who=Sawtooth", "--why=A factory is working", "sleep", "infinity"]);
+                    c.args(["--what=idle:sleep", "--who=Stopcord", "--why=A factory is working", "sleep", "infinity"]);
                     c
                 };
                 intake.awake = cmd.stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).spawn().ok();

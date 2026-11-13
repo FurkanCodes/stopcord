@@ -126,7 +126,7 @@ export function Fleet({ route, onSearch, git }: { route: Extract<Route, { screen
   const visible = all.filter(matches);
   const backToList = () => document.querySelector<HTMLElement>(`[data-term="${cur?.id}"]`)?.focus();
 
-  // Typing into the terminal is a mode of its own: keys go to the agent, not to Sawtooth.
+  // Typing into the terminal is a mode of its own: keys go to the agent, not to Stopcord.
   const [typing, setTyping] = useState(false);
   // The app takes ⌘↑ for itself only while a terminal has the keys.
   useEffect(() => {
@@ -257,7 +257,7 @@ export function Fleet({ route, onSearch, git }: { route: Extract<Route, { screen
         ['tab', 'next field'],
         ['j/k', 'other terminals, once out of the form'],
       ] : typing ? [
-        ['⌘↑', 'back to Sawtooth'],
+        ['⌘↑', 'back to Stopcord'],
         ['esc', `goes to ${cur ? harnessOf(cur) : 'the terminal'}: it stops its turn`, false],
         ['click outside', 'also takes you back'],
       ] : [
@@ -274,7 +274,7 @@ export function Fleet({ route, onSearch, git }: { route: Extract<Route, { screen
       ]}
       status={{
         mode: typing ? 'TERMINAL' : 'TERMINALS',
-        path: typing && cur ? `keys go to ${cur.name} · ⌘↑ back to Sawtooth` : cur ? `${curGroupName}/${branch ?? tilde(cur.cwd)}` : curGroupName,
+        path: typing && cur ? `keys go to ${cur.name} · ⌘↑ back to Stopcord` : cur ? `${curGroupName}/${branch ?? tilde(cur.cwd)}` : curGroupName,
         info: `${all.length} terminal${all.length === 1 ? '' : 's'}${drafts.length ? ` · ${drafts.length} not started` : ''}${routeFactory?.queue.length ? ` · ${queued} queued` : ''}`,
       }}
     >

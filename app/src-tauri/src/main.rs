@@ -1,9 +1,9 @@
-//! The Sawtooth app: a window onto the terminal daemon, and the engine that
+//! The Stopcord app: a window onto the terminal daemon, and the engine that
 //! makes each factory's parts act.
 //!
 //! The same program has two other jobs, picked by its first argument:
-//! `sawtooth-app daemon` runs the terminal daemon, so the app can start one
-//! without shipping a second program, and `sawtooth-app hook <factory> <hook>`
+//! `stopcord-app daemon` runs the terminal daemon, so the app can start one
+//! without shipping a second program, and `stopcord-app hook <factory> <hook>`
 //! runs a factory's checks from a git hook. Terminals belong to the daemon and
 //! keep running when the window closes.
 
@@ -57,7 +57,7 @@ use engine::{Engine, StartRequest};
 use factories::{Factory, Kind, Level, Part, RunsOn, Store, Ticket};
 use project::{FolderSuggestion, ProjectInfo};
 use runs::Run;
-use sawtooth_daemon::{Config, Daemon, paths};
+use stopcord_daemon::{Config, Daemon, paths};
 use serde::Serialize;
 use serde_json::{Value, json};
 use tauri::menu::{Menu, MenuItem, Submenu};
@@ -807,7 +807,7 @@ struct Machine {
 fn machine_of(app: &App) -> Result<Machine, Failure> {
     Ok(Machine {
         settings: settings::load(app.store.home()).map_err(fail)?,
-        sandbox: sawtooth_sandbox::available().err(),
+        sandbox: stopcord_sandbox::available().err(),
     })
 }
 
@@ -1079,14 +1079,14 @@ fn main() {
     match args.get(1).map(String::as_str) {
         Some("daemon") => {
             if let Err(e) = Daemon::new(Config::default()).serve() {
-                eprintln!("sawtooth: {e:#}");
+                eprintln!("stopcord: {e:#}");
                 std::process::exit(1);
             }
             return;
         }
         Some("hook") => {
             let (Some(id), Some(hook)) = (args.get(2), args.get(3)) else {
-                eprintln!("sawtooth: usage: sawtooth-app hook <factory> <pre-commit|pre-push>");
+                eprintln!("stopcord: usage: stopcord-app hook <factory> <pre-commit|pre-push>");
                 std::process::exit(0);
             };
             let store = Store::new(paths::home());
@@ -1094,16 +1094,16 @@ fn main() {
             std::process::exit(hooks::run_hook(&store, id, hook, &cwd));
         }
         Some("st") => std::process::exit(st::main(&args[2..])),
-        Some("sandbox-bridge") => std::process::exit(sawtooth_sandbox::bridge_main(&args[2..])),
+        Some("sandbox-bridge") => std::process::exit(stopcord_sandbox::bridge_main(&args[2..])),
         Some("probe") => std::process::exit(probe::main(&args[2..])),
         Some("vm-run") => std::process::exit(vm::main(&args[2..])),
         _ => {}
     }
 
-    let program = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("sawtooth-app"));
+    let program = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("stopcord-app"));
     let store = Arc::new(Store::new(paths::home()));
     if let Err(e) = st::install(store.home(), &program) {
-        eprintln!("sawtooth: couldn't install st: {e}");
+        eprintln!("stopcord: couldn't install st: {e}");
     }
     let app = App {
         store: Arc::clone(&store),
@@ -1138,7 +1138,7 @@ fn main() {
             let leave = MenuItem::with_id(
                 tauri_app,
                 "leave-terminal",
-                "Back to Sawtooth",
+                "Back to Stopcord",
                 true,
                 Some("CmdOrCtrl+Up"),
             )?;
@@ -1242,7 +1242,7 @@ fn main() {
             save_harness,
         ])
         .build(tauri::generate_context!())
-        .expect("Sawtooth couldn't open its window");
+        .expect("Stopcord couldn't open its window");
 
     built.run(|handle, event| {
         #[cfg(target_os = "macos")]

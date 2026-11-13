@@ -56,7 +56,7 @@ pub fn installed(shell: &str, names: &[String], timeout: Duration) -> Vec<String
         .join(" ");
     // Shell start-up files may print things, so each answer is marked.
     let script = format!(
-        "for c in {list}; do command -v \"$c\" >/dev/null 2>&1 && printf '@@sawtooth:%s\\n' \"$c\"; done"
+        "for c in {list}; do command -v \"$c\" >/dev/null 2>&1 && printf '@@stopcord:%s\\n' \"$c\"; done"
     );
     let Ok(mut child) = Command::new(shell)
         .args(["-l", "-i", "-c", &script])
@@ -87,7 +87,7 @@ pub fn installed(shell: &str, names: &[String], timeout: Duration) -> Vec<String
     }
     let text = reading.join().unwrap_or_default();
     text.lines()
-        .filter_map(|line| line.strip_prefix("@@sawtooth:"))
+        .filter_map(|line| line.strip_prefix("@@stopcord:"))
         .map(String::from)
         .collect()
 }
@@ -142,7 +142,7 @@ mod tests {
     fn finds_what_the_shell_can_run() {
         let names = vec![
             "sh".to_string(),
-            "no-such-command-sawtooth".to_string(),
+            "no-such-command-stopcord".to_string(),
             "rm -rf".to_string(),
         ];
         assert_eq!(

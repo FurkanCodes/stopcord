@@ -91,11 +91,11 @@ case $case in
   second)
     ln -s "$kb" "$wt/CLAUDE.local.md"      # Claude Code: local project instructions
     ln -s "$kb" "$wt/AGENTS.override.md"   # Codex: replaces AGENTS.md for Codex only
-    ln -s "$kb" "$wt/SAWTOOTH.md"          # Gemini CLI, via context.fileName below
+    ln -s "$kb" "$wt/STOPCORD.md"          # Gemini CLI, via context.fileName below
     mkdir -p "$wt/.gemini"
-    printf '{\n  "context": { "fileName": ["AGENTS.md", "SAWTOOTH.md"] }\n}\n' > "$wt/.gemini/settings.json"
+    printf '{\n  "context": { "fileName": ["AGENTS.md", "STOPCORD.md"] }\n}\n' > "$wt/.gemini/settings.json"
     printf '{\n  "$schema": "https://opencode.ai/config.json",\n  "instructions": ["%s"]\n}\n' "$kb" > "$wt/opencode.json"
-    printf '%s\n' CLAUDE.local.md AGENTS.override.md SAWTOOTH.md .gemini/ opencode.json >> "$exclude"
+    printf '%s\n' CLAUDE.local.md AGENTS.override.md STOPCORD.md .gemini/ opencode.json >> "$exclude"
     ;;
 esac
 

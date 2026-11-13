@@ -71,7 +71,7 @@ function Cards({ ctx }: { ctx: Ctx }) {
 }
 
 // The service last open, kept per window for convenience only: without it, the page opens on the first.
-const SERVICE = 'sawtooth.integrations.service';
+const SERVICE = 'stopcord.integrations.service';
 function serviceWas(): string {
   try {
     return localStorage.getItem(SERVICE) ?? '';
@@ -149,7 +149,7 @@ export function Integrations({ service }: { service?: string }) {
           ))}
         </ul>
         <p className="t-dim" style={{ margin: '14px 8px 0', paddingTop: 8, borderTop: '1px dashed var(--line-dash)', fontSize: 12 }}>
-          sign in once here, and pick which factories its work goes to. tokens stay on this machine, in sawtooth&apos;s secrets.
+          sign in once here, and pick which factories its work goes to. tokens stay on this machine, in stopcord&apos;s secrets.
         </p>
       </Pane>
       <div data-integrations-main style={{ flex: '1 1 0', minWidth: 0, minHeight: 0, overflow: 'auto', display: 'flex', flexDirection: 'column', gap: 18, padding: '2px 4px 10px' }}>
@@ -464,7 +464,7 @@ function GitHubCard({ ctx }: { ctx: Ctx }) {
   return (
     <Card id="github" name="GitHub" rows={false} state={signed ? <ConnectionState ok>{using.length > 0 ? `issues go to ${using.map((f) => f.name).join(', ')}` : 'signed in · pick where its issues go below'}</ConnectionState> : testLine(tested, 'checking gh…')}>
       <Step n={1} done={signed} current={!signed} title="sign in with gh" summary={signed ? said(tested) : undefined}>
-        <span className="t-muted">sawtooth uses the gh command as you, so there's no token to paste. in a terminal, run</span>
+        <span className="t-muted">stopcord uses the gh command as you, so there's no token to paste. in a terminal, run</span>
         <code style={{ userSelect: 'text' }}>gh auth login</code>
         <span>
           <Key size="xs" onClick={retest}>check again</Key> <CopyKey text="gh auth login">copy the command</CopyKey>
@@ -826,7 +826,7 @@ function SlackCard({ ctx, c }: { ctx: Ctx; c: Connection }) {
         </Check>
       </Step>
       <Step n={4} done={allowed.length > 0} current={listening && allowed.length === 0} title="let yourself in" summary={`${allowed.length} allowed`}>
-        <span className="t-muted">in any channel, type /invite @sawtooth, then send @sawtooth hello. you'll show up here, and one press lets you send work.</span>
+        <span className="t-muted">in any channel, type /invite @stopcord, then send @stopcord hello. you'll show up here, and one press lets you send work.</span>
         {knocks.length === 0 && <span className="t-dim">waiting for a mention…</span>}
         {knocks.map((k) => (
           <span key={k.user} data-knock={k.user} style={{ display: 'flex', gap: 10, alignItems: 'baseline', flexWrap: 'wrap' }}>
@@ -843,7 +843,7 @@ function SlackCard({ ctx, c }: { ctx: Ctx; c: Connection }) {
         )}
       </Step>
       <Step n={5} done={Boolean(s.slack.factory) || ctx.allFactories.length < 2} current={allowed.length > 0 && !s.slack.factory && ctx.allFactories.length > 1} title="where a mention's work goes" summary={s.slack.factory ? ctx.allFactories.find((f) => f.id === s.slack.factory)?.name : 'the factory it names'}>
-        <span className="t-muted">a message can start with a factory's name, as in @sawtooth web shop: fix the login. without one, it goes here:</span>
+        <span className="t-muted">a message can start with a factory's name, as in @stopcord web shop: fix the login. without one, it goes here:</span>
         <select id="ig-sl-f" className="t-field" value={s.slack.factory} onChange={(e) => void ctx.change({ ...s, slack: { ...s.slack, factory: e.currentTarget.value } })}>
           <option value="">none: ask which factory</option>
           {ctx.allFactories.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}

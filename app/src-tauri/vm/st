@@ -48,9 +48,9 @@ def parse(args):
 
 
 def send(report):
-    where, key = os.environ.get("SAWTOOTH_REPORT", ""), os.environ.get("SAWTOOTH_KEY", "")
+    where, key = os.environ.get("STOPCORD_REPORT", ""), os.environ.get("STOPCORD_KEY", "")
     if not where or not key:
-        raise RuntimeError("this isn't a Sawtooth factory terminal")
+        raise RuntimeError("this isn't a Stopcord factory terminal")
     host, _, port = where.rpartition(":")
     with socket.create_connection((host, int(port)), timeout=10) as s:
         s.sendall(f"{key} {json.dumps(report)}\n".encode())
@@ -58,9 +58,9 @@ def send(report):
     try:
         answer = json.loads(reply)
     except ValueError:
-        raise RuntimeError("couldn't reach Sawtooth")
+        raise RuntimeError("couldn't reach Stopcord")
     if answer.get("ok") is not True:
-        raise RuntimeError(answer.get("error") or "Sawtooth refused that")
+        raise RuntimeError(answer.get("error") or "Stopcord refused that")
 
 
 def main(args):

@@ -2746,76 +2746,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "sawtooth-app"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "base64 0.22.1",
- "block2",
- "chrono",
- "libc",
- "objc2",
- "objc2-app-kit",
- "sawtooth-daemon",
- "sawtooth-sandbox",
- "serde",
- "serde_json",
- "serde_yaml_ng",
- "sha2",
- "tauri",
- "tauri-build",
- "tauri-plugin-dialog",
- "tempfile",
- "tungstenite",
- "ureq",
-]
-
-[[package]]
-name = "sawtooth-daemon"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "base64 0.22.1",
- "libc",
- "sawtooth-detect",
- "sawtooth-sandbox",
- "sawtooth-term",
- "serde",
- "serde_json",
- "tempfile",
-]
-
-[[package]]
-name = "sawtooth-detect"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "regex",
- "serde",
- "toml 0.8.23",
-]
-
-[[package]]
-name = "sawtooth-sandbox"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "libc",
- "serde",
- "tempfile",
-]
-
-[[package]]
-name = "sawtooth-term"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "libc",
- "portable-pty",
- "vt100",
-]
-
-[[package]]
 name = "schemars"
 version = "0.8.22"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3221,6 +3151,76 @@ name = "static_vcruntime"
 version = "3.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ff7589a1859b09232522bb9edf076ca7fcf14ded96685d3fa629db73023ffbb7"
+
+[[package]]
+name = "stopcord-app"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "base64 0.22.1",
+ "block2",
+ "chrono",
+ "libc",
+ "objc2",
+ "objc2-app-kit",
+ "serde",
+ "serde_json",
+ "serde_yaml_ng",
+ "sha2",
+ "stopcord-daemon",
+ "stopcord-sandbox",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-dialog",
+ "tempfile",
+ "tungstenite",
+ "ureq",
+]
+
+[[package]]
+name = "stopcord-daemon"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "base64 0.22.1",
+ "libc",
+ "serde",
+ "serde_json",
+ "stopcord-detect",
+ "stopcord-sandbox",
+ "stopcord-term",
+ "tempfile",
+]
+
+[[package]]
+name = "stopcord-detect"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "regex",
+ "serde",
+ "toml 0.8.23",
+]
+
+[[package]]
+name = "stopcord-sandbox"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "libc",
+ "serde",
+ "tempfile",
+]
+
+[[package]]
+name = "stopcord-term"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "libc",
+ "portable-pty",
+ "vt100",
+]
 
 [[package]]
 name = "string_cache"

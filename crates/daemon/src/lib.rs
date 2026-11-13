@@ -1,4 +1,4 @@
-//! The Sawtooth daemon: it owns every terminal, keeps them running when no
+//! The Stopcord daemon: it owns every terminal, keeps them running when no
 //! window is open, tells what each agent is doing, and answers on a local socket.
 //!
 //! The socket speaks newline-delimited JSON. Send `{"id":"1","method":"…","params":{…}}`,

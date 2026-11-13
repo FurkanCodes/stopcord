@@ -1,4 +1,4 @@
-//! `sawtooth-app probe <spec>`: run inside a runner's sandbox, it tries what the sandbox should
+//! `stopcord-app probe <spec>`: run inside a runner's sandbox, it tries what the sandbox should
 //! allow or stop and prints what happened. Nothing it tries leaves a trace: a file written by
 //! mistake is removed, connections are closed at once, and `open -h` only prints its help.
 
@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct Spec {
-    /// Whether this runner is Sawtooth's own sandbox. Without one, everything is expected to work.
+    /// Whether this runner is Stopcord's own sandbox. Without one, everything is expected to work.
     pub contained: bool,
     /// Whether it reads only what's listed.
     pub listed: bool,
@@ -53,7 +53,7 @@ pub struct Check {
 }
 
 /// The line the probe's result is printed on, so a login shell's own output can't be mistaken for it.
-pub const MARK: &str = "SAWTOOTH-PROBE ";
+pub const MARK: &str = "STOPCORD-PROBE ";
 
 enum Outcome {
     Allowed,
@@ -97,7 +97,7 @@ fn try_read(path: &Path) -> std::io::Result<()> {
 }
 
 fn try_write(path: &Path) -> std::io::Result<()> {
-    let written = std::fs::write(path, b"sawtooth probe");
+    let written = std::fs::write(path, b"stopcord probe");
     if written.is_ok() {
         let _ = std::fs::remove_file(path);
     }
@@ -111,7 +111,7 @@ fn through_filter(proxy: &str) -> Outcome {
         return Outcome::Unclear(format!("couldn't reach the filter at {addr}"));
     };
     let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
-    let ask = "CONNECT sawtooth-probe.invalid:443 HTTP/1.1\r\nHost: sawtooth-probe.invalid:443\r\n\r\n";
+    let ask = "CONNECT stopcord-probe.invalid:443 HTTP/1.1\r\nHost: stopcord-probe.invalid:443\r\n\r\n";
     if stream.write_all(ask.as_bytes()).is_err() {
         return Outcome::Blocked;
     }
@@ -126,7 +126,7 @@ pub fn run(spec: &Spec) -> Vec<Check> {
     let sandboxed = spec.contained;
     let here = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let mut out = vec![
-        check("writes in its own folder", false, outcome(try_write(&here.join(".sawtooth-probe")))),
+        check("writes in its own folder", false, outcome(try_write(&here.join(".stopcord-probe")))),
         check("writes outside its folder", sandboxed, outcome(try_write(&spec.outside))),
     ];
     for block in &spec.blocks {
@@ -162,7 +162,7 @@ pub fn run(spec: &Spec) -> Vec<Check> {
 
 pub fn main(args: &[String]) -> i32 {
     let Some(spec) = args.first().and_then(|a| serde_json::from_str::<Spec>(a).ok()) else {
-        eprintln!("usage: sawtooth-app probe '<spec as json>'");
+        eprintln!("usage: stopcord-app probe '<spec as json>'");
         return 2;
     };
     println!("{MARK}{}", serde_json::to_string(&run(&spec)).unwrap_or_default());

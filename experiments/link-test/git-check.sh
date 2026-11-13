@@ -7,7 +7,7 @@
 set -uo pipefail
 
 here=$(cd "$(dirname "$0")" && pwd)
-dir=${1:-${TMPDIR:-/tmp}/sawtooth-link-test/git-check}
+dir=${1:-${TMPDIR:-/tmp}/stopcord-link-test/git-check}
 rm -rf "$dir"
 eval "$("$here/setup.sh" "$dir" link)" || exit 1
 

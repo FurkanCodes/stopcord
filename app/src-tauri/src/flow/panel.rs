@@ -1,4 +1,4 @@
-//! A panel: agents take turns at one stage with `st say`, each in its own terminal. Sawtooth types
+//! A panel: agents take turns at one stage with `st say`, each in its own terminal. Stopcord types
 //! each turn into the next member's terminal, and a judge that answers once scores every round.
 
 use std::sync::Arc;

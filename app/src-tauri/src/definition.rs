@@ -29,7 +29,9 @@ use crate::factories::{
     StageKind, Suite, When,
 };
 
-pub const SCHEMA: &str = "sawtooth/v1";
+pub const SCHEMA: &str = "stopcord/v1";
+/// What definitions were written as before the app was renamed from Sawtooth. Still read, written the new way.
+const OLD_SCHEMA: &str = "sawtooth/v1";
 const FACTORY_FILE: &str = "factory.yaml";
 
 fn is_false(v: &bool) -> bool {
@@ -287,7 +289,7 @@ pub fn load(dir: &Path) -> Result<Factory> {
     let file = dir.join(FACTORY_FILE);
     let text = read(&file)?;
     let doc: FactoryDoc = serde_yaml_ng::from_str(&text).with_context(|| format!("{} isn't valid", file.display()))?;
-    if doc.schema_version != SCHEMA {
+    if doc.schema_version != SCHEMA && doc.schema_version != OLD_SCHEMA {
         bail!("{} isn't valid: schemaVersion must be {SCHEMA}", file.display());
     }
     let mut parts = Vec::new();
@@ -787,7 +789,7 @@ fn git(dir: &Path, args: &[&str]) -> bool {
     Command::new("git")
         .arg("-C")
         .arg(dir)
-        .args(["-c", "user.name=Sawtooth", "-c", "user.email=sawtooth@localhost"])
+        .args(["-c", "user.name=Stopcord", "-c", "user.email=stopcord@localhost"])
         .args(["-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null"])
         .args(args)
         .stdin(std::process::Stdio::null())
@@ -952,6 +954,20 @@ mod tests {
     }
 
     #[test]
+    fn a_factory_written_before_the_rename_still_loads() {
+        let dir = tempfile::tempdir().unwrap();
+        let f = sample();
+        save(dir.path(), &f).unwrap();
+        let file = dir.path().join(FACTORY_FILE);
+        let text = std::fs::read_to_string(&file).unwrap();
+        assert!(text.contains(SCHEMA));
+        std::fs::write(&file, text.replace(SCHEMA, OLD_SCHEMA)).unwrap();
+        assert_eq!(load(dir.path()).unwrap(), f);
+        std::fs::write(&file, text.replace(SCHEMA, "something/v1")).unwrap();
+        assert!(load(dir.path()).is_err(), "any other schema is still refused");
+    }
+
+    #[test]
     fn the_files_are_where_the_layout_says() {
         let dir = tempfile::tempdir().unwrap();
         save(dir.path(), &sample()).unwrap();
@@ -966,7 +982,7 @@ mod tests {
             assert!(dir.path().join(rel).is_file(), "{rel} is missing");
         }
         let yaml = std::fs::read_to_string(dir.path().join("factory.yaml")).unwrap();
-        assert!(yaml.contains("schemaVersion: sawtooth/v1"), "{yaml}");
+        assert!(yaml.contains("schemaVersion: stopcord/v1"), "{yaml}");
         assert!(yaml.contains("onFail: build"), "{yaml}");
         let auto = std::fs::read_to_string(dir.path().join("automations/nightly/automation.md")).unwrap();
         assert!(auto.starts_with("---\n"), "{auto}");

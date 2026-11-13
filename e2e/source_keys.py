@@ -13,7 +13,7 @@ try:
     to_setup = lambda: (bridge("[...document.querySelectorAll('[data-card]')][0].click();return 1"), time.sleep(1), press('6'), time.sleep(1), setup_section('sources'))
     # Setup lists its sections on the left and shows one at a time, starting with general.
     bridge("[...document.querySelectorAll('[data-card]')][0].click();return 1"); time.sleep(1)
-    bridge("try{localStorage.removeItem('sawtooth.setup.section')}catch(e){};return 1"); press('6'); time.sleep(1)
+    bridge("try{localStorage.removeItem('stopcord.setup.section')}catch(e){};return 1"); press('6'); time.sleep(1)
     secs = bridge("return [...document.querySelectorAll('[data-setup-section]')].map(e=>e.dataset.setupSection)")
     check('setup lists its sections on the left, by plain names', secs[:4] == ['general', 'integrations', 'sources', 'line'] and 'notifications' in secs and 'template' in secs, secs)
     check('and opens on general, one section at a time', bridge("return !!document.querySelector('#setup-general')") and not bridge("return !!document.querySelector('#setup-agents')"))
@@ -50,7 +50,7 @@ try:
     check('they are dropdowns, with the harness\'s own levels', bridge(f"return document.querySelector('#st-{ag}-run-e').tagName") == 'SELECT' and options(f'#st-{ag}-run-e') == ['', 'low', 'medium', 'high', 'xhigh', 'max', 'other'], options(f'#st-{ag}-run-e'))
     check('and models', 'haiku' in options(f'#st-{ag}-run-m') and 'other' in options(f'#st-{ag}-run-m'), options(f'#st-{ag}-run-m'))
     hs = options(f'#st-{ag}-run-h')
-    check('the harness list has every harness sawtooth knows', all(h in hs for h in ('claude', 'codex', 'gemini', 'opencode', 'copilot', 'cline', 'kilocode', 'aider', 'cursor', 'goose', 'qwen', 'droid', 'crush', 'kimi', 'pi', 'kiro', 'auggie', 'openhands', 'other')), hs)
+    check('the harness list has every harness stopcord knows', all(h in hs for h in ('claude', 'codex', 'gemini', 'opencode', 'copilot', 'cline', 'kilocode', 'aider', 'cursor', 'goose', 'qwen', 'droid', 'crush', 'kimi', 'pi', 'kiro', 'auggie', 'openhands', 'other')), hs)
     choose(f'#st-{ag}-run-e', 'high'); time.sleep(1)
     cmd = lambda: next(a for a in next(f for f in inv('factories') if f['id'] == fid)['agents'] if a['id'] == who)['harness']
     check('picking an effort writes it into the agent\'s command', cmd() == 'claude --effort high', cmd())

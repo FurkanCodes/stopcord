@@ -35,20 +35,20 @@ export function LogoMark() {
   );
 }
 
-/** "sawtooth": back to every factory. */
+/** "stopcord": back to every factory. */
 export function Brand({ home = false }: { home?: boolean }) {
   if (home) {
     return (
       <span className="t-brand" style={{ cursor: 'default' }}>
         <LogoMark />
-        sawtooth
+        stopcord
       </span>
     );
   }
   return (
-    <button type="button" className="t-brand" aria-label="Sawtooth: all factories" onClick={() => go({ screen: 'home' })}>
+    <button type="button" className="t-brand" aria-label="Stopcord: all factories" onClick={() => go({ screen: 'home' })}>
       <LogoMark />
-      sawtooth
+      stopcord
     </button>
   );
 }

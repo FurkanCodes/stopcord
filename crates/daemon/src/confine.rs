@@ -24,7 +24,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
-use sawtooth_sandbox::{Denied, Filter};
+use stopcord_sandbox::{Denied, Filter};
 use serde_json::{Value, json};
 
 /// Reports kept for one terminal. Past this an agent is misbehaving, so the oldest go.
@@ -193,7 +193,7 @@ impl Confine {
         // On Linux a VM's relay reaches the socket itself, and its st sends the key there too.
         let key = if remote { Some(new_key()?) } else { None };
         let (accept_inbox, accept_stop, socket_key) = (inbox.clone(), Arc::clone(&stop), key.clone());
-        thread::Builder::new().name("sawtooth-report".into()).spawn(move || {
+        thread::Builder::new().name("stopcord-report".into()).spawn(move || {
             for stream in listener.incoming() {
                 if accept_stop.load(Ordering::SeqCst) {
                     break;
@@ -212,7 +212,7 @@ impl Confine {
             let tcp = TcpListener::bind("127.0.0.1:0").context("couldn't open a report port")?;
             let port = tcp.local_addr()?.port();
             let (accept_key, accept_stop) = (key.clone(), Arc::clone(&stop));
-            thread::Builder::new().name("sawtooth-report-tcp".into()).spawn(move || {
+            thread::Builder::new().name("stopcord-report-tcp".into()).spawn(move || {
                 for stream in tcp.incoming() {
                     if accept_stop.load(Ordering::SeqCst) {
                         break;

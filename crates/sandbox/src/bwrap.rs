@@ -11,7 +11,7 @@ use crate::paths::{GIT_POINTERS, GIT_WRITES, protected_git_paths, resolve};
 use crate::policy::{Network, Policy};
 
 /// Where the filter's Unix socket appears inside the sandbox.
-pub(crate) const FILTER_SOCKET: &str = "/run/sawtooth-filter.sock";
+pub(crate) const FILTER_SOCKET: &str = "/run/stopcord-filter.sock";
 
 /// Renders the bubblewrap arguments for a policy, without the `bwrap` program name or the command.
 /// Paths that don't exist are skipped, because bwrap fails on a missing bind source.
@@ -356,7 +356,7 @@ mod tests {
         };
         let a = bwrap_args(&p);
         let tmpfs_run = must(&a, &["--tmpfs", "/run"]);
-        let bound = must(&a, &["--ro-bind", &s(&sock), "/run/sawtooth-filter.sock"]);
+        let bound = must(&a, &["--ro-bind", &s(&sock), "/run/stopcord-filter.sock"]);
         assert!(tmpfs_run < bound);
         assert!(a.iter().any(|x| x == "--unshare-net"));
     }

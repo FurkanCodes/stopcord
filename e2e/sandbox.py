@@ -17,11 +17,11 @@ try:
 
     got = runner(level='contained')
     c = checks(got); print('contained:', [(n, x['got']) for n, x in c.items()], flush=True)
-    check("sawtooth's sandbox holds everywhere", got['checks'] and not broken(got), broken(got))
+    check("stopcord's sandbox holds everywhere", got['checks'] and not broken(got), broken(got))
     for name in ('writes in its own folder', 'writes outside its folder', 'goes around the web filter', 'reaches a site on no list', 'launches apps', 'reaches the daemon'):
         check(f'it tries: {name}', name in c, list(c))
     check('it writes in its folder and nowhere else', c['writes in its own folder']['got'] == 'allowed' and c['writes outside its folder']['got'] == 'blocked', c)
-    check('the probe leaves nothing outside', not [n for n in os.listdir(os.path.expanduser('~')) if n.startswith('.sawtooth-probe')])
+    check('the probe leaves nothing outside', not [n for n in os.listdir(os.path.expanduser('~')) if n.startswith('.stopcord-probe')])
     if ssh:
         check('ssh keys are blocked by default', c.get('reads ssh keys', {}).get('got') == 'blocked', c.get('reads ssh keys'))
         got = runner(unblock=['ssh'])
@@ -48,7 +48,7 @@ try:
     if bridge("return document.querySelector('[data-sandbox] button[aria-expanded]').getAttribute('aria-expanded')") != 'true':
         bridge("document.querySelector('[data-sandbox] button[aria-expanded]').click();return 1"); time.sleep(0.5)
     t = text()
-    check('setup has a sandbox section', "sawtooth's sandbox" in t and 'always blocked' in t, t[:600])
+    check('setup has a sandbox section', "stopcord's sandbox" in t and 'always blocked' in t, t[:600])
     bridge("[...document.querySelectorAll('[data-sandbox] button')].find(b=>b.innerText.includes('test this sandbox')).click();return 1")
     wait('the test results show', lambda: bridge("return !!document.querySelector('[data-sandbox-test]')"), 30)
     bridge("document.querySelector('[data-sandbox-test]').scrollIntoView({block:'center'});return 1"); time.sleep(0.4); shot('sandbox-test')

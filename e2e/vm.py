@@ -19,17 +19,17 @@ reviewer)
 esac
 '''
 
-VM_FILES = ['Dockerfile', 'st', 'sawtooth-sync', 'relay', 'probe']
-STANDIN_IMAGE = 'sawtooth-e2e-standin'
+VM_FILES = ['Dockerfile', 'st', 'stopcord-sync', 'relay', 'probe']
+STANDIN_IMAGE = 'stopcord-e2e-standin'
 SECRET = 'hunter2-e2e'
 
 
-def sawtooth_image():
+def stopcord_image():
     """The tag the app looks for: vm::image() hashes the files the same way."""
     h = hashlib.sha256()
     for name in VM_FILES:
         h.update(name.encode() + b'\0' + open(f'{REPO}/app/src-tauri/vm/{name}', 'rb').read() + b'\0')
-    return 'sawtooth-vm:' + h.hexdigest()[:12]
+    return 'stopcord-vm:' + h.hexdigest()[:12]
 
 
 def docker(*a, cwd=None):
@@ -37,36 +37,36 @@ def docker(*a, cwd=None):
 
 
 def build_images():
-    """Builds sawtooth's image as the app would, then the stand-in on top, so no step waits on a build."""
-    tag = sawtooth_image()
+    """Builds stopcord's image as the app would, then the stand-in on top, so no step waits on a build."""
+    tag = stopcord_image()
     if docker('image', 'inspect', tag).returncode != 0:
         ctx = ROOT + '/vm-build'
         os.makedirs(ctx, exist_ok=True)
         for name in VM_FILES:
             shutil.copy(f'{REPO}/app/src-tauri/vm/{name}', ctx)
-        out = docker('build', '-t', tag, '-t', 'sawtooth-vm:latest', '.', cwd=ctx)
-        check("sawtooth's vm image builds", out.returncode == 0, out.stderr[-600:])
+        out = docker('build', '-t', tag, '-t', 'stopcord-vm:latest', '.', cwd=ctx)
+        check("stopcord's vm image builds", out.returncode == 0, out.stderr[-600:])
     else:
-        docker('tag', tag, 'sawtooth-vm:latest')
+        docker('tag', tag, 'stopcord-vm:latest')
     ctx = ROOT + '/standin-build'
     os.makedirs(ctx, exist_ok=True)
     shutil.copy(f'{REPO}/e2e/standins/line.py', ctx + '/claude')
     open(ctx + '/turn.sh', 'w').write(TURN)
-    open(ctx + '/Dockerfile', 'w').write('FROM sawtooth-vm:latest\nCOPY --chmod=755 claude /usr/local/bin/claude\nCOPY --chmod=755 turn.sh /opt/turn.sh\n')
+    open(ctx + '/Dockerfile', 'w').write('FROM stopcord-vm:latest\nCOPY --chmod=755 claude /usr/local/bin/claude\nCOPY --chmod=755 turn.sh /opt/turn.sh\n')
     out = docker('build', '-t', STANDIN_IMAGE, '.', cwd=ctx)
     check('the stand-in image builds', out.returncode == 0, out.stderr[-600:])
 
 
 def volume_of(path):
-    return 'sawtooth-work-' + hashlib.sha256(path.encode()).hexdigest()[:16]
+    return 'stopcord-work-' + hashlib.sha256(path.encode()).hexdigest()[:16]
 
 
 def br(*a): return sh('git', *a, cwd=R).stdout.strip()
 def files(ref='t-1'): return br('ls-tree', '-r', '--name-only', ref).split('\n')
 def runs(n=60): return [r.get('text', str(r)) for r in inv('runs', id='p', limit=n)]
 def volumes(): return docker('volume', 'ls', '-q').stdout.split()
-# Only this test's: a person's own Sawtooth may have VM terminals running beside it.
-LABEL = 'sawtooth.home=' + hashlib.sha256(H.encode()).hexdigest()[:16]
+# Only this test's: a person's own Stopcord may have VM terminals running beside it.
+LABEL = 'stopcord.home=' + hashlib.sha256(H.encode()).hexdigest()[:16]
 def containers(): return docker('ps', '-aq', '--filter', 'label=' + LABEL).stdout.split()
 
 try:
@@ -77,9 +77,9 @@ try:
     open(R + '/package.json', 'w').write(json.dumps({'name': 'x', 'version': '1.0.0', 'scripts': {'test': 'true'}}))
     open(R + '/a.txt', 'w').write('x\n'); sh('git', 'add', '-A', cwd=R); sh('git', 'commit', '-qm', 'base', cwd=R)
     build_images()
-    # One of sawtooth's old images, and one of a person's own, to see which the cleanup takes.
-    docker('tag', 'sawtooth-vm:latest', 'sawtooth-vm:000000000000')
-    docker('tag', 'sawtooth-vm:latest', 'sawtooth-vm:mine')
+    # One of stopcord's old images, and one of a person's own, to see which the cleanup takes.
+    docker('tag', 'stopcord-vm:latest', 'stopcord-vm:000000000000')
+    docker('tag', 'stopcord-vm:latest', 'stopcord-vm:mine')
     launch()
     info = inv('sandbox_info')
     check('the app finds docker and its image', info['docker']['ok'] and info['docker']['built'], info['docker'])
@@ -94,29 +94,29 @@ try:
     c = {x['name']: x for x in got['checks']}
     print('vm probe:', [(n, x['got']) for n, x in c.items()], flush=True)
     check('the vm holds everywhere', got['checks'] and not [x for x in got['checks'] if x['held'] is not True], got['checks'])
-    for name in ('sees your mac\'s home folder', 'reaches the mac', 'goes around the web filter', 'reaches a site on no list', 'reaches api.anthropic.com, which it needs', 'reports back to sawtooth'):
+    for name in ('sees your mac\'s home folder', 'reaches the mac', 'goes around the web filter', 'reaches a site on no list', 'reaches api.anthropic.com, which it needs', 'reports back to stopcord'):
         check(f'the vm probe tries: {name}', name in c, list(c))
     check('the probe leaves no containers', not containers(), containers())
-    tags = docker('image', 'ls', 'sawtooth-vm', '--format', '{{.Tag}}').stdout.split()
-    check("sawtooth's old images go and a person's own stay", '000000000000' not in tags and 'mine' in tags, tags)
-    docker('image', 'rm', 'sawtooth-vm:mine')
+    tags = docker('image', 'ls', 'stopcord-vm', '--format', '{{.Tag}}').stdout.split()
+    check("stopcord's old images go and a person's own stay", '000000000000' not in tags and 'mine' in tags, tags)
+    docker('image', 'rm', 'stopcord-vm:mine')
     time.sleep(1); open_work(); press('6'); time.sleep(1)
     setup_section('sandboxes'); bridge("const k=document.querySelector('[data-sandbox] button[aria-expanded]');if(k.getAttribute('aria-expanded')!=='true')k.click();return 1"); time.sleep(0.5)
     bridge("[...document.querySelectorAll('[data-sandbox] h4')].find(h=>h.innerText==='the vm').scrollIntoView({block:'start'});return 1"); time.sleep(0.4); shot('vm-settings')
     t = text()
     hint = bridge("return document.querySelector('[data-sandbox] input[id^=sb-img-]')?.placeholder||''")
-    check('setup explains the vm', 'the vm' in t and "this sandbox's own" in t and 'FROM sawtooth-vm:latest' in hint, (hint, t[:800]))
+    check('setup explains the vm', 'the vm' in t and "this sandbox's own" in t and 'FROM stopcord-vm:latest' in hint, (hint, t[:800]))
     check('setup offers the harness its login names', 'CLAUDE_CODE_OAUTH_TOKEN' in t and 'claude setup-token' in t, t[:1200])
     press('1'); time.sleep(0.5)
 
     f = factory(); runner = f['runners'][0]['id']
     said = bridge(f"return await window.__TAURI_INTERNALS__.invoke('set_vm_secret',{{factory:'p',runner:{json.dumps(runner)},name:'HTTPS_PROXY',value:'http://evil:1'}}).then(()=>'stored').catch(e=>JSON.stringify(e))")
-    check('a secret named like the proxy is refused', 'set by Sawtooth' in said, said)
+    check('a secret named like the proxy is refused', 'set by Stopcord' in said, said)
     inv('set_vm_secret', factory='p', runner=runner, name='E2E_TOKEN', value=SECRET)
     check('the window learns which secrets are set, not their values', inv('vm_secrets_set', factory='p', runner=runner, names=['E2E_TOKEN', 'GEMINI_API_KEY']) == ['E2E_TOKEN'])
-    # Sawtooth's own secrets have bare names, and a sandbox naming one gets nothing.
+    # Stopcord's own secrets have bare names, and a sandbox naming one gets nothing.
     inv('set_secret', name='SLACK_BOT_TOKEN', value='e2e-bot-token-not-for-vms')
-    check("a sandbox can't ask for sawtooth's own secrets", inv('vm_secrets_set', factory='p', runner=runner, names=['SLACK_BOT_TOKEN']) == [])
+    check("a sandbox can't ask for stopcord's own secrets", inv('vm_secrets_set', factory='p', runner=runner, names=['SLACK_BOT_TOKEN']) == [])
     f['runners'][0]['vmImage'] = STANDIN_IMAGE; f['runners'][0]['secrets'] = ['E2E_TOKEN', 'GEMINI_API_KEY']; inv('save_factory', factory=f); time.sleep(0.5)
     inv('feed_tickets', id='p', tickets=[{'key': 'T-1', 'title': 'a ticket', 'body': 'do the thing', 'url': ''}])
     must('T-1 reaches approval', lambda: item('T-1')['waiting'] == 'approve', 120)
@@ -162,7 +162,7 @@ try:
 
     # With no Docker, setup says how to get it, and a VM terminal won't start.
     stop()
-    env['SAWTOOTH_DOCKER'] = '/nonexistent/docker'
+    env['STOPCORD_DOCKER'] = '/nonexistent/docker'
     launch(); time.sleep(1); open_work(); press('6'); time.sleep(1)
     setup_section('sandboxes'); bridge("const k=document.querySelector('[data-sandbox] button[aria-expanded]');if(k.getAttribute('aria-expanded')!=='true')k.click();return 1"); time.sleep(0.6)
     bridge("document.querySelector('[data-docker-help]')?.scrollIntoView({block:'center'});return 1"); time.sleep(0.4); shot('vm-no-docker')
@@ -177,7 +177,7 @@ try:
     # Installed but not answering: a docker whose engine is down.
     stop()
     open(ROOT + '/bin/docker', 'w').write('#!/bin/sh\necho "Cannot connect to the Docker daemon" >&2\nexit 1\n'); os.chmod(ROOT + '/bin/docker', 0o755)
-    env['SAWTOOTH_DOCKER'] = ROOT + '/bin/docker'
+    env['STOPCORD_DOCKER'] = ROOT + '/bin/docker'
     launch(); time.sleep(1); open_work(); press('6'); time.sleep(1)
     setup_section('sandboxes'); bridge("const k=document.querySelector('[data-sandbox] button[aria-expanded]');if(k.getAttribute('aria-expanded')!=='true')k.click();return 1"); time.sleep(0.6)
     help_ = bridge("const h=document.querySelector('[data-docker-help]');return h?h.dataset.dockerHelp+' | '+h.innerText:''")

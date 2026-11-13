@@ -4,8 +4,8 @@ use std::path::{Path, PathBuf};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use sawtooth_daemon::client::Events;
-use sawtooth_daemon::{Client, Config, Daemon};
+use stopcord_daemon::client::Events;
+use stopcord_daemon::{Client, Config, Daemon};
 use serde_json::{Value, json};
 
 /// The toy agent: busy while "esc to interrupt" shows, asking while "Proceed?" shows.

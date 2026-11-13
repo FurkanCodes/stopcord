@@ -5,7 +5,7 @@ labels: ["first run"]
 body:
   - type: markdown
     attributes:
-      value: Thanks for trying Sawtooth. This is the most useful report you can send, even if everything worked.
+      value: Thanks for trying Stopcord. This is the most useful report you can send, even if everything worked.
   - type: input
     id: os
     attributes:

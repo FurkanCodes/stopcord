@@ -12,7 +12,7 @@ const MAX_RULES: usize = 128;
 const MAX_DEPTH: usize = 8;
 const MAX_PATTERN_CHARS: usize = 512;
 
-/// The rule files that ship with Sawtooth.
+/// The rule files that ship with Stopcord.
 const BUNDLED: &[(&str, &str)] = &[
     ("claude", include_str!("../rules/claude.toml")),
     ("codex", include_str!("../rules/codex.toml")),
@@ -326,7 +326,7 @@ pub struct RuleBook {
 }
 
 impl RuleBook {
-    /// The rules that ship with Sawtooth.
+    /// The rules that ship with Stopcord.
     pub fn bundled() -> Self {
         let mut book = RuleBook::default();
         for (name, source) in BUNDLED {

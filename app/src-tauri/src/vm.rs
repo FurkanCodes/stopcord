@@ -5,7 +5,7 @@
 //! where the one thing it can reach is a relay that forwards two ports to the Mac: its web
 //! filter, and the port `st` reports on.
 //!
-//! The copy is kept in step with the terminal's folder on the Mac by `sawtooth-sync`, which
+//! The copy is kept in step with the terminal's folder on the Mac by `stopcord-sync`, which
 //! runs on both sides. Whichever side changed since they last matched wins, and when both did
 //! nothing is overwritten. Work comes back through git: commits that have to follow on from
 //! the folder's own, and the rest as a tree git checks out. Git on the Mac never runs inside
@@ -23,38 +23,38 @@ use sha2::{Digest, Sha256};
 const FILES: &[(&str, &str)] = &[
     ("Dockerfile", include_str!("../vm/Dockerfile")),
     ("st", include_str!("../vm/st")),
-    ("sawtooth-sync", include_str!("../vm/sawtooth-sync")),
+    ("stopcord-sync", include_str!("../vm/stopcord-sync")),
     ("relay", include_str!("../vm/relay")),
     ("probe", include_str!("../vm/probe")),
 ];
 
 /// The sync script, run on the Mac's side.
-const SYNC: &str = include_str!("../vm/sawtooth-sync");
+const SYNC: &str = include_str!("../vm/stopcord-sync");
 
 /// The name a person's own image starts FROM.
-pub const LATEST: &str = "sawtooth-vm:latest";
+pub const LATEST: &str = "stopcord-vm:latest";
 
 /// Written into the terminal's git folder once the container is about to start, or when it can't.
-const READY: &str = "sawtooth-vm-ready";
+const READY: &str = "stopcord-vm-ready";
 
-const PROXY: &str = "http://sawtooth:3128";
+const PROXY: &str = "http://stopcord:3128";
 
 /// The environment variable a terminal's report key travels in.
-pub const KEY: &str = "SAWTOOTH_KEY";
+pub const KEY: &str = "STOPCORD_KEY";
 
-/// Names a secret can't take, because Sawtooth sets them: a secret named HTTPS_PROXY could send
+/// Names a secret can't take, because Stopcord sets them: a secret named HTTPS_PROXY could send
 /// an agent's traffic around its filter.
 const RESERVED: &[&str] = &["HTTPS_PROXY", "HTTP_PROXY", "https_proxy", "http_proxy", "NO_PROXY", "no_proxy", "ALL_PROXY", "all_proxy", "HOME", "PATH", "TERM"];
 
-/// Whether `name` can be a secret a VM agent gets: an environment variable's name that Sawtooth doesn't set itself.
+/// Whether `name` can be a secret a VM agent gets: an environment variable's name that Stopcord doesn't set itself.
 pub fn secret_name(name: &str) -> Result<(), String> {
     let mut chars = name.chars();
     let shaped = chars.next().is_some_and(|c| c.is_ascii_alphabetic() || c == '_') && chars.all(|c| c.is_ascii_alphanumeric() || c == '_');
     if !shaped {
         return Err(format!("{name:?} isn't an environment variable's name. Use letters, digits and underscores."));
     }
-    if RESERVED.contains(&name) || name.starts_with("SAWTOOTH_") {
-        return Err(format!("{name} is set by Sawtooth, so it can't be a secret."));
+    if RESERVED.contains(&name) || name.starts_with("STOPCORD_") {
+        return Err(format!("{name} is set by Stopcord, so it can't be a secret."));
     }
     Ok(())
 }
@@ -79,7 +79,7 @@ fn sha(data: &[u8]) -> String {
     hex(&Sha256::digest(data))
 }
 
-/// Sawtooth's image, named by what's in it, so a change to any file builds a new one.
+/// Stopcord's image, named by what's in it, so a change to any file builds a new one.
 pub fn image() -> String {
     let mut all = Vec::new();
     for (name, body) in FILES {
@@ -88,7 +88,7 @@ pub fn image() -> String {
         all.extend_from_slice(body.as_bytes());
         all.push(0);
     }
-    format!("sawtooth-vm:{}", &sha(&all)[..12])
+    format!("stopcord-vm:{}", &sha(&all)[..12])
 }
 
 /// A short name for a folder, for its volume and its record.
@@ -97,44 +97,44 @@ pub fn key(dir: &Path) -> String {
 }
 
 pub fn volume(dir: &Path) -> String {
-    format!("sawtooth-work-{}", key(dir))
+    format!("stopcord-work-{}", key(dir))
 }
 
-/// A terminal's name among every Sawtooth's containers. Tokens start again with each daemon,
+/// A terminal's name among every Stopcord's containers. Tokens start again with each daemon,
 /// and a test's daemon runs beside the real one, so the home is part of it.
 fn terminal_id(spec: &Spec) -> String {
     format!("{}-{}", &key(&spec.store)[..8], spec.token)
 }
 
-/// The label every container and network of one Sawtooth home carries.
+/// The label every container and network of one Stopcord home carries.
 /// The home folder a sandbox's agents share, where harness logins and settings live. One per
 /// sandbox: an agent's shell runs what's in its home, so a shared one would let an agent of one
 /// sandbox leave something for an agent of another, which has other secrets.
 pub fn home_volume(store: &Path, factory: &str, runner: &str) -> String {
     let id = format!("{}\0{factory}\0{runner}", store.display());
-    format!("sawtooth-home-{}", &sha(id.as_bytes())[..16])
+    format!("stopcord-home-{}", &sha(id.as_bytes())[..16])
 }
 
 pub fn home_label(store: &Path) -> String {
-    format!("sawtooth.home={}", key(store))
+    format!("stopcord.home={}", key(store))
 }
 
 fn network(spec: &Spec) -> String {
-    format!("sawtooth-net-{}", terminal_id(spec))
+    format!("stopcord-net-{}", terminal_id(spec))
 }
 
 fn relay(spec: &Spec) -> String {
-    format!("sawtooth-relay-{}", terminal_id(spec))
+    format!("stopcord-relay-{}", terminal_id(spec))
 }
 
 fn agent(spec: &Spec) -> String {
-    format!("sawtooth-agent-{}", terminal_id(spec))
+    format!("stopcord-agent-{}", terminal_id(spec))
 }
 
 /// Docker's command line tool. An app started from the Dock has a short PATH, so the usual
-/// places are looked at too. `SAWTOOTH_DOCKER` names it outright.
+/// places are looked at too. `STOPCORD_DOCKER` names it outright.
 pub fn docker() -> Option<PathBuf> {
-    find_docker(std::env::var_os("SAWTOOTH_DOCKER"))
+    find_docker(std::env::var_os("STOPCORD_DOCKER"))
 }
 
 fn find_docker(own: Option<std::ffi::OsString>) -> Option<PathBuf> {
@@ -197,10 +197,10 @@ pub fn homebrew() -> Option<PathBuf> {
     ["/opt/homebrew/bin/brew", "/usr/local/bin/brew"].iter().map(PathBuf::from).find(|p| p.is_file())
 }
 
-/// Sawtooth's images other than the current one, by tag. Only its own: a tag named by a hash,
+/// Stopcord's images other than the current one, by tag. Only its own: a tag named by a hash,
 /// never latest or a tag a person made.
 fn stale_tags(tags: &[String], current: &str) -> Vec<String> {
-    let current = current.strip_prefix("sawtooth-vm:").unwrap_or(current);
+    let current = current.strip_prefix("stopcord-vm:").unwrap_or(current);
     tags.iter().filter(|t| t.as_str() != current && t.len() == 12 && t.chars().all(|c| c.is_ascii_hexdigit())).cloned().collect()
 }
 
@@ -210,7 +210,7 @@ fn ensure_volume(docker: &Path, store: &Path, dir: &Path) -> Result<(), String> 
     if run(docker, &["volume", "inspect", &name]).is_ok() {
         return Ok(());
     }
-    run(docker, &["volume", "create", "--label", &format!("sawtooth.dir={}", dir.display()), "--label", &home_label(store), &name]).map(|_| ())
+    run(docker, &["volume", "create", "--label", &format!("stopcord.dir={}", dir.display()), "--label", &home_label(store), &name]).map(|_| ())
 }
 
 /// The volumes whose folder on the Mac is gone, from `docker volume ls` lines of name and folder.
@@ -218,7 +218,7 @@ fn orphaned(listing: &str, exists: impl Fn(&Path) -> bool) -> Vec<String> {
     listing
         .lines()
         .filter_map(|l| l.split_once('\t'))
-        .filter(|(name, dir)| name.starts_with("sawtooth-work-") && !dir.is_empty() && !exists(Path::new(dir)))
+        .filter(|(name, dir)| name.starts_with("stopcord-work-") && !dir.is_empty() && !exists(Path::new(dir)))
         .map(|(name, _)| name.to_string())
         .collect()
 }
@@ -226,15 +226,15 @@ fn orphaned(listing: &str, exists: impl Fn(&Path) -> bool) -> Vec<String> {
 /// Removes the VM copies of folders that no longer exist, such as a worktree that was cleaned
 /// up. One a container still uses stays, since nothing here forces. Returns what went.
 pub fn remove_orphaned_volumes(docker: &Path) -> Vec<String> {
-    let listing = run(docker, &["volume", "ls", "--filter", "label=sawtooth.dir", "--format", "{{.Name}}\t{{.Label \"sawtooth.dir\"}}"]).unwrap_or_default();
+    let listing = run(docker, &["volume", "ls", "--filter", "label=stopcord.dir", "--format", "{{.Name}}\t{{.Label \"stopcord.dir\"}}"]).unwrap_or_default();
     orphaned(&listing, |p| p.exists()).into_iter().filter(|v| run(docker, &["volume", "rm", v]).is_ok()).collect()
 }
 
-/// Removes Sawtooth's old images, which pile up as it changes. An image still in use stays,
+/// Removes Stopcord's old images, which pile up as it changes. An image still in use stays,
 /// since nothing here forces. Returns the tags that went.
 pub fn prune_old(docker: &Path) -> Vec<String> {
-    let tags: Vec<String> = run(docker, &["image", "ls", "sawtooth-vm", "--format", "{{.Tag}}"]).unwrap_or_default().lines().map(str::to_string).collect();
-    stale_tags(&tags, &image()).into_iter().filter(|t| run(docker, &["image", "rm", &format!("sawtooth-vm:{t}")]).is_ok()).collect()
+    let tags: Vec<String> = run(docker, &["image", "ls", "stopcord-vm", "--format", "{{.Tag}}"]).unwrap_or_default().lines().map(str::to_string).collect();
+    stale_tags(&tags, &image()).into_iter().filter(|t| run(docker, &["image", "rm", &format!("stopcord-vm:{t}")]).is_ok()).collect()
 }
 
 fn run(docker: &Path, args: &[&str]) -> Result<String, String> {
@@ -250,7 +250,7 @@ pub fn has_image(docker: &Path, tag: &str) -> bool {
     run(docker, &["image", "inspect", "--format", "{{.Id}}", tag]).is_ok()
 }
 
-/// Builds Sawtooth's image unless it's there. Shows Docker's output unless `quiet`.
+/// Builds Stopcord's image unless it's there. Shows Docker's output unless `quiet`.
 pub fn ensure_image(docker: &Path, store_home: &Path, quiet: bool) -> Result<String, String> {
     let tag = image();
     if has_image(docker, &tag) {
@@ -281,7 +281,7 @@ pub fn ensure_image(docker: &Path, store_home: &Path, quiet: bool) -> Result<Str
     Ok(tag)
 }
 
-/// One side of a mirror: somewhere `sawtooth-sync` can run.
+/// One side of a mirror: somewhere `stopcord-sync` can run.
 pub trait Side {
     fn sync(&self, args: &[String], input: Option<&[u8]>) -> Result<Vec<u8>, String>;
 }
@@ -290,7 +290,7 @@ pub trait Side {
 /// such as with a named pipe where its knowledge file was, mustn't hold the folder's lock for good.
 const SYNC_LIMIT: Duration = Duration::from_secs(600);
 
-/// The most a knowledge base read back from a VM may be, as `sawtooth-sync read-knowledge` caps it.
+/// The most a knowledge base read back from a VM may be, as `stopcord-sync read-knowledge` caps it.
 const KNOWLEDGE_LIMIT: usize = 1 << 20;
 
 /// Runs one step of a sync. Past `limit` the step's whole process group is killed, so no git it
@@ -347,7 +347,7 @@ fn output(mut cmd: Command, input: Option<&[u8]>, limit: Duration, stopped: &dyn
         let text = String::from_utf8_lossy(&out.stderr);
         let lines: Vec<&str> = text.lines().map(str::trim).filter(|l| !l.is_empty() && !l.starts_with("hint:")).collect();
         let why = lines.iter().find(|l| l.starts_with("error:") || l.starts_with("fatal:")).or(lines.last()).copied().unwrap_or("it failed");
-        Err(why.trim_start_matches("sawtooth-sync: ").to_string())
+        Err(why.trim_start_matches("stopcord-sync: ").to_string())
     }
 }
 
@@ -359,7 +359,7 @@ pub struct Local<'a> {
 impl Side for Local<'_> {
     fn sync(&self, args: &[String], input: Option<&[u8]>) -> Result<Vec<u8>, String> {
         let mut cmd = Command::new("/bin/sh");
-        cmd.arg("-c").arg(SYNC).arg("sawtooth-sync").args(args).current_dir(self.dir).env("GIT_TERMINAL_PROMPT", "0").env("LC_ALL", "C");
+        cmd.arg("-c").arg(SYNC).arg("stopcord-sync").args(args).current_dir(self.dir).env("GIT_TERMINAL_PROMPT", "0").env("LC_ALL", "C");
         output(cmd, input, SYNC_LIMIT, &|| {})
     }
 }
@@ -378,7 +378,7 @@ impl Side for Volume {
         let name = format!("{}-sync-{}-{nanos}", self.volume, std::process::id());
         let mut cmd = Command::new(&self.docker);
         cmd.args(["run", "--rm", "-i", "--name", &name, "--network", "none", "--cap-drop", "ALL", "--security-opt", "no-new-privileges"]);
-        cmd.args(["-v", &format!("{}:/work", self.volume), "-w", "/work", &self.image, "sawtooth-sync"]).args(args);
+        cmd.args(["-v", &format!("{}:/work", self.volume), "-w", "/work", &self.image, "stopcord-sync"]).args(args);
         let docker = self.docker.clone();
         output(cmd, input, SYNC_LIMIT, &move || {
             let _ = run(&docker, &["rm", "-f", &name]);
@@ -395,7 +395,7 @@ pub enum State {
 }
 
 impl State {
-    /// As `sawtooth-sync state` prints it.
+    /// As `stopcord-sync state` prints it.
     fn line(&self) -> String {
         match self {
             State::Empty => "empty".into(),
@@ -435,7 +435,7 @@ pub struct Mirror<'a> {
     pub branch: String,
     /// The branch work is compared with, such as main, so the copy has it too.
     pub base: String,
-    /// Sawtooth's own files, which never cross.
+    /// Stopcord's own files, which never cross.
     pub exclude: Vec<String>,
     /// The folder is a throwaway copy, whose history doesn't matter: only its kept files go anywhere.
     pub throwaway: bool,
@@ -523,9 +523,9 @@ pub struct Spec {
     pub token: String,
     /// The folder on the Mac the VM works on a copy of.
     pub dir: PathBuf,
-    /// Sawtooth's home, for the build folder and the sync records.
+    /// Stopcord's home, for the build folder and the sync records.
     pub store: PathBuf,
-    /// The image agents run in. Empty means Sawtooth's own.
+    /// The image agents run in. Empty means Stopcord's own.
     pub image: String,
     /// What runs in the container. Empty means a shell.
     pub command: String,
@@ -541,7 +541,7 @@ pub struct Spec {
     pub report_port: u16,
     pub report_socket: PathBuf,
     /// What proves a report is this terminal's. Never in a command line, where `ps` shows it to
-    /// anything on the Mac: it travels in `SAWTOOTH_KEY`, and Docker takes it from there.
+    /// anything on the Mac: it travels in `STOPCORD_KEY`, and Docker takes it from there.
     #[serde(skip)]
     pub key: String,
     /// More for the container's environment, such as who commits.
@@ -579,11 +579,11 @@ fn write_atomically(path: &Path, text: &str) -> Result<(), String> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
-    let tmp = path.with_extension("sawtooth-write");
+    let tmp = path.with_extension("stopcord-write");
     std::fs::write(&tmp, text).and_then(|_| std::fs::rename(&tmp, path)).map_err(|e| format!("couldn't write {}: {e}", path.display()))
 }
 
-/// Gives each of Sawtooth's names in the VM a plain copy of the knowledge base, and remembers what it gave.
+/// Gives each of Stopcord's names in the VM a plain copy of the knowledge base, and remembers what it gave.
 pub fn knowledge_in(vm: &dyn Side, kb: &Path, given: &Path, names: &[String]) -> Result<(), String> {
     let text = std::fs::read_to_string(kb).map_err(|e| format!("couldn't read the knowledge base: {e}"))?;
     for name in names {
@@ -603,7 +603,7 @@ fn merge_notes(ours: &str, base: &str, theirs: &str) -> Result<String, String> {
         return Ok(ours.to_string());
     }
     let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
-    let dir = std::env::temp_dir().join(format!("sawtooth-merge-{}-{nanos}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("stopcord-merge-{}-{nanos}", std::process::id()));
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let (o, b, t) = (dir.join("ours"), dir.join("base"), dir.join("theirs"));
     for (path, text) in [(&o, ours), (&b, base), (&t, theirs)] {
@@ -759,8 +759,8 @@ fn agent_env(spec: &Spec) -> Vec<(String, String)> {
     env.extend([
         ("NO_PROXY".into(), "localhost,127.0.0.1".into()),
         ("no_proxy".into(), "localhost,127.0.0.1".into()),
-        ("SAWTOOTH_REPORT".into(), "sawtooth:3129".into()),
-        ("SAWTOOTH_ST".into(), "st".into()),
+        ("STOPCORD_REPORT".into(), "stopcord:3129".into()),
+        ("STOPCORD_ST".into(), "st".into()),
         ("TERM".into(), std::env::var("TERM").unwrap_or_else(|_| "xterm-256color".into())),
     ]);
     env.extend(spec.env.iter().cloned());
@@ -797,7 +797,7 @@ fn open_network(docker: &Path, spec: &Spec, helper_image: &str) -> Result<(), St
     args.extend(["-e".into(), format!("FILTER={filter}"), "-e".into(), format!("REPORT={report}"), "-e".into(), format!("AGENT={}", agent(spec))]);
     args.extend([helper_image.to_string(), "relay".into()]);
     run(docker, &args.iter().map(String::as_str).collect::<Vec<_>>())?;
-    run(docker, &["network", "connect", "--alias", "sawtooth", &net, &relay(spec)])?;
+    run(docker, &["network", "connect", "--alias", "stopcord", &net, &relay(spec)])?;
     Ok(())
 }
 
@@ -832,25 +832,25 @@ pub fn inner_command(command: &str) -> String {
 }
 
 fn say(text: &str) {
-    println!("\x1b[2msawtooth: {text}\x1b[0m");
+    println!("\x1b[2mstopcord: {text}\x1b[0m");
 }
 
 fn fail(markers: Option<&(PathBuf, PathBuf)>, why: &str) -> i32 {
-    eprintln!("sawtooth: {why}");
+    eprintln!("stopcord: {why}");
     if let Some((_, failed)) = markers {
         let _ = std::fs::write(failed, why);
     }
     // Keep the message on screen rather than closing the terminal on it.
-    eprintln!("sawtooth: press return to close.");
+    eprintln!("stopcord: press return to close.");
     let _ = std::io::stdin().read_line(&mut String::new());
     1
 }
 
-/// `sawtooth-app vm-run <spec>`: the terminal's own process. It readies the VM, then becomes
+/// `stopcord-app vm-run <spec>`: the terminal's own process. It readies the VM, then becomes
 /// `docker run`, so the terminal's process is the agent's.
 pub fn main(args: &[String]) -> i32 {
     let Some(mut spec) = args.first().and_then(|a| serde_json::from_str::<Spec>(a).ok()) else {
-        eprintln!("usage: sawtooth-app vm-run '<spec as json>'");
+        eprintln!("usage: stopcord-app vm-run '<spec as json>'");
         return 2;
     };
     spec.key = std::env::var(KEY).unwrap_or_default();
@@ -902,7 +902,7 @@ pub fn main(args: &[String]) -> i32 {
     let image = if spec.image.trim().is_empty() { tag } else { spec.image.trim().to_string() };
     let (secrets, missing) = secret_values(&spec);
     if !missing.is_empty() {
-        say(&format!("{} has no value in sawtooth's secrets, so the VM doesn't get it", missing.join(", ")));
+        say(&format!("{} has no value in stopcord's secrets, so the VM doesn't get it", missing.join(", ")));
     }
     let setup_marker = crate::worktree::git(&spec.dir, &["rev-parse", "--git-path", crate::runner::SETUP_DONE]).ok().map(|p| spec.dir.join(p));
     if !spec.setup.is_empty() && setup_marker.as_ref().is_some_and(|m| !m.exists()) {
@@ -1039,7 +1039,7 @@ mod tests {
         assert_eq!(git(p.host.path(), &["log", "-1", "--format=%s"]).unwrap(), "vm work");
         assert_eq!(read(&p.h("c.txt")), "not committed\n");
         assert!(!p.h("a.txt").exists(), "a deletion comes back too");
-        assert!(git(p.host.path(), &["for-each-ref", "refs/sawtooth"]).unwrap().is_empty(), "no refs left behind");
+        assert!(git(p.host.path(), &["for-each-ref", "refs/stopcord"]).unwrap().is_empty(), "no refs left behind");
         assert_eq!(p.sync().unwrap(), Synced::Same);
     }
 
@@ -1097,7 +1097,7 @@ mod tests {
     }
 
     #[test]
-    fn sawtooths_own_files_never_cross() {
+    fn stopcords_own_files_never_cross() {
         let p = Pair::new();
         // As kb::link leaves it: a link kept out of git by info/exclude.
         std::fs::write(p.h("knowledge.md"), "the mac's knowledge\n").unwrap();
@@ -1118,7 +1118,7 @@ mod tests {
         p.sync().unwrap();
         // A tree with a .git folder in it can't be made with add, so it's built by hand.
         let vm = p.vm.path();
-        std::fs::write(vm.join(".hook-body"), "#!/bin/sh\ntouch /tmp/sawtooth-pwned\n").unwrap();
+        std::fs::write(vm.join(".hook-body"), "#!/bin/sh\ntouch /tmp/stopcord-pwned\n").unwrap();
         let blob = git(vm, &["hash-object", "-w", ".hook-body"]).unwrap();
         std::fs::remove_file(vm.join(".hook-body")).unwrap();
         let mk = |input: String| {
@@ -1164,7 +1164,7 @@ mod tests {
     }
 
     #[test]
-    fn a_switch_that_fails_puts_sawtooths_files_back_and_can_sync_again() {
+    fn a_switch_that_fails_puts_stopcords_files_back_and_can_sync_again() {
         let p = Pair::new();
         std::fs::write(p.h("knowledge.md"), "the mac's knowledge\n").unwrap();
         std::os::unix::fs::symlink(p.h("knowledge.md"), p.h("AGENTS.md")).unwrap();
@@ -1173,14 +1173,14 @@ mod tests {
         p.sync().unwrap();
         std::fs::write(p.v("b.txt"), "from the vm\n").unwrap();
         p.commit_in_vm("vm work");
-        // Another git holding the index makes the checkout fail after Sawtooth's files moved aside.
+        // Another git holding the index makes the checkout fail after Stopcord's files moved aside.
         let lock = p.host.path().join(".git/index.lock");
         std::fs::write(&lock, "").unwrap();
         assert!(p.sync().is_err());
         assert!(p.h("AGENTS.md").is_symlink(), "the link came back");
         assert_eq!(read(&p.h("draft.txt")), "uncommitted on the mac\n");
         assert!(!p.h("b.txt").exists());
-        assert!(git(p.host.path(), &["for-each-ref", "refs/sawtooth"]).unwrap().is_empty(), "no refs left behind");
+        assert!(git(p.host.path(), &["for-each-ref", "refs/stopcord"]).unwrap().is_empty(), "no refs left behind");
         std::fs::remove_file(&lock).unwrap();
         assert_eq!(p.sync().unwrap(), Synced::Took);
         assert_eq!(read(&p.h("b.txt")), "from the vm\n");
@@ -1219,7 +1219,7 @@ mod tests {
         assert!(why.contains("changed during the sync"), "{why}");
         assert_eq!(read(&p.h("a.txt")), "typed during the sync\n");
         assert!(!p.h("b.txt").exists(), "the vm's work didn't land on top of it");
-        assert!(git(p.host.path(), &["for-each-ref", "refs/sawtooth"]).unwrap().is_empty(), "no refs left behind");
+        assert!(git(p.host.path(), &["for-each-ref", "refs/stopcord"]).unwrap().is_empty(), "no refs left behind");
         assert!(p.sync().unwrap_err().contains("both"), "and it's now a change on both sides, as it really is");
     }
 
@@ -1289,7 +1289,7 @@ mod tests {
 
     #[test]
     fn each_sandbox_has_a_home_of_its_own() {
-        let store = Path::new("/home/sawtooth");
+        let store = Path::new("/home/stopcord");
         let untrusted = home_volume(store, "f1", "strangers");
         assert_eq!(untrusted, home_volume(store, "f1", "strangers"), "a sandbox keeps its logins");
         assert_ne!(untrusted, home_volume(store, "f1", "trusted"));
@@ -1300,7 +1300,7 @@ mod tests {
         assert!(args.contains(&format!("{untrusted}:/home/agent")), "{args:?}");
         let nameless = Spec { dir: "/w".into(), token: "t".into(), ..Spec::default() };
         let mount = agent_args(&nameless, "a", "img").into_iter().find(|a| a.ends_with(":/home/agent")).unwrap();
-        assert!(mount.starts_with("sawtooth-home-") && mount != format!("{untrusted}:/home/agent"), "{mount}");
+        assert!(mount.starts_with("stopcord-home-") && mount != format!("{untrusted}:/home/agent"), "{mount}");
     }
 
     #[test]
@@ -1322,7 +1322,7 @@ mod tests {
     }
 
     /// The same round trip through a real Docker volume. Needs Docker, so it's run by name:
-    /// `cargo test -p sawtooth-app vm::tests::docker -- --ignored`.
+    /// `cargo test -p stopcord-app vm::tests::docker -- --ignored`.
     #[test]
     #[ignore]
     fn docker_round_trip_through_a_real_volume() {
@@ -1331,7 +1331,7 @@ mod tests {
         let tag = ensure_image(&docker, store.path(), true).unwrap();
         let host = host();
         let records = tempfile::tempdir().unwrap();
-        let vol = format!("sawtooth-test-{}", key(host.path()));
+        let vol = format!("stopcord-test-{}", key(host.path()));
         let side = Volume { docker: docker.clone(), image: tag, volume: vol.clone() };
         let local = Local { dir: host.path() };
         let mirror = Mirror {
@@ -1411,20 +1411,20 @@ mod tests {
 
     #[test]
     fn a_volume_goes_once_its_folder_does() {
-        let listing = "sawtooth-work-aaa\t/still/here\nsawtooth-work-bbb\t/gone\nsawtooth-work-ccc\t\nsomeone-elses\t/gone\n";
+        let listing = "stopcord-work-aaa\t/still/here\nstopcord-work-bbb\t/gone\nstopcord-work-ccc\t\nsomeone-elses\t/gone\n";
         let gone = orphaned(listing, |p| p == Path::new("/still/here"));
-        assert_eq!(gone, vec!["sawtooth-work-bbb".to_string()], "a volume with no folder named, or not sawtooth's, is left alone");
+        assert_eq!(gone, vec!["stopcord-work-bbb".to_string()], "a volume with no folder named, or not stopcord's, is left alone");
     }
 
     #[test]
-    fn only_sawtooths_own_old_images_are_removed() {
+    fn only_stopcords_own_old_images_are_removed() {
         let tags: Vec<String> = ["5d8d9961cb77", "6bf14d99f7c8", "latest", "mine", "0123456789abcdef"].map(String::from).to_vec();
-        assert_eq!(stale_tags(&tags, "sawtooth-vm:6bf14d99f7c8"), vec!["5d8d9961cb77".to_string()]);
+        assert_eq!(stale_tags(&tags, "stopcord-vm:6bf14d99f7c8"), vec!["5d8d9961cb77".to_string()]);
     }
 
     #[test]
     fn docker_named_outright_is_used_or_missing_never_guessed() {
-        assert_eq!(find_docker(Some("/nonexistent/sawtooth-docker".into())), None, "a named docker that isn't there isn't swapped for another");
+        assert_eq!(find_docker(Some("/nonexistent/stopcord-docker".into())), None, "a named docker that isn't there isn't swapped for another");
         let real = tempfile::NamedTempFile::new().unwrap();
         assert_eq!(find_docker(Some(real.path().into())), Some(real.path().to_path_buf()));
         assert!(why(&Docker::Missing).contains("isn't installed"));
@@ -1440,16 +1440,16 @@ mod tests {
 
     #[test]
     fn the_image_is_named_by_what_is_in_it() {
-        assert!(image().starts_with("sawtooth-vm:") && image().len() == "sawtooth-vm:".len() + 12);
+        assert!(image().starts_with("stopcord-vm:") && image().len() == "stopcord-vm:".len() + 12);
         assert_eq!(image(), image());
         assert_ne!(volume(Path::new("/a")), volume(Path::new("/b")));
     }
 
     #[test]
-    fn a_secret_is_an_environment_name_sawtooth_doesnt_set() {
+    fn a_secret_is_an_environment_name_stopcord_doesnt_set() {
         assert!(secret_name("CLAUDE_CODE_OAUTH_TOKEN").is_ok());
         assert!(secret_name("_private2").is_ok());
-        for bad in ["", "2FAST", "MY-KEY", "A B", "../x", "HTTPS_PROXY", "no_proxy", "PATH", "SAWTOOTH_KEY", "SAWTOOTH_ANYTHING"] {
+        for bad in ["", "2FAST", "MY-KEY", "A B", "../x", "HTTPS_PROXY", "no_proxy", "PATH", "STOPCORD_KEY", "STOPCORD_ANYTHING"] {
             assert!(secret_name(bad).is_err(), "{bad:?} must be refused");
         }
     }
@@ -1458,7 +1458,7 @@ mod tests {
     fn secrets_go_to_docker_by_name_and_their_values_stay_on_the_mac() {
         let store = tempfile::tempdir().unwrap();
         crate::settings::set_secret(store.path(), &crate::settings::vm_key("f", "strangers", "OPENAI_API_KEY"), "sk-very-secret").unwrap();
-        // Sawtooth's own secret, under its bare name, as the Slack token is kept.
+        // Stopcord's own secret, under its bare name, as the Slack token is kept.
         crate::settings::set_secret(store.path(), "SLACK_BOT_TOKEN", "xoxb-mine").unwrap();
         let spec = Spec {
             token: "c1".into(),
@@ -1475,7 +1475,7 @@ mod tests {
         assert!(!args.windows(2).any(|w| w[0] == "-e" && w[1] == "HTTPS_PROXY"), "a reserved name is never passed: {line}");
         let (found, missing) = secret_values(&spec);
         assert_eq!(found, vec![("OPENAI_API_KEY".to_string(), "sk-very-secret".to_string())]);
-        assert_eq!(missing, vec!["GEMINI_API_KEY".to_string(), "SLACK_BOT_TOKEN".to_string()], "a sandbox can't ask for Sawtooth's own secrets by name");
+        assert_eq!(missing, vec!["GEMINI_API_KEY".to_string(), "SLACK_BOT_TOKEN".to_string()], "a sandbox can't ask for Stopcord's own secrets by name");
         let other = Spec { runner: "trusted".into(), ..spec.clone() };
         assert!(secret_values(&other).0.is_empty(), "nor for another sandbox's");
     }
@@ -1494,9 +1494,9 @@ mod tests {
         let a = agent_args(&spec, &agent(&spec), "img").join(" ");
         assert!(a.contains(&format!("--network {}", network(&spec))), "{a}");
         let other = Spec { store: "/test-home".into(), ..spec.clone() };
-        assert_ne!(network(&spec), network(&other), "two sawtooths' terminal c3 are different terminals");
+        assert_ne!(network(&spec), network(&other), "two stopcords' terminal c3 are different terminals");
         assert!(a.contains("--cap-drop ALL") && a.contains("no-new-privileges"), "{a}");
-        assert!(a.contains("HTTPS_PROXY=http://sawtooth:3128") && a.contains("-e SAWTOOTH_KEY "), "{a}");
+        assert!(a.contains("HTTPS_PROXY=http://stopcord:3128") && a.contains("-e STOPCORD_KEY "), "{a}");
         assert!(!a.contains("=k ") && !serde_json::to_string(&spec).unwrap().contains("\"k\""), "the key is in no command line: {a}");
         assert!(!a.contains("docker.sock") && !a.contains(":/Users") && !a.contains("/w:"), "nothing from the mac is mounted: {a}");
         assert!(a.ends_with(" img"));

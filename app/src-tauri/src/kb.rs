@@ -10,7 +10,7 @@ use std::path::Path;
 use crate::factories::{Factory, Kind};
 use crate::worktree::{common_dir, git, is_git};
 
-const MARKER: &str = "<!-- sawtooth: knowledge base -->";
+const MARKER: &str = "<!-- stopcord: knowledge base -->";
 const POINTER: &str = "Also read the factory's knowledge base:";
 
 /// The first text of a new factory's knowledge base.
@@ -23,12 +23,26 @@ pub fn seed(name: &str) -> String {
     )
 }
 
-const LIBRARY_START: &str = "<!-- sawtooth: library -->";
-const LIBRARY_END: &str = "<!-- /sawtooth: library -->";
+const LIBRARY_START: &str = "<!-- stopcord: library -->";
+const LIBRARY_END: &str = "<!-- /stopcord: library -->";
+
+/// The markers as they were written before the app was renamed from Sawtooth, and what they are now.
+const OLD_MARKERS: [(&str, &str); 3] = [
+    ("<!-- sawtooth: knowledge base -->", MARKER),
+    ("<!-- sawtooth: library -->", LIBRARY_START),
+    ("<!-- /sawtooth: library -->", LIBRARY_END),
+];
+
+/// `text` with any marker from before the rename written the current way, so old blocks are found.
+fn renamed(text: &str) -> String {
+    OLD_MARKERS.iter().fold(text.to_string(), |t, (old, new)| t.replace(old, new))
+}
 
 /// `text` with its Library section matching the factory's folder parts: one line per
-/// folder, so agents know what's there to read. Sawtooth owns the lines between the markers.
+/// folder, so agents know what's there to read. Stopcord owns the lines between the markers.
 pub fn with_library(text: &str, factory: &Factory) -> String {
+    let current = renamed(text);
+    let text = current.as_str();
     let folders: Vec<String> = factory
         .parts
         .iter()
@@ -162,7 +176,14 @@ pub fn link(kb_file: &Path, dir: &Path, names: &[String]) -> Vec<String> {
             continue;
         }
         match std::fs::read_to_string(&path) {
-            Ok(text) if text.contains(MARKER) => {}
+            Ok(text) if renamed(&text).contains(MARKER) => {
+                let current = renamed(&text);
+                if current != text
+                    && let Err(e) = std::fs::write(&path, current)
+                {
+                    problems.push(format!("couldn't update {}: {e}", path.display()));
+                }
+            }
             Ok(mut text) => {
                 if !text.is_empty() && !text.ends_with('\n') {
                     text.push('\n');
@@ -199,6 +220,7 @@ pub fn unlink(kb_file: &Path, dir: &Path, names: &[String]) -> Vec<String> {
         let Ok(text) = std::fs::read_to_string(&path) else {
             continue;
         };
+        let text = renamed(&text);
         if !text.contains(MARKER) {
             continue;
         }
@@ -245,6 +267,30 @@ mod tests {
 
     fn names(list: &[&str]) -> Vec<String> {
         list.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn a_block_written_before_the_rename_is_still_found() {
+        let repo = repo();
+        let dir = repo.path();
+        let home = tempfile::tempdir().unwrap();
+        let kb = home.path().join("knowledge.md");
+        std::fs::write(&kb, seed("demo")).unwrap();
+        let old = format!("# Mine\n\n<!-- sawtooth: knowledge base -->\n{POINTER} {}\n", kb.display());
+        std::fs::write(dir.join("CLAUDE.md"), &old).unwrap();
+
+        assert!(link(&kb, dir, &names(&["CLAUDE.md"])).is_empty());
+        let now = std::fs::read_to_string(dir.join("CLAUDE.md")).unwrap();
+        assert_eq!(now.matches(MARKER).count(), 1, "updated in place, not added twice: {now}");
+        assert!(!now.contains("sawtooth"), "{now}");
+
+        std::fs::write(dir.join("CLAUDE.md"), &old).unwrap();
+        assert!(unlink(&kb, dir, &names(&["CLAUDE.md"])).is_empty());
+        assert_eq!(std::fs::read_to_string(dir.join("CLAUDE.md")).unwrap(), "# Mine\n");
+
+        let library = "# KB\n\n<!-- sawtooth: library -->\n## Library\n- old\n<!-- /sawtooth: library -->\n";
+        let f = crate::factories::Factory::default();
+        assert_eq!(with_library(library, &f), "# KB\n");
     }
 
     #[test]

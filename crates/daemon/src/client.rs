@@ -38,7 +38,7 @@ impl std::error::Error for DaemonError {}
 impl Client {
     pub fn connect(socket: &Path) -> Result<Client> {
         let stream = UnixStream::connect(socket)
-            .with_context(|| format!("no Sawtooth daemon on {}", socket.display()))?;
+            .with_context(|| format!("no Stopcord daemon on {}", socket.display()))?;
         Ok(Client {
             reader: BufReader::new(stream.try_clone()?),
             writer: stream,
@@ -57,7 +57,7 @@ impl Client {
         let len = socket.as_os_str().len();
         if len > 103 {
             bail!(
-                "the daemon's socket path is {len} characters, and sockets allow 103: {}. Set SAWTOOTH_SOCKET to a shorter path.",
+                "the daemon's socket path is {len} characters, and sockets allow 103: {}. Set STOPCORD_SOCKET to a shorter path.",
                 socket.display()
             );
         }

@@ -1,11 +1,11 @@
 {
-  "name": "sawtooth",
+  "name": "stopcord",
   "private": true,
-  "description": "Sawtooth's JavaScript workspace: the ui package and the app window.",
+  "description": "Stopcord's JavaScript workspace: the ui package and the app window.",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/FurkanCodes/sawtooth.git"
+    "url": "git+https://github.com/FurkanCodes/stopcord.git"
   },
   "workspaces": [
     "ui",

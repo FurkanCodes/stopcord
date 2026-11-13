@@ -1,12 +1,12 @@
 {
-  "name": "@sawtooth/app",
+  "name": "@stopcord/app",
   "version": "0.1.0",
   "private": true,
-  "description": "The Sawtooth window: factories, their terminals, and what needs you.",
+  "description": "The Stopcord window: factories, their terminals, and what needs you.",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/FurkanCodes/sawtooth.git"
+    "url": "git+https://github.com/FurkanCodes/stopcord.git"
   },
   "type": "module",
   "scripts": {

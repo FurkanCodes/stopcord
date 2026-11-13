@@ -88,7 +88,7 @@ const paneStyle = { padding: '14px 12px 12px', maxWidth: 960, width: '100%', mar
 const card = { display: 'flex', flexDirection: 'column', gap: 4, paddingBottom: 10, borderBottom: '1px solid var(--line-soft, var(--line))' } as const;
 
 // The section last open, kept per window for convenience only: without it, setup opens on general.
-const SECTION = 'sawtooth.setup.section';
+const SECTION = 'stopcord.setup.section';
 function sectionWas(): string {
   try {
     return localStorage.getItem(SECTION) ?? 'general';
@@ -497,7 +497,7 @@ function Notifications({ factory, set }: { factory: Factory; set: (patch: Partia
       }
       style={paneStyle}
     >
-      <p className="t-muted">{factory.reports.length === 0 ? 'only inside sawtooth. add a slack channel or a command to hear about work elsewhere' : `${factory.reports.length} notification${factory.reports.length === 1 ? '' : 's'}. open one to change when it fires and where it goes`}</p>
+      <p className="t-muted">{factory.reports.length === 0 ? 'only inside stopcord. add a slack channel or a command to hear about work elsewhere' : `${factory.reports.length} notification${factory.reports.length === 1 ? '' : 's'}. open one to change when it fires and where it goes`}</p>
       {factory.reports.length > 0 && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
           {factory.reports.map((r, i) => (
@@ -748,7 +748,7 @@ function ReportCard({ i, factory, r, channels, startOpen, report, remove }: { i:
             <input id={`rp-s-${i}`} className="t-field" spellCheck={false} value={r.slack ?? ''} placeholder="#eng" onChange={(e) => report(i, { slack: e.currentTarget.value })} />
           )}
           <span className="t-dim" style={{ fontSize: 12 }}>
-            {channels ? 'the slack bot posts here. invite it to the channel first with /invite @sawtooth' : 'slack has to be set up in integrations first. then pick a channel here'}
+            {channels ? 'the slack bot posts here. invite it to the channel first with /invite @stopcord' : 'slack has to be set up in integrations first. then pick a channel here'}
           </span>
         </div>
       </FieldRow>
@@ -766,7 +766,7 @@ function ReportCard({ i, factory, r, channels, startOpen, report, remove }: { i:
             onChange={(keys) => report(i, { keys })}
             load={(names) => api.reportKeysSet(factory, r.id, names)}
             store={(name, value) => api.setReportKey(factory, r.id, name, value)}
-            note="the command gets these as environment variables, such as $WEBHOOK_URL. values stay in sawtooth's secrets, for this report only, and can't be shown again"
+            note="the command gets these as environment variables, such as $WEBHOOK_URL. values stay in stopcord's secrets, for this report only, and can't be shown again"
           />
         </FieldRow>
       )}
@@ -898,7 +898,7 @@ function SourceCard({ factory, p, pull, connection, part, template, remove }: { 
             store={(name, value) => api.setSourceKey(factory, p.id, name, value)}
             suggest={template && template.keys.length > 0 ? [{ label: `${template.name.toLowerCase()} reads`, names: template.keys }] : []}
             placeholder="add a name, like API_TOKEN"
-            note={p.connection ? `only for what the ${p.connection} connection doesn't cover. values stay in sawtooth's secrets, for this source only` : "the pull command gets these as environment variables. values stay in sawtooth's secrets, for this source only, and can't be shown again"}
+            note={p.connection ? `only for what the ${p.connection} connection doesn't cover. values stay in stopcord's secrets, for this source only` : "the pull command gets these as environment variables. values stay in stopcord's secrets, for this source only, and can't be shown again"}
           />
         </FieldRow>
       ) : (

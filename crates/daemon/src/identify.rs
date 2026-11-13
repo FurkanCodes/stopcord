@@ -1,7 +1,7 @@
 //! Which agent is running in a terminal, from its foreground process.
 
-use sawtooth_detect::RuleBook;
-use sawtooth_term::Process;
+use stopcord_detect::RuleBook;
+use stopcord_term::Process;
 
 const RUNTIMES: &[&str] = &["node", "bun", "deno", "python", "python3"];
 const SCRIPT_EXTENSIONS: &[&str] = &[".js", ".mjs", ".cjs", ".ts", ".py", ".exe"];

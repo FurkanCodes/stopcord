@@ -3,7 +3,7 @@
 //! a client secret, so nothing secret ships in the app. Slack can't: its desktop sign-in can't ask
 //! for bot scopes, so it keeps its manifest. GitHub signs in through gh.
 //!
-//! The tokens are kept in Sawtooth's secrets, under the connection, and stand in for its pasted
+//! The tokens are kept in Stopcord's secrets, under the connection, and stand in for its pasted
 //! token. They're refreshed before they run out, and when that fails the connection says to sign
 //! in again.
 
@@ -22,8 +22,8 @@ use sha2::{Digest, Sha256};
 
 use crate::settings;
 
-/// Sawtooth's registered OAuth apps. Public clients: an id isn't a secret. An empty id means the
-/// app isn't registered yet, so the card only offers the pasted token. `SAWTOOTH_<NAME>_CLIENT_ID`
+/// Stopcord's registered OAuth apps. Public clients: an id isn't a secret. An empty id means the
+/// app isn't registered yet, so the card only offers the pasted token. `STOPCORD_<NAME>_CLIENT_ID`
 /// overrides one, for testing against another app.
 const SENTRY_CLIENT_ID: &str = "840d30ca586830182349bce87ecd852480db198466cd1aead6fcffdf1a8d9943";
 const LINEAR_CLIENT_ID: &str = "ee532b0420bea3bfbbe28434b8569c51";
@@ -56,13 +56,13 @@ fn address(var: &str, real: &str) -> String {
     std::env::var(var).unwrap_or_else(|_| real.to_string()).trim_end_matches('/').to_string()
 }
 pub fn sentry_url() -> String {
-    address("SAWTOOTH_SENTRY_OAUTH_URL", "https://sentry.io")
+    address("STOPCORD_SENTRY_OAUTH_URL", "https://sentry.io")
 }
 fn linear_authorize_url() -> String {
-    address("SAWTOOTH_LINEAR_AUTHORIZE_URL", "https://linear.app/oauth/authorize")
+    address("STOPCORD_LINEAR_AUTHORIZE_URL", "https://linear.app/oauth/authorize")
 }
 pub fn linear_api() -> String {
-    address("SAWTOOTH_LINEAR_API_URL", "https://api.linear.app")
+    address("STOPCORD_LINEAR_API_URL", "https://api.linear.app")
 }
 fn token_url(connection: &str) -> String {
     if connection == "sentry" { format!("{}/oauth/token/", sentry_url()) } else { format!("{}/oauth/token", linear_api()) }
@@ -83,7 +83,7 @@ pub fn client_id(connection: &str) -> String {
         "linear" => LINEAR_CLIENT_ID,
         _ => return String::new(),
     };
-    std::env::var(format!("SAWTOOTH_{}_CLIENT_ID", connection.to_uppercase())).unwrap_or_else(|_| built.to_string()).trim().to_string()
+    std::env::var(format!("STOPCORD_{}_CLIENT_ID", connection.to_uppercase())).unwrap_or_else(|_| built.to_string()).trim().to_string()
 }
 
 /// Whether the browser sign-in can be offered: the app is registered, and for Sentry, it's
@@ -201,7 +201,7 @@ pub fn signing(connection: &str) -> Signing {
 
 fn open_browser(url: &str) {
     // Tests answer the page themselves.
-    if std::env::var_os("SAWTOOTH_NO_BROWSER").is_some() {
+    if std::env::var_os("STOPCORD_NO_BROWSER").is_some() {
         return;
     }
     let opener = if cfg!(target_os = "macos") { "open" } else { "xdg-open" };
@@ -333,8 +333,8 @@ fn percent_encode(s: &str) -> String {
     s.bytes().map(|b| if b.is_ascii_alphanumeric() || b"-_.~".contains(&b) { (b as char).to_string() } else { format!("%{b:02X}") }).collect()
 }
 
-const PAGE_OK: &str = "<!doctype html><meta charset=utf-8><title>Sawtooth</title><body style=\"font:16px system-ui;background:#111;color:#ddd;display:grid;place-items:center;height:90vh\"><p>Signed in to Linear. You can close this tab and go back to Sawtooth.</p>";
-const PAGE_NO: &str = "<!doctype html><meta charset=utf-8><title>Sawtooth</title><body style=\"font:16px system-ui;background:#111;color:#ddd;display:grid;place-items:center;height:90vh\"><p>Linear didn't sign in. Go back to Sawtooth to see why.</p>";
+const PAGE_OK: &str = "<!doctype html><meta charset=utf-8><title>Stopcord</title><body style=\"font:16px system-ui;background:#111;color:#ddd;display:grid;place-items:center;height:90vh\"><p>Signed in to Linear. You can close this tab and go back to Stopcord.</p>";
+const PAGE_NO: &str = "<!doctype html><meta charset=utf-8><title>Stopcord</title><body style=\"font:16px system-ui;background:#111;color:#ddd;display:grid;place-items:center;height:90vh\"><p>Linear didn't sign in. Go back to Stopcord to see why.</p>";
 
 /// Linear's PKCE flow: open its consent page, wait on this machine for the browser to come back
 /// with a code, and trade the code for a token.
@@ -384,7 +384,7 @@ fn linear_start(home: PathBuf) -> Result<Signing, String> {
             };
             if q.get("state") != Some(&state) {
                 reply(PAGE_NO, &mut stream);
-                return fail("the answer didn't come from the sign-in Sawtooth started, so it was ignored. sign in again".into());
+                return fail("the answer didn't come from the sign-in Stopcord started, so it was ignored. sign in again".into());
             }
             let Some(code) = q.get("code") else {
                 reply(PAGE_NO, &mut stream);

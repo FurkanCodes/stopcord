@@ -1,4 +1,4 @@
-//! A key that takes you out of a terminal and back to Sawtooth. Inside a terminal every
+//! A key that takes you out of a terminal and back to Stopcord. Inside a terminal every
 //! plain key belongs to the agent, and Esc stops its turn, so the way out is a ⌘ key,
 //! which a terminal never receives: ⌘↑, the Mac's "up a level", or ⌘esc where the
 //! system doesn't take it first. The web view keeps some ⌘ keys for itself, so on macOS

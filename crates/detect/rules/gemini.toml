@@ -1,7 +1,7 @@
 # Screen rules for Gemini CLI.
 # Adapted from herdr's detection manifest src/detect/manifests/gemini.toml
 # (https://github.com/herdrdev/herdr), licensed under the Apache License 2.0;
-# see LICENSE-herdr.txt beside this file. Changed for Sawtooth: added `names`
+# see LICENSE-herdr.txt beside this file. Changed for Stopcord: added `names`
 # and dropped herdr's label aliases, and added the trust_folder rule at the end.
 # The rule format is otherwise the same.
 
@@ -32,7 +32,7 @@ region = "whole_recent"
 visible_working = true
 contains = ["esc to cancel"]
 
-# Added by Sawtooth: the folder-trust dialog Gemini CLI shows the first time it
+# Added by Stopcord: the folder-trust dialog Gemini CLI shows the first time it
 # starts in a folder. Seen on a real run on 2026-11-08.
 [[rules]]
 id = "trust_folder"

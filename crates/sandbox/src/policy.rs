@@ -80,12 +80,12 @@ pub const COMMON_DENY_READS: &[&str] = &[
     ".docker/config.json",
     ".netrc",
     ".npmrc",
-    ".sawtooth/secrets",
+    ".stopcord/secrets",
 ];
 
 impl Policy {
     /// Common writes (~/.npm, ~/.cargo/registry, ~/.cargo/git, ~/.cache, ~/Library/Caches, tmp) and common denied
-    /// reads (~/.ssh, ~/.aws, ~/.gnupg, ~/.config/gcloud, ~/.kube, ~/.docker/config.json, ~/.netrc, ~/.npmrc, ~/.sawtooth/secrets).
+    /// reads (~/.ssh, ~/.aws, ~/.gnupg, ~/.config/gcloud, ~/.kube, ~/.docker/config.json, ~/.netrc, ~/.npmrc, ~/.stopcord/secrets).
     ///
     /// Tmp covers `/tmp` and macOS's per-user temp folders under `/private/var/folders`. Both are listed
     /// on every OS: a backend skips what it doesn't have. The network starts `Off`.
@@ -140,7 +140,7 @@ mod tests {
             "/h/.docker/config.json",
             "/h/.netrc",
             "/h/.npmrc",
-            "/h/.sawtooth/secrets",
+            "/h/.stopcord/secrets",
         ] {
             assert!(p.deny_read.contains(&PathBuf::from(d)), "missing deny {d}");
         }

@@ -11,7 +11,7 @@ use std::process::{Command, Output, Stdio};
 use std::sync::Arc;
 use std::thread;
 
-use sawtooth_sandbox::{Filter, Network, Policy, wrap};
+use stopcord_sandbox::{Filter, Network, Policy, wrap};
 
 struct Fix {
     _dir: tempfile::TempDir,
@@ -57,7 +57,7 @@ impl Fix {
         self.run_in(&self.policy.worktree, script)
     }
 
-    /// A linked worktree of a fresh repository, the way Sawtooth makes one. Returns (worktree, common dir).
+    /// A linked worktree of a fresh repository, the way Stopcord makes one. Returns (worktree, common dir).
     fn linked_worktree(&mut self) -> (PathBuf, PathBuf) {
         let proj = self.root.join("proj");
         let wt = self.root.join("linked");

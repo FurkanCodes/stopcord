@@ -1,6 +1,6 @@
 """Signing in with Sentry and Linear in the browser, with nothing pasted. A fake on this machine
 plays both services and the browser: Sentry's device flow waits until its code is approved,
-Linear's PKCE flow comes back to Sawtooth's callback and must prove the verifier. Linear's first
+Linear's PKCE flow comes back to Stopcord's callback and must prove the verifier. Linear's first
 token runs out at once, so a refresh has to happen by itself."""
 import base64, hashlib, http.server, threading, urllib.parse, urllib.request
 from harness import *
@@ -61,9 +61,9 @@ server = http.server.ThreadingHTTPServer(('127.0.0.1', 0), Fake)
 threading.Thread(target=server.serve_forever, daemon=True).start()
 FAKE = f'http://127.0.0.1:{server.server_address[1]}'
 env.update({
-    'SAWTOOTH_SENTRY_CLIENT_ID': 'test-sentry', 'SAWTOOTH_LINEAR_CLIENT_ID': 'test-linear',
-    'SAWTOOTH_SENTRY_OAUTH_URL': FAKE, 'SAWTOOTH_LINEAR_AUTHORIZE_URL': FAKE + '/authorize', 'SAWTOOTH_LINEAR_API_URL': FAKE,
-    'SAWTOOTH_NO_BROWSER': '1',
+    'STOPCORD_SENTRY_CLIENT_ID': 'test-sentry', 'STOPCORD_LINEAR_CLIENT_ID': 'test-linear',
+    'STOPCORD_SENTRY_OAUTH_URL': FAKE, 'STOPCORD_LINEAR_AUTHORIZE_URL': FAKE + '/authorize', 'STOPCORD_LINEAR_API_URL': FAKE,
+    'STOPCORD_NO_BROWSER': '1',
 })
 
 def click_in(card, label):
@@ -98,7 +98,7 @@ try:
     wait("the signed-in token lists sentry's projects", lambda: sorted(opts()) == ['api', 'web'])
     shot('oauth-sentry')
 
-    # Linear: one press, the browser comes back to sawtooth, and the code needs the right verifier.
+    # Linear: one press, the browser comes back to stopcord, and the code needs the right verifier.
     integration('linear')
     wait('linear offers to sign in in the browser', lambda: 'sign in with linear' in card('linear'))
     click_in('linear', 'sign in with linear')
@@ -115,7 +115,7 @@ try:
     q = dict(urllib.parse.parse_qsl(urllib.parse.urlsplit(inv('oauth_signing', connection='linear')['url']).query))
     state['challenge'] = q['code_challenge']
     page = urllib.request.urlopen(f"{q['redirect_uri']}?code=lin-code&state={urllib.parse.quote(q['state'])}", timeout=10).read().decode()
-    check('the browser is told it can go back to sawtooth', 'Signed in to Linear' in page, page[:200])
+    check('the browser is told it can go back to stopcord', 'Signed in to Linear' in page, page[:200])
     wait('linear says who signed in', lambda: 'signed in as Grace' in card('linear'))
     wait("the team comes from linear, and the one team is picked for you", lambda: bridge("return !!document.querySelector('[data-integration=\"linear\"] [data-step=\"2\"][data-done]')") and 'ENG' in card('linear'))
     check('the first token ran out, so it was refreshed by itself', 'refresh_token' in state['grants'], state['grants'])

@@ -4,8 +4,8 @@ import { saveNow, showProblem } from '../store';
 import { ArmedKey, Check, FieldRow, Key, ListInput, Pane, Radio } from '../tui/kit';
 
 const LEVELS: [Level, string, string][] = [
-  ['contained', "sawtooth's sandbox", 'limits files and sites, and asks you about a blocked site'],
-  ['harness', "the harness's own", "turns on the harness's sandbox. sawtooth's web filter and asking are off, and it can't be tested here"],
+  ['contained', "stopcord's sandbox", 'limits files and sites, and asks you about a blocked site'],
+  ['harness', "the harness's own", "turns on the harness's sandbox. stopcord's web filter and asking are off, and it can't be tested here"],
   ['worktree', 'no sandbox', 'its own folder and branch, and nothing else'],
   ['vm', 'a linux vm', "a fresh linux container in docker for each terminal. it works on a copy and never sees your mac. for work you don't trust"],
 ];
@@ -22,7 +22,7 @@ export function sandboxSummary(r: Runner): string {
     levelName(r.level),
     contained && (r.reads === 'listed' ? "reads only what's listed" : 'reads everything'),
     contained && unblock.length > 0 && `${unblock.length} block${unblock.length === 1 ? '' : 's'} off`,
-    vm && (r.vmImage ? r.vmImage : "sawtooth's image"),
+    vm && (r.vmImage ? r.vmImage : "stopcord's image"),
     (contained || vm) && allow.length > 0 && `${allow.length} more site${allow.length === 1 ? '' : 's'}`,
     (contained || vm) && (r.otherSites === 'block' ? 'blocks other sites' : 'asks about other sites'),
   ].filter(Boolean).join(' · ');
@@ -120,7 +120,7 @@ function DockerHelp({ docker, onInfo }: { docker: SandboxInfo['docker']; onInfo:
         </Key>
       </div>
       {said && <Quiet>{said}</Quiet>}
-      {docker.state === 'missing' && docker.mac && <Quiet>docker desktop is free for personal use and small companies. bigger companies need a paid plan. orbstack and colima also give a docker command, though sawtooth has only been tried with docker desktop</Quiet>}
+      {docker.state === 'missing' && docker.mac && <Quiet>docker desktop is free for personal use and small companies. bigger companies need a paid plan. orbstack and colima also give a docker command, though stopcord has only been tried with docker desktop</Quiet>}
     </div>
   );
 }
@@ -135,7 +135,7 @@ export interface Suggestion {
 }
 
 /**
- * Secrets by name: the names live in the factory, the values in sawtooth's secrets, which the
+ * Secrets by name: the names live in the factory, the values in stopcord's secrets, which the
  * window can set but never read. `load` says which names have a value and `store` sets one.
  */
 export function Secrets({ id, names, onChange, load, store, suggest = [], note, placeholder = 'add a name, like OPENAI_API_KEY' }: {
@@ -371,7 +371,7 @@ function SandboxCard({ index: i, factory, runner: r, info, onInfo, onChange, onR
                 <Quiet>its work comes back as git commits and changes when it says it's done. a commit that rewrites history doesn't</Quiet>
               </Row>
               <Row id={`sb-img-${i}`} label="image">
-                <input id={`sb-img-${i}`} className="t-field" spellCheck={false} value={r.vmImage ?? ''} placeholder={`sawtooth's own${info && !info.docker.built ? ', built on first use (a few minutes)' : ''}. yours must start FROM ${info?.docker.image ?? 'sawtooth-vm:latest'}`} onChange={(e) => onChange({ vmImage: e.currentTarget.value })} />
+                <input id={`sb-img-${i}`} className="t-field" spellCheck={false} value={r.vmImage ?? ''} placeholder={`stopcord's own${info && !info.docker.built ? ', built on first use (a few minutes)' : ''}. yours must start FROM ${info?.docker.image ?? 'stopcord-vm:latest'}`} onChange={(e) => onChange({ vmImage: e.currentTarget.value })} />
               </Row>
               <Row label="secrets">
                 <Secrets
@@ -432,8 +432,8 @@ function SandboxCard({ index: i, factory, runner: r, info, onInfo, onChange, onR
 
           {r.level === 'vm' && (
             <Row id={`sb-v-${i}`} label="own command">
-              <input id={`sb-v-${i}`} className="t-field" spellCheck={false} value={r.vmCommand ?? ''} placeholder="empty uses sawtooth's container. yours replaces it: {dir} is the folder, {cmd} the command" onChange={(e) => onChange({ vmCommand: e.currentTarget.value })} />
-              {ownVm && <Quiet>your command runs the agent instead of sawtooth's container, with no copy, web filter or test.</Quiet>}
+              <input id={`sb-v-${i}`} className="t-field" spellCheck={false} value={r.vmCommand ?? ''} placeholder="empty uses stopcord's container. yours replaces it: {dir} is the folder, {cmd} the command" onChange={(e) => onChange({ vmCommand: e.currentTarget.value })} />
+              {ownVm && <Quiet>your command runs the agent instead of stopcord's container, with no copy, web filter or test.</Quiet>}
             </Row>
           )}
 

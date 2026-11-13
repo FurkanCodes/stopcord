@@ -1,4 +1,4 @@
-//! Taking a factory out of Sawtooth, as far as the person asks: what it left in the project
+//! Taking a factory out of Stopcord, as far as the person asks: what it left in the project
 //! (worktrees and branches), its keys, and its own files. The project folder and its commits stay.
 
 use std::path::{Path, PathBuf};

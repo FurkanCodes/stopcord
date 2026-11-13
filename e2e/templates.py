@@ -47,7 +47,7 @@ try:
     # Handed on as a file, then brought back.
     out = ROOT + '/shared.yaml'
     inv('export_template', id='bug-fixer', path=out)
-    check('it can be saved as a file to hand on', os.path.exists(out) and 'sawtooth/template/v1' in open(out).read())
+    check('it can be saved as a file to hand on', os.path.exists(out) and 'stopcord/template/v1' in open(out).read())
     inv('remove_template', id='bug-fixer')
     check('removing it takes it off the list', inv('list_templates') == [])
     check('and the factory made from it keeps working', any(x['id'] == second['id'] for x in inv('factories')))

@@ -66,7 +66,7 @@ export function Icon({ name, size = 15, stroke = 1.6, label, className }: IconPr
   );
 }
 
-/** The mark: a sawtooth factory roof. Filled, never stroked. */
+/** The mark: a stopcord factory roof. Filled, never stroked. */
 export const logoPath = 'M2 15.5V9l4-2.5V9l4-2.5V9l4-2.5V2.5h2v13z';
 
 export function LogoMark({ size = 18, className }: { size?: number; className?: string }) {
@@ -82,7 +82,7 @@ export function Wordmark({ className }: { className?: string }) {
   return (
     <span className={cx('inline-flex items-center gap-[9px] text-title font-semibold text-ink', className)}>
       <LogoMark />
-      Sawtooth
+      Stopcord
     </span>
   );
 }

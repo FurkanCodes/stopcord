@@ -63,7 +63,7 @@ On Linux, `npm install` through the filter, an allowed site, a worktree write an
 ## The folder-trust question
 
 Claude Code still asks in a child of a folder it already trusts, so trusting a parent doesn't help. Codex and
-opencode don't ask. Sawtooth shows the question in NEEDS, and a per-harness setting can answer it automatically.
+opencode don't ask. Stopcord shows the question in NEEDS, and a per-harness setting can answer it automatically.
 The setting is off by default, because the question exists to stop a repo's own hooks from running unseen.
 
 ## Limits

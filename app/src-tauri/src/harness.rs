@@ -1,7 +1,7 @@
-//! What Sawtooth needs to know about each harness to confine it: where it keeps
+//! What Stopcord needs to know about each harness to confine it: where it keeps
 //! its state, which sites it talks to, and what to do about its own sandbox.
 //!
-//! These are data, so harnesses differ only here. `~/.sawtooth/harnesses/<id>.yaml`
+//! These are data, so harnesses differ only here. `~/.stopcord/harnesses/<id>.yaml`
 //! replaces a built-in profile or adds a new one. A harness with no profile still
 //! runs: it just has no extras, and whatever it needs shows up as blocked in NEEDS.
 
@@ -43,20 +43,20 @@ pub struct Harness {
     /// the OS holding the boundary, a prompt for every edit would only stall unattended work.
     /// `{project}` becomes the project's folder.
     pub sandboxed_args: String,
-    /// Flags that turn on the harness's own sandbox, for the harness level. Empty means none Sawtooth knows.
+    /// Flags that turn on the harness's own sandbox, for the harness level. Empty means none Stopcord knows.
     #[serde(skip_serializing_if = "String::is_empty")]
     pub own_sandbox_args: String,
     /// How to run a single prompt and exit, with `{prompt}` where the prompt goes and `{model}` where
     /// the model flag goes, if the start command names a model. For judges and suggestions.
     pub one_shot: String,
-    /// The flag that picks a model, such as `--model`. Empty means Sawtooth doesn't know one.
+    /// The flag that picks a model, such as `--model`. Empty means Stopcord doesn't know one.
     #[serde(skip_serializing_if = "String::is_empty")]
     pub model_flag: String,
     /// Models to offer for it. Any other name can still be typed.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub models: Vec<String>,
     /// How the start command says how hard to think, with `{effort}` for the level, such as
-    /// `--effort {effort}`. Empty means Sawtooth doesn't know one.
+    /// `--effort {effort}`. Empty means Stopcord doesn't know one.
     #[serde(skip_serializing_if = "String::is_empty")]
     pub effort_arg: String,
     /// Effort levels to offer. Any other can still be typed.
@@ -422,7 +422,7 @@ pub fn matches(sites: &[String], host: &str) -> bool {
 }
 
 /// The start command for the harness level, with the harness's own sandbox turned on. None when
-/// Sawtooth doesn't know how to turn it on for this harness.
+/// Stopcord doesn't know how to turn it on for this harness.
 pub fn own_sandbox_command(harness: Option<&Harness>, command: &str, project: &str) -> Option<String> {
     let h = harness.filter(|h| !h.own_sandbox_args.trim().is_empty())?;
     let args = h.own_sandbox_args.replace("{project}", &project.replace('\'', r"'\''"));

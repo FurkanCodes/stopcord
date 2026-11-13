@@ -1,6 +1,6 @@
 //! Debug builds only: lets an end-to-end test ask the window questions.
 //!
-//! Listens on `$SAWTOOTH_TEST_SOCKET`, or `<sawtooth home>/app-test.sock` (mode 0600). Each line sent is the body of an
+//! Listens on `$STOPCORD_TEST_SOCKET`, or `<stopcord home>/app-test.sock` (mode 0600). Each line sent is the body of an
 //! async JavaScript function; the window runs it and the JSON of what it returns comes back
 //! as one line. Tests use it to find where things are, then click them with real input.
 
@@ -18,12 +18,12 @@ use serde_json::{Value, json};
 use tauri::{AppHandle, Listener, Manager};
 
 pub fn start(app: AppHandle, home: &Path) {
-    let socket = std::env::var_os("SAWTOOTH_TEST_SOCKET")
+    let socket = std::env::var_os("STOPCORD_TEST_SOCKET")
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|| home.join("app-test.sock"));
     let _ = std::fs::remove_file(&socket);
     let Ok(listener) = UnixListener::bind(&socket) else {
-        eprintln!("sawtooth: couldn't open the test socket {}", socket.display());
+        eprintln!("stopcord: couldn't open the test socket {}", socket.display());
         return;
     };
     let _ = std::fs::set_permissions(&socket, std::fs::Permissions::from_mode(0o600));

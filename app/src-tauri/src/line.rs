@@ -311,7 +311,7 @@ pub fn panel_note(s: &LineStage, me: &str, st: &str) -> String {
         format!("After each round {} scores how settled it is, and at {} out of 10 the stage ends with the last word as its note. After {rounds} rounds a person is asked.", s.judge, threshold_of(s))
     };
     format!(
-        "You're on a panel with {}, taking turns. Finish each turn with {st} say \"what you think\" instead of {st} done. Sawtooth gives it to {next}, and the answer comes back here. {ends} Run {st} done only if the work is finished and there's nothing left to talk about.",
+        "You're on a panel with {}, taking turns. Finish each turn with {st} say \"what you think\" instead of {st} done. Stopcord gives it to {next}, and the answer comes back here. {ends} Run {st} done only if the work is finished and there's nothing left to talk about.",
         others.join(", ")
     )
 }

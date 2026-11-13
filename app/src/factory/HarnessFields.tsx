@@ -10,7 +10,7 @@ import { FieldRow } from '../tui/kit';
 /**
  * What a role runs on: a harness, its model and its effort, each picked from a list. The command stays
  * the truth: a model or an effort is only a flag in it, written the way that harness's profile says,
- * and "other" lets anything be typed, so a harness Sawtooth has no profile for still works.
+ * and "other" lets anything be typed, so a harness Stopcord has no profile for still works.
  */
 export function HarnessFields({ id, command, fallback, placeholder, onChange, label = 'harness', width = '14ch' }: { id: string; command: string; fallback?: string; placeholder: string; onChange: (command: string) => void; label?: string; width?: string }) {
   const profiles = useHarnessProfiles();

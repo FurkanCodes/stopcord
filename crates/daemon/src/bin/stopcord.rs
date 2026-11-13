@@ -1,4 +1,4 @@
-//! `sawtooth`: start and drive the terminal daemon from a shell.
+//! `stopcord`: start and drive the terminal daemon from a shell.
 
 use std::io::{Read, Write};
 use std::path::PathBuf;
@@ -9,34 +9,34 @@ use std::time::{Duration, Instant};
 use anyhow::{Result, anyhow, bail};
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as B64;
-use sawtooth_daemon::viewer::QueryFilter;
-use sawtooth_daemon::{Client, Config, Daemon, paths};
+use stopcord_daemon::viewer::QueryFilter;
+use stopcord_daemon::{Client, Config, Daemon, paths};
 use serde_json::{Value, json};
 
 const HELP: &str = "\
-sawtooth: run coding-agent terminals in the background and see what each needs.
+stopcord: run coding-agent terminals in the background and see what each needs.
 
-  sawtooth start [--name N] [--cwd DIR] [--agent A] -- COMMAND [ARGS...]
-  sawtooth ls                    every terminal and its state
-  sawtooth attach ID             type into a terminal (Ctrl-] to leave)
-  sawtooth read ID [--lines N]   print what a terminal shows
-  sawtooth send ID TEXT [--enter]
-  sawtooth seen ID               mark a finished turn as looked at
-  sawtooth watch                 print state changes as they happen
-  sawtooth explain ID            which rule decided a terminal's state
-  sawtooth stop ID               end a terminal
-  sawtooth daemon                run the daemon in this shell
-  sawtooth shutdown              stop the daemon and every terminal
+  stopcord start [--name N] [--cwd DIR] [--agent A] -- COMMAND [ARGS...]
+  stopcord ls                    every terminal and its state
+  stopcord attach ID             type into a terminal (Ctrl-] to leave)
+  stopcord read ID [--lines N]   print what a terminal shows
+  stopcord send ID TEXT [--enter]
+  stopcord seen ID               mark a finished turn as looked at
+  stopcord watch                 print state changes as they happen
+  stopcord explain ID            which rule decided a terminal's state
+  stopcord stop ID               end a terminal
+  stopcord daemon                run the daemon in this shell
+  stopcord shutdown              stop the daemon and every terminal
 
-The daemon starts by itself when needed. It listens on $SAWTOOTH_SOCKET,
-or ~/.sawtooth/sawtooth.sock. Rule files in ~/.sawtooth/rules replace the
+The daemon starts by itself when needed. It listens on $STOPCORD_SOCKET,
+or ~/.stopcord/stopcord.sock. Rule files in ~/.stopcord/rules replace the
 bundled ones with the same id.";
 
 fn main() -> ExitCode {
     match run(std::env::args().skip(1).collect()) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
-            eprintln!("sawtooth: {e:#}");
+            eprintln!("stopcord: {e:#}");
             ExitCode::FAILURE
         }
     }
@@ -76,7 +76,7 @@ fn run(args: Vec<String>) -> Result<()> {
             Ok(mut client) => client.call("daemon.shutdown", json!({})).map(|_| ()),
             Err(_) => Ok(()),
         },
-        other => bail!("unknown command {other:?}. Run `sawtooth help`."),
+        other => bail!("unknown command {other:?}. Run `stopcord help`."),
     }
 }
 
@@ -98,7 +98,7 @@ fn start(rest: &[String]) -> Result<()> {
         None => (&rest[..0], rest.to_vec()),
     };
     if argv.is_empty() {
-        bail!("what should it run? `sawtooth start -- claude`");
+        bail!("what should it run? `stopcord start -- claude`");
     }
     let mut params = json!({ "argv": argv });
     let cwd = std::env::current_dir()?.display().to_string();
@@ -144,7 +144,7 @@ fn list() -> Result<()> {
     let result = connect()?.call("terminal.list", json!({}))?;
     let terminals = result["terminals"].as_array().cloned().unwrap_or_default();
     if terminals.is_empty() {
-        println!("No terminals. Start one with `sawtooth start -- <command>`.");
+        println!("No terminals. Start one with `stopcord start -- <command>`.");
         return Ok(());
     }
     println!(
@@ -258,7 +258,7 @@ impl RawMode {
             .args(["raw", "-echo"])
             .stdin(Stdio::inherit())
             .status()?;
-        let path = std::env::temp_dir().join(format!("sawtooth-stty-{}", std::process::id()));
+        let path = std::env::temp_dir().join(format!("stopcord-stty-{}", std::process::id()));
         std::fs::write(&path, settings)?;
         Ok(RawMode { saved: Some(path) })
     }
@@ -373,6 +373,6 @@ fn attach(id: &str) -> Result<()> {
         }
     };
     drop(raw);
-    eprintln!("sawtooth: left {id}: {why}. It keeps running; `sawtooth attach {id}` to come back.");
+    eprintln!("stopcord: left {id}: {why}. It keeps running; `stopcord attach {id}` to come back.");
     Ok(())
 }

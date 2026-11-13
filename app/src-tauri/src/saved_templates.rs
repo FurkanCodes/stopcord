@@ -1,5 +1,5 @@
 //! Factory templates people make: a factory's line, roles, sandboxes, skills and checks, without the
-//! project. One YAML file each in `~/.sawtooth/templates`, so a template can be handed to someone else.
+//! project. One YAML file each in `~/.stopcord/templates`, so a template can be handed to someone else.
 //!
 //! A factory made from a template is a copy. Changing the template later changes nothing already made.
 
@@ -10,7 +10,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::factories::{Agent, Defaults, Factory, Kind, LineStage, Part, Runner, Skill, slug};
 
-pub const SCHEMA: &str = "sawtooth/template/v1";
+pub const SCHEMA: &str = "stopcord/template/v1";
+/// What templates were written as before the app was renamed from Sawtooth. Still read.
+const OLD_SCHEMA: &str = "sawtooth/template/v1";
 
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
@@ -78,9 +80,9 @@ fn file(home: &Path, id: &str) -> PathBuf {
 
 fn read(path: &Path) -> Result<Template> {
     let text = std::fs::read_to_string(path).with_context(|| format!("couldn't read {}", path.display()))?;
-    let mut t: Template = serde_yaml_ng::from_str(&text).with_context(|| format!("{} isn't a Sawtooth template", path.display()))?;
-    if !t.schema.is_empty() && t.schema != SCHEMA {
-        bail!("{} is a {} file, not a Sawtooth template", path.display(), t.schema);
+    let mut t: Template = serde_yaml_ng::from_str(&text).with_context(|| format!("{} isn't a Stopcord template", path.display()))?;
+    if !t.schema.is_empty() && t.schema != SCHEMA && t.schema != OLD_SCHEMA {
+        bail!("{} is a {} file, not a Stopcord template", path.display(), t.schema);
     }
     if t.name.trim().is_empty() {
         t.name = path.file_stem().unwrap_or_default().to_string_lossy().into_owned();
@@ -148,7 +150,7 @@ pub fn import(home: &Path, from: &Path) -> Result<Template> {
 }
 
 fn write(path: &Path, t: &Template) -> Result<()> {
-    let text = format!("# A Sawtooth factory template. Open it from New factory, under templates.\n{}", serde_yaml_ng::to_string(t)?);
+    let text = format!("# A Stopcord factory template. Open it from New factory, under templates.\n{}", serde_yaml_ng::to_string(t)?);
     std::fs::write(path, text).with_context(|| format!("couldn't write {}", path.display()))
 }
 
@@ -214,6 +216,17 @@ mod tests {
         let back = import(home.path(), &out).unwrap();
         assert_eq!(back.line, t.line);
         assert_eq!(get(home.path(), "bug fixer").unwrap().agents, t.agents);
+    }
+
+    #[test]
+    fn a_template_saved_before_the_rename_is_read_and_brought_up_to_date() {
+        let home = tempfile::tempdir().unwrap();
+        let t = from_factory(&factory(), "bug fixer", "");
+        let old = home.path().join("old.yaml");
+        let text = serde_yaml_ng::to_string(&t).unwrap().replace(SCHEMA, OLD_SCHEMA);
+        assert!(text.contains(OLD_SCHEMA));
+        std::fs::write(&old, text).unwrap();
+        assert_eq!(read(&old).unwrap().schema, SCHEMA);
     }
 
     #[test]

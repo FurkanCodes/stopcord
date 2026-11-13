@@ -1,12 +1,12 @@
-# Sawtooth
+# Stopcord
 
-Sawtooth is a desktop app that hands tickets to the coding agents you already use, such as Claude Code. For each repo it runs a line of steps on a separate branch: an agent plans, you approve the plan, an agent builds, the tests run on a clean copy, a second agent reviews, and you decide whether it merges. Every factory, terminal and ticket across your projects is in one window, and the app tells you when something needs you.
+Stopcord is a desktop app that hands tickets to the coding agents you already use, such as Claude Code. For each repo it runs a line of steps on a separate branch: an agent plans, you approve the plan, an agent builds, the tests run on a clean copy, a second agent reviews, and you decide whether it merges. Every factory, terminal and ticket across your projects is in one window, and the app tells you when something needs you.
 
-> **Early release.** Sawtooth has had one user so far. It runs on macOS. Linux builds from source but hasn't been tested on a real machine. Use it on repos that are pushed to a remote, and read [What it doesn't protect yet](#what-it-doesnt-protect-yet) before you give an agent a repo you care about.
+> **Early release.** Stopcord has had one user so far. It runs on macOS. Linux builds from source but hasn't been tested on a real machine. Use it on repos that are pushed to a remote, and read [What it doesn't protect yet](#what-it-doesnt-protect-yet) before you give an agent a repo you care about.
 
 ## Words used here
 
-- **Factory**: one project folder in Sawtooth, with its terminals, knowledge base, checks and tickets.
+- **Factory**: one project folder in Stopcord, with its terminals, knowledge base, checks and tickets.
 - **Line**: the steps a ticket goes through in a factory. The default line is plan, approve, build, verify, review, handoff.
 - **Stage**: one step of a line. An agent, a check, or a person handles it.
 - **Gate**: a stage that runs checks, such as your tests, on a clean copy of the ticket's latest commit.
@@ -23,19 +23,19 @@ Sawtooth is a desktop app that hands tickets to the coding agents you already us
 
 ## Install
 
-Sawtooth isn't signed or notarized yet, so there is no download. Build it from source:
+Stopcord isn't signed or notarized yet, so there is no download. Build it from source:
 
 ```sh
-git clone https://github.com/FurkanCodes/sawtooth.git
-cd sawtooth
+git clone https://github.com/FurkanCodes/stopcord.git
+cd stopcord
 npm ci
 cd app
 npx tauri build --bundles app
 ```
 
-The app is at `target/release/bundle/macos/Sawtooth.app`. Move it to `/Applications` and open it. An app you build yourself isn't blocked by Gatekeeper.
+The app is at `target/release/bundle/macos/Stopcord.app`. Move it to `/Applications` and open it. An app you build yourself isn't blocked by Gatekeeper.
 
-To work on Sawtooth itself, run `npm run app` from the repo root instead. That starts a debug build that reloads as you edit.
+To work on Stopcord itself, run `npm run app` from the repo root instead. That starts a debug build that reloads as you edit.
 
 ## Your first ticket
 
@@ -48,10 +48,10 @@ To work on Sawtooth itself, run `npm run app` from the repo root instead. That s
 
 ## What creating a factory changes in your repo
 
-- **Branches and worktrees.** Each ticket gets a branch named after it, checked out in a worktree under `~/.sawtooth/`. Your own checkout stays as it is until you merge.
-- **Git hooks.** The **reviewed** and **line** starts add your tests and a secrets check as checks that run on commit, so Sawtooth installs a `pre-commit` hook that runs them on your own commits too. Checks set to run before a merge get a `pre-push` hook. Every factory also installs a `reference-transaction` hook that stops work in a ticket's worktree from moving the branch your project has checked out. If your repo sets `core.hooksPath` (husky does), or already has a hook with the same name, Sawtooth leaves it alone and says so.
-- **The knowledge base.** Sawtooth makes the factory's knowledge file readable as `CLAUDE.md`, `AGENTS.md` and `GEMINI.md`, the names agents read when they start. If your folder doesn't have one of these, it adds a link and lists it in `.git/info/exclude`, so it's never committed. If your folder already has one, it adds a short marked block at the end of that file, which does show up in `git status`. Removing the factory takes both back.
-- **Merging.** When you merge, Sawtooth runs `git merge --no-ff` in your project with git hooks off, so hooks a ticket's branch changed don't run. Your own merge hooks don't run for these merges either.
+- **Branches and worktrees.** Each ticket gets a branch named after it, checked out in a worktree under `~/.stopcord/`. Your own checkout stays as it is until you merge.
+- **Git hooks.** The **reviewed** and **line** starts add your tests and a secrets check as checks that run on commit, so Stopcord installs a `pre-commit` hook that runs them on your own commits too. Checks set to run before a merge get a `pre-push` hook. Every factory also installs a `reference-transaction` hook that stops work in a ticket's worktree from moving the branch your project has checked out. If your repo sets `core.hooksPath` (husky does), or already has a hook with the same name, Stopcord leaves it alone and says so.
+- **The knowledge base.** Stopcord makes the factory's knowledge file readable as `CLAUDE.md`, `AGENTS.md` and `GEMINI.md`, the names agents read when they start. If your folder doesn't have one of these, it adds a link and lists it in `.git/info/exclude`, so it's never committed. If your folder already has one, it adds a short marked block at the end of that file, which does show up in `git status`. Removing the factory takes both back.
+- **Merging.** When you merge, Stopcord runs `git merge --no-ff` in your project with git hooks off, so hooks a ticket's branch changed don't run. Your own merge hooks don't run for these merges either.
 
 ## Levels
 
@@ -66,16 +66,16 @@ A factory's runner sets how much its agents are confined.
 At `contained`, an agent:
 
 - can write only to its own worktree, the parts of the repo's `.git` that a commit needs, its harness's own config folders, tool caches, temporary folders, the factory's knowledge file, and folders you add to the sandbox.
-- can't read `~/.ssh`, `~/.aws`, `~/.gnupg`, `~/.config/gcloud`, `~/.kube`, `~/.docker/config.json`, `~/.netrc`, `~/.npmrc`, your shell history or Sawtooth's own secrets.
+- can't read `~/.ssh`, `~/.aws`, `~/.gnupg`, `~/.config/gcloud`, `~/.kube`, `~/.docker/config.json`, `~/.netrc`, `~/.npmrc`, your shell history or Stopcord's own secrets.
 - can't move the branch your project had checked out when its terminal started.
 - can't change `.git/hooks` or `.git/config`.
 - can reach only the web sites its harness needs, the ones you allow, and ports on your own machine.
-- can't reach Sawtooth's own sockets or Docker's.
+- can't reach Stopcord's own sockets or Docker's.
 - can't write `~/.zcompdump` or the `claude` program in `~/.local/share/claude`, which your own shell and Claude Code run later.
 
 Checks run in the same kind of sandbox, with no network unless the check asks for it. In a factory's **setup** tab, **test this sandbox** (under **sandboxes**) tries these from inside the sandbox and shows what was blocked.
 
-Sawtooth's own git commands run with your repo's hooks, fsmonitor and replace refs turned off. They run outside the sandbox, in folders an agent can write to.
+Stopcord's own git commands run with your repo's hooks, fsmonitor and replace refs turned off. They run outside the sandbox, in folders an agent can write to.
 
 ## What it doesn't protect yet
 
@@ -83,10 +83,10 @@ These are known gaps at `contained`. They are being worked on, and they're liste
 
 - **Other branches, tags and the stash.** Only the branch your project had checked out is protected. An agent can delete your other branches and drop your stash. Push anything you'd miss.
 - **Git history.** An agent can delete objects in `.git/objects` and break the repo's history. A pushed remote is the copy that survives that.
-- **Some of Claude Code's config.** An agent can change `~/.claude.json` (including its MCP servers), `~/.claude/plugins`, `~/.claude/agents`, `~/.claude/commands` and `~/.claude/CLAUDE.md`. Your next Claude Code session outside Sawtooth runs or reads them. `settings.json` and `hooks` are protected.
+- **Some of Claude Code's config.** An agent can change `~/.claude.json` (including its MCP servers), `~/.claude/plugins`, `~/.claude/agents`, `~/.claude/commands` and `~/.claude/CLAUDE.md`. Your next Claude Code session outside Stopcord runs or reads them. `settings.json` and `hooks` are protected.
 - **Shared caches.** An agent can change `~/.cargo/registry`, `~/.npm` and `~/.cache`. Code in an unpacked crate source there runs at your next `cargo build`.
 - **Renaming git's folders.** Whether the sandbox stops an agent renaming `.git/refs/heads` or a worktree's folder in `.git/worktrees` hasn't been tested.
-- **Folders that aren't git repos.** Sawtooth allows them, but the agent works in the folder itself with no worktree.
+- **Folders that aren't git repos.** Stopcord allows them, but the agent works in the folder itself with no worktree.
 - **Linux.** The Linux sandbox uses bubblewrap. It hasn't been tested on a real machine, and Ubuntu 24.04's default settings may stop bubblewrap from starting.
 - **Machines that can't sandbox.** If the sandbox can't start, a contained terminal won't start, but checks run without one.
 

@@ -22,7 +22,7 @@ use crate::settings::SlackSettings;
 const API: &str = "https://slack.com/api";
 
 /// Someone who @mentioned the bot but isn't allowed to send work yet. Kept so the person running
-/// Sawtooth can allow them with one press, instead of looking up a member id.
+/// Stopcord can allow them with one press, instead of looking up a member id.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct Knock {
     pub user: String,
@@ -129,7 +129,7 @@ fn after_label<'a>(body: &'a str, label: &str) -> Option<&'a str> {
     }
 }
 
-/// A message that starts with a factory's name or id, as in "sawtooth: fix the login", goes to that
+/// A message that starts with a factory's name or id, as in "stopcord: fix the login", goes to that
 /// factory. Anything else goes to `default`. Case doesn't matter, and the longest name that fits
 /// wins, so "web app: …" doesn't go to a factory called "web".
 pub fn route(body: &str, factories: &[(String, String)], default: &str) -> Route {
@@ -334,7 +334,7 @@ impl Engine {
                 }
             }
             if first {
-                me.slack_reply(&url, "Sawtooth doesn't take work from you yet. Whoever runs it can allow you under integrations, then mention me again.");
+                me.slack_reply(&url, "Stopcord doesn't take work from you yet. Whoever runs it can allow you under integrations, then mention me again.");
             }
         });
     }
@@ -379,7 +379,7 @@ pub(crate) fn post(home: &std::path::Path, channel: &str, text: &str) -> std::re
     call("chat.postMessage", &bot, &[("channel", channel), ("text", text)]).map(|_| ()).map_err(|e| {
         let e = format!("{e:#}");
         if e.contains("not_in_channel") {
-            format!("the bot isn't in {channel}. invite it there with /invite @sawtooth")
+            format!("the bot isn't in {channel}. invite it there with /invite @stopcord")
         } else if e.contains("channel_not_found") {
             format!("Slack has no channel {channel} the bot can see")
         } else {
@@ -428,7 +428,7 @@ mod tests {
     }
 
     fn factories() -> Vec<(String, String)> {
-        [("sawtooth", "Sawtooth"), ("web", "Web"), ("web-app", "Web app"), ("turkish-stt", "İstanbul STT")].map(|(i, n)| (i.to_string(), n.to_string())).to_vec()
+        [("stopcord", "Stopcord"), ("web", "Web"), ("web-app", "Web app"), ("turkish-stt", "İstanbul STT")].map(|(i, n)| (i.to_string(), n.to_string())).to_vec()
     }
 
     fn to(factory: &str, body: &str) -> Route {
@@ -438,13 +438,13 @@ mod tests {
     #[test]
     fn a_message_picks_its_factory_by_starting_with_its_name_or_id() {
         let f = factories();
-        assert_eq!(route("sawtooth: fix the login", &f, ""), to("sawtooth", "fix the login"));
-        assert_eq!(route("Sawtooth fix the login", &f, "web"), to("sawtooth", "fix the login"), "case and the colon don't matter");
+        assert_eq!(route("stopcord: fix the login", &f, ""), to("stopcord", "fix the login"));
+        assert_eq!(route("Stopcord fix the login", &f, "web"), to("stopcord", "fix the login"), "case and the colon don't matter");
         assert_eq!(route("web-app, add dark mode\nfor settings", &f, ""), to("web-app", "add dark mode\nfor settings"), "by id, keeping later lines");
         assert_eq!(route("web app: add dark mode", &f, ""), to("web-app", "add dark mode"), "the longest name wins");
         assert_eq!(route("web: add dark mode", &f, ""), to("web", "add dark mode"));
         assert_eq!(route("istanbul stt: retrain", &f, ""), to("turkish-stt", "retrain"), "a name whose lowercase is longer still fits");
-        assert_eq!(route("website is down", &f, "sawtooth"), to("sawtooth", "website is down"), "a name has to be a whole word");
+        assert_eq!(route("website is down", &f, "stopcord"), to("stopcord", "website is down"), "a name has to be a whole word");
     }
 
     #[test]
@@ -452,10 +452,10 @@ mod tests {
         let f = factories();
         assert_eq!(route("fix the login", &f, "web"), to("web", "fix the login"));
         let Route::Ask(q) = route("fix the login", &f, "") else { panic!("it guessed") };
-        assert!(q.contains("Which factory") && q.contains("Sawtooth, Web, Web app") && q.contains("\"Sawtooth: fix the login\""), "{q}");
+        assert!(q.contains("Which factory") && q.contains("Stopcord, Web, Web app") && q.contains("\"Stopcord: fix the login\""), "{q}");
         assert!(matches!(route("fix the login", &f, "gone"), Route::Ask(_)), "a default that no longer exists isn't used");
-        let Route::Ask(q) = route("sawtooth", &f, "web") else { panic!("an empty ticket was proposed") };
-        assert!(q.contains("What should Sawtooth do"), "{q}");
+        let Route::Ask(q) = route("stopcord", &f, "web") else { panic!("an empty ticket was proposed") };
+        assert!(q.contains("What should Stopcord do"), "{q}");
         assert!(matches!(route("fix it", &[], ""), Route::Ask(q) if q.contains("no factory")));
     }
 }

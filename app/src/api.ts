@@ -11,7 +11,7 @@ export interface Terminal {
   argv: string[];
   cwd: string;
   pid: number | null;
-  /** The agent in front right now, if Sawtooth knows it. */
+  /** The agent in front right now, if Stopcord knows it. */
   agent: string | null;
   state: TerminalState;
   needs_you: boolean;
@@ -48,7 +48,7 @@ export interface Part {
   network?: boolean;
   every?: string;
   autoStart?: boolean;
-  /** Ticket source: environment variables its command gets from sawtooth's secrets. Names only. */
+  /** Ticket source: environment variables its command gets from stopcord's secrets. Names only. */
   keys?: string[];
   /** Ticket source: the connection in settings whose credentials it uses, such as sentry. */
   connection?: string;
@@ -90,7 +90,7 @@ export interface Runner {
   networkQuiet?: string[];
   otherSites?: 'ask' | 'block';
   vmCommand?: string;
-  /** VM level: the image agents run in, built FROM sawtooth-vm:latest. */
+  /** VM level: the image agents run in, built FROM stopcord-vm:latest. */
   vmImage?: string;
   /** VM level: secrets each agent gets as environment variables, by name. */
   secrets?: string[];
@@ -197,7 +197,7 @@ export interface Report {
   id: string;
   on: string[];
   command?: string;
-  /** Environment variables its command gets from sawtooth's secrets, for this report only. */
+  /** Environment variables its command gets from stopcord's secrets, for this report only. */
   keys?: string[];
   /** A Slack channel, such as #eng, that the connected bot posts to. */
   slack?: string;
@@ -484,7 +484,7 @@ export interface HarnessProfile {
   quietDomains: string[];
   sandboxedArgs: string;
   oneShot: string;
-  /** The flag that picks a model, such as --model. Missing when Sawtooth doesn't know one. */
+  /** The flag that picks a model, such as --model. Missing when Stopcord doesn't know one. */
   modelFlag?: string;
   /** Models to offer. Any other name can be typed. */
   models?: string[];

@@ -1,5 +1,5 @@
 """A panel at plan: the planner and a critic take turns with `st say`, each in its own terminal, and
-Sawtooth types each turn into the other's. A judge that answers once scores every round: one ticket
+Stopcord types each turn into the other's. A judge that answers once scores every round: one ticket
 settles in round two and moves on, and one that never settles asks a person. Scripted agents, no model."""
 from harness import *
 

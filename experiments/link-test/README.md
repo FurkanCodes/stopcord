@@ -23,7 +23,7 @@ It answers four questions per harness:
 |---|---|---|
 | `control` | plain copies of the knowledge base | the baseline: does the harness load its file at all in this mode |
 | `link` | symlinks to the factory's `knowledge-base.md`, tracked ones hidden with `skip-worktree` | the plan as written |
-| `second` | the repo's own files untouched, plus an untracked extra pointing at the knowledge base (`CLAUDE.local.md`, `AGENTS.override.md`, `SAWTOOTH.md` via `.gemini/settings.json`, `opencode.json` `instructions`), hidden with `.git/info/exclude` | the alternative that never touches a tracked file |
+| `second` | the repo's own files untouched, plus an untracked extra pointing at the knowledge base (`CLAUDE.local.md`, `AGENTS.override.md`, `STOPCORD.md` via `.gemini/settings.json`, `opencode.json` `instructions`), hidden with `.git/info/exclude` | the alternative that never touches a tracked file |
 
 Each file holds one code word, so an answer shows exactly what was read:
 `HERON-41` the knowledge base, `OTTER-17` the repo's own file, `WREN-05`
@@ -39,7 +39,7 @@ write probe records.
 ./run.sh --harness codex --case link
 ```
 
-Fixtures and raw output go to `$TMPDIR/sawtooth-link-test/<time>/`. The
+Fixtures and raw output go to `$TMPDIR/stopcord-link-test/<time>/`. The
 summary table is copied to `results/<time>.md`. Each run is one short
 prompt, but a full run is 36 of them on your own accounts and models.
 
@@ -48,7 +48,7 @@ prompt, but a full run is 36 of them on your own accounts and models.
 - Gemini CLI has to be logged in first (`gemini` once, interactively),
   or every Gemini run stops at the browser sign-in.
 - Harnesses run with your own settings, global instructions and hooks, the
-  same way Sawtooth would launch them. Global instruction files don't
+  same way Stopcord would launch them. Global instruction files don't
   contain the code words, so they don't affect the result.
 - Non-interactive modes deny what an interactive session would ask about.
   A "denied" in the summary means the person would have seen a permission

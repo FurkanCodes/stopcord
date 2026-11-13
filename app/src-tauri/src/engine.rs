@@ -18,7 +18,7 @@ use std::time::{Duration, Instant, SystemTime};
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as B64;
 use chrono::{Datelike, Duration as Span, Local, NaiveDateTime, TimeZone, Weekday};
-use sawtooth_daemon::Client;
+use stopcord_daemon::Client;
 use serde_json::{Value, json};
 
 use crate::bridge::{Bridge, Failure};
@@ -412,12 +412,12 @@ impl Engine {
         self.apply_settings();
         let events = Arc::clone(self);
         thread::Builder::new()
-            .name("sawtooth-engine-events".into())
+            .name("stopcord-engine-events".into())
             .spawn(move || events.listen())
             .expect("couldn't start the engine");
         let ticks = Arc::clone(self);
         thread::Builder::new()
-            .name("sawtooth-engine-tick".into())
+            .name("stopcord-engine-tick".into())
             .spawn(move || {
                 loop {
                     ticks.tick();
@@ -632,7 +632,7 @@ impl Engine {
                         &factory.id,
                         Run::new(
                             "check",
-                            format!("{name} was asked to fix a check {MAX_FIX_TURNS} times in a row, so Sawtooth stopped asking"),
+                            format!("{name} was asked to fix a check {MAX_FIX_TURNS} times in a row, so Stopcord stopped asking"),
                         )
                         .ok(false)
                         .terminal(Some(id)),
@@ -1190,7 +1190,7 @@ impl Engine {
                     thread::spawn(move || me.run_trigger(&factory, &part, Some(&source)));
                 }
                 Ask::StopNow => {
-                    let text = format!("{} asked {MAX_FIX_TURNS} times in a row and the check still fails, so Sawtooth stopped asking", trigger.name);
+                    let text = format!("{} asked {MAX_FIX_TURNS} times in a row and the check still fails, so Stopcord stopped asking", trigger.name);
                     self.alert(&f.id, &format!("fix:{scope}:{check}"), &text, Some(terminal));
                     self.log(
                         &f.id,
@@ -1239,7 +1239,7 @@ impl Engine {
             match when {
                 Due::Missed(at) => {
                     let text = format!(
-                        "{} was due {} but Sawtooth wasn't awake, and that's too long ago to run it now",
+                        "{} was due {} but Stopcord wasn't awake, and that's too long ago to run it now",
                         part.name,
                         at.format("%a %H:%M")
                     );
@@ -1252,7 +1252,7 @@ impl Engine {
                     Run::new(
                         "trigger",
                         format!(
-                            "{} was due at {} but Sawtooth wasn't awake, so it's running late",
+                            "{} was due at {} but Stopcord wasn't awake, so it's running late",
                             part.name,
                             at.format("%H:%M")
                         ),
@@ -1350,17 +1350,17 @@ fn change_run(change: &Change) -> Run {
         ),
         Change::Lost { key, branch } => Run::new(
             "ticket",
-            format!("{key}'s terminal was gone when Sawtooth looked, so the ticket ended. What it committed is on branch {branch}, and anything unsaved is still in its worktree."),
+            format!("{key}'s terminal was gone when Stopcord looked, so the ticket ended. What it committed is on branch {branch}, and anything unsaved is still in its worktree."),
         )
         .ok(false),
         Change::Requeued { key } => Run::new(
             "ticket",
-            format!("{key} was starting when Sawtooth stopped, so it's queued again."),
+            format!("{key} was starting when Stopcord stopped, so it's queued again."),
         ),
         Change::StageLost { key } => Run::new("line", format!("{key} lost its terminal")).ok(false),
         Change::Adopted { key, terminal } => Run::new(
             "ticket",
-            format!("{key} was starting when Sawtooth stopped and its terminal is still open. Check that it got the ticket."),
+            format!("{key} was starting when Stopcord stopped and its terminal is still open. Check that it got the ticket."),
         )
         .ok(false)
         .terminal(Some(terminal)),

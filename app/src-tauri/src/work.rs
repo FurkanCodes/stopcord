@@ -30,9 +30,9 @@ pub struct Live {
 /// What `settle` found, for the run log.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Change {
-    /// The terminal closed while Sawtooth was watching.
+    /// The terminal closed while Stopcord was watching.
     Closed { key: String, branch: String },
-    /// The terminal was already gone when Sawtooth looked: a crash, a reboot, a restarted daemon.
+    /// The terminal was already gone when Stopcord looked: a crash, a reboot, a restarted daemon.
     Lost { key: String, branch: String },
     /// It was starting when the app stopped, and no terminal came of it. It's queued again.
     Requeued { key: String },

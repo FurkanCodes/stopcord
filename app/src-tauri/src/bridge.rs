@@ -12,9 +12,9 @@ use std::time::Duration;
 
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as B64;
-use sawtooth_daemon::Client;
-use sawtooth_daemon::client::DaemonError;
-use sawtooth_daemon::viewer::QueryFilter;
+use stopcord_daemon::Client;
+use stopcord_daemon::client::DaemonError;
+use stopcord_daemon::viewer::QueryFilter;
 use serde::Serialize;
 use serde_json::{Value, json};
 use tauri::{AppHandle, Emitter};
@@ -123,7 +123,7 @@ impl Bridge {
         let program = self.program.clone();
         let viewers = Arc::clone(&self.viewers);
         thread::Builder::new()
-            .name("sawtooth-events".into())
+            .name("stopcord-events".into())
             .spawn(move || {
                 loop {
                     let subscribed = Client::connect_or_start(&program)

@@ -1,4 +1,4 @@
-"""Drives the real Sawtooth app through its test socket, in a throwaway home.
+"""Drives the real Stopcord app through its test socket, in a throwaway home.
 
 A test imports everything from here, sets up a project and a factory, and calls finish() last.
 No test here calls a model: agents are stand-ins from standins/.
@@ -6,12 +6,12 @@ No test here calls a model: agents are stand-ins from standins/.
 import json, os, shutil, socket, subprocess, sys, time
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-ROOT = os.environ.get('SAWTOOTH_E2E_ROOT') or os.path.expanduser('~/.sawtooth-e2e')
+ROOT = os.environ.get('STOPCORD_E2E_ROOT') or os.path.expanduser('~/.stopcord-e2e')
 H, R = ROOT + '/h', ROOT + '/proj'
 B = REPO + '/target/debug'
 SHOTS = REPO + '/target/e2e-shots'
 os.makedirs(SHOTS, exist_ok=True)
-env = dict(os.environ, SAWTOOTH_HOME=H, SAWTOOTH_SOCKET=H + '/s.sock', SAWTOOTH_TEST_SOCKET=ROOT + '/t.sock')
+env = dict(os.environ, STOPCORD_HOME=H, STOPCORD_SOCKET=H + '/s.sock', STOPCORD_TEST_SOCKET=ROOT + '/t.sock')
 env['PATH'] = os.path.expanduser('~/.cargo/bin:') + env['PATH']
 app, FAILS = None, []
 def sh(*a, cwd=None): return subprocess.run(a, cwd=cwd, env=env, capture_output=True, text=True)
@@ -29,7 +29,7 @@ def inv(cmd, **a): return bridge(f"return await window.__TAURI_INTERNALS__.invok
 def launch():
     global app
     os.makedirs(ROOT, exist_ok=True)
-    app = subprocess.Popen([B + '/sawtooth-app'], env=env, stdout=open(ROOT + '/app.log', 'a'), stderr=subprocess.STDOUT)
+    app = subprocess.Popen([B + '/stopcord-app'], env=env, stdout=open(ROOT + '/app.log', 'a'), stderr=subprocess.STDOUT)
     end = time.time() + 40
     while time.time() < end:
         try:
@@ -38,7 +38,7 @@ def launch():
 def stop():
     if app is None:
         return
-    app.terminate(); app.wait(20); sh(B + '/sawtooth', 'shutdown'); time.sleep(1)
+    app.terminate(); app.wait(20); sh(B + '/stopcord', 'shutdown'); time.sleep(1)
 def press(k, **o):
     bridge(f"window.dispatchEvent(new KeyboardEvent('keydown',{json.dumps(dict(key=k, bubbles=True, **o))}));return 1"); time.sleep(0.5)
 def text(): return bridge('return document.body.innerText')

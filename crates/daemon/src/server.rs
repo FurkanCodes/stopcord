@@ -14,8 +14,8 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use anyhow::{Context, Result, bail};
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as B64;
-use sawtooth_detect::{RuleBook, Screen};
-use sawtooth_term::{Event, SpawnSpec, Terminal};
+use stopcord_detect::{RuleBook, Screen};
+use stopcord_term::{Event, SpawnSpec, Terminal};
 use serde_json::{Value, json};
 
 use crate::confine::{Confine, Notify};
@@ -79,7 +79,7 @@ struct Entry {
 struct Status {
     tracker: Tracker,
     title: String,
-    /// A program the terminal's shell is running that isn't an agent Sawtooth knows,
+    /// A program the terminal's shell is running that isn't an agent Stopcord knows,
     /// such as a home-made agent or `npm test`, by name.
     running: Option<String>,
 }
@@ -125,7 +125,7 @@ impl Daemon {
             .map(|dir| rules.load_dir(dir))
             .unwrap_or_default();
         for problem in &rule_problems {
-            eprintln!("sawtooth: skipped a rule file: {problem}");
+            eprintln!("stopcord: skipped a rule file: {problem}");
         }
         Daemon {
             inner: Arc::new(Inner {
@@ -146,11 +146,11 @@ impl Daemon {
     pub fn serve(&self) -> Result<()> {
         let listener = bind(&self.inner.socket)?;
         let _ = std::fs::remove_dir_all(self.inner.run_dir());
-        eprintln!("sawtooth: listening on {}", self.inner.socket.display());
+        eprintln!("stopcord: listening on {}", self.inner.socket.display());
 
         let detecting = Arc::clone(&self.inner);
         thread::Builder::new()
-            .name("sawtooth-detect".into())
+            .name("stopcord-detect".into())
             .spawn(move || detect_loop(&detecting))?;
 
         for stream in listener.incoming() {
@@ -160,7 +160,7 @@ impl Daemon {
             let Ok(stream) = stream else { continue };
             let inner = Arc::clone(&self.inner);
             thread::Builder::new()
-                .name("sawtooth-conn".into())
+                .name("stopcord-conn".into())
                 .spawn(move || {
                     let _ = serve_connection(&inner, stream);
                 })?;
@@ -189,7 +189,7 @@ fn bind(socket: &std::path::Path) -> Result<UnixListener> {
     // SAFETY: flock on a file descriptor we own.
     if unsafe { libc::flock(std::os::fd::AsRawFd::as_raw_fd(&lock), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
         bail!(
-            "a Sawtooth daemon is already running on {}",
+            "a Stopcord daemon is already running on {}",
             socket.display()
         );
     }
@@ -197,7 +197,7 @@ fn bind(socket: &std::path::Path) -> Result<UnixListener> {
     if socket.exists() {
         if UnixStream::connect(socket).is_ok() {
             bail!(
-                "a Sawtooth daemon is already running on {}",
+                "a Stopcord daemon is already running on {}",
                 socket.display()
             );
         }
@@ -351,9 +351,9 @@ impl Inner {
             .and_then(Value::as_u64)
             .map(|n| n.clamp(2, 1000) as u16)
             .unwrap_or(120);
-        spec.env.push(("SAWTOOTH_TERMINAL".into(), id.clone()));
+        spec.env.push(("STOPCORD_TERMINAL".into(), id.clone()));
         spec.env
-            .push(("SAWTOOTH_SOCKET".into(), self.socket.display().to_string()));
+            .push(("STOPCORD_SOCKET".into(), self.socket.display().to_string()));
         if let Some(env) = params.get("env").and_then(Value::as_object) {
             for (key, value) in env {
                 if let Some(value) = value.as_str() {
@@ -367,7 +367,7 @@ impl Inner {
             let c = self.confine(token)?;
             c.bind(&id);
             spec.env
-                .push(("SAWTOOTH_REPORT".into(), c.report.display().to_string()));
+                .push(("STOPCORD_REPORT".into(), c.report.display().to_string()));
         }
 
         let dirty = Arc::new(AtomicBool::new(true));

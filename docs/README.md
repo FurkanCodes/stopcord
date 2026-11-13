@@ -1,6 +1,6 @@
 # Docs
 
-Notes on how Sawtooth is built and why. Each says whether it describes code that exists or a plan.
+Notes on how Stopcord is built and why. Each says whether it describes code that exists or a plan.
 
 ## How it works
 
@@ -15,4 +15,4 @@ Notes on how Sawtooth is built and why. Each says whether it describes code that
 
 ## The safety model in one paragraph
 
-At the `contained` level, each agent works in its own git worktree inside an OS sandbox: Seatbelt on macOS, bubblewrap on Linux. It can write only to its worktree, the parts of `.git` a commit needs, its harness's config folders, caches and temporary folders, and it can't read the usual credential folders. The branch the project has checked out is read-only to it. Checks run in the same kind of sandbox. Sawtooth's own git commands run outside the sandbox with the repo's hooks, fsmonitor and replace refs off, and merges happen only when a person chooses. The README lists what this doesn't cover yet.
+At the `contained` level, each agent works in its own git worktree inside an OS sandbox: Seatbelt on macOS, bubblewrap on Linux. It can write only to its worktree, the parts of `.git` a commit needs, its harness's config folders, caches and temporary folders, and it can't read the usual credential folders. The branch the project has checked out is read-only to it. Checks run in the same kind of sandbox. Stopcord's own git commands run outside the sandbox with the repo's hooks, fsmonitor and replace refs off, and merges happen only when a person chooses. The README lists what this doesn't cover yet.

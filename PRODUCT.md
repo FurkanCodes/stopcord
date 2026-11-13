@@ -14,7 +14,7 @@ The first user is the person building it: an engineer who runs coding agents acr
 
 ## Product Purpose
 
-Sawtooth puts each project in a factory: its terminals, its knowledge base, its rules, its triggers and its tickets, kept together. The home screen shows every factory at once, so the engineer can see what needs them without opening a pile of terminals. Success means a whole week goes by without opening a terminal outside the app to check on a project.
+Stopcord puts each project in a factory: its terminals, its knowledge base, its rules, its triggers and its tickets, kept together. The home screen shows every factory at once, so the engineer can see what needs them without opening a pile of terminals. Success means a whole week goes by without opening a terminal outside the app to check on a project.
 
 ## Positioning
 

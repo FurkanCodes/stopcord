@@ -15,7 +15,9 @@ use crate::factories::{Factory, Kind, RunsOn, Store};
 use crate::runs::{self, Run};
 use crate::worktree::{common_dir, git, is_git};
 
-const MARKER: &str = "# sawtooth-hook";
+const MARKER: &str = "# stopcord-hook";
+/// The marker on hooks installed before the app was renamed from Sawtooth. They're still ours to update.
+const OLD_MARKER: &str = "# sawtooth-hook";
 
 /// The longest a check on a commit or push may run. Long enough for a full test
 /// suite; short enough that a hung one can't hold an agent's commit forever.
@@ -60,11 +62,11 @@ fn quote(s: &str) -> String {
 
 fn script(factory: &Factory, program: &Path, home: &Path, hook: &str) -> String {
     format!(
-        "#!/bin/sh\n{MARKER}\n# Runs the checks of the Sawtooth factory \"{name}\". Sawtooth rewrites this file;\n\
+        "#!/bin/sh\n{MARKER}\n# Runs the checks of the Stopcord factory \"{name}\". Stopcord rewrites this file;\n\
          # remove the factory's checks to remove it.\n\
          app={app}\n\
-         if [ -x \"$app\" ]; then SAWTOOTH_HOME={home} exec \"$app\" hook {id} {hook}; fi\n\
-         echo \"sawtooth: the app isn't at $app any more, so the factory's checks were skipped.\" >&2\n\
+         if [ -x \"$app\" ]; then STOPCORD_HOME={home} exec \"$app\" hook {id} {hook}; fi\n\
+         echo \"stopcord: the app isn't at $app any more, so the factory's checks were skipped.\" >&2\n\
          exit 0\n",
         name = factory.name.replace('\n', " "),
         app = quote(&program.display().to_string()),
@@ -76,8 +78,8 @@ fn script(factory: &Factory, program: &Path, home: &Path, hook: &str) -> String 
 fn hooks_dir(project: &Path) -> Result<PathBuf, String> {
     if let Some(path) = crate::worktree::config(project, "core.hooksPath") {
         return Err(format!(
-            "This repo keeps its git hooks in {path} (core.hooksPath), so Sawtooth didn't add its checks there. \
-             Call `sawtooth-app hook <factory> pre-commit` from your own hook to run them."
+            "This repo keeps its git hooks in {path} (core.hooksPath), so Stopcord didn't add its checks there. \
+             Call `stopcord-app hook <factory> pre-commit` from your own hook to run them."
         ));
     }
     common_dir(project)
@@ -86,7 +88,7 @@ fn hooks_dir(project: &Path) -> Result<PathBuf, String> {
 }
 
 fn ours(path: &Path) -> bool {
-    std::fs::read_to_string(path).is_ok_and(|t| t.lines().any(|l| l.trim() == MARKER))
+    std::fs::read_to_string(path).is_ok_and(|t| t.lines().any(|l| l.trim() == MARKER || l.trim() == OLD_MARKER))
 }
 
 /// The factory a hook of ours belongs to.
@@ -100,23 +102,23 @@ fn owner(path: &Path) -> Option<String> {
 fn owner_name(path: &Path) -> String {
     std::fs::read_to_string(path)
         .ok()
-        .and_then(|t| Some(t.split("Sawtooth factory \"").nth(1)?.split('"').next()?.to_string()))
+        .and_then(|t| Some(t.split("Stopcord factory \"").nth(1)?.split('"').next()?.to_string()))
         .unwrap_or_else(|| "another factory".into())
 }
 
 /// The hook that keeps work in the factory's worktrees from moving the project's branch: only a merge,
-/// which Sawtooth makes in the project folder, may. Plain shell, so it holds even with the app gone.
+/// which Stopcord makes in the project folder, may. Plain shell, so it holds even with the app gone.
 const GUARD: &str = "reference-transaction";
 
 fn guard_script(factory: &Factory, branch: &str, worktrees: &Path) -> String {
     format!(
-        "#!/bin/sh\n{MARKER}\n# The Sawtooth factory \"{name}\" ({id}): work in its worktrees can't move {branch}.\n\
-         # {branch} changes by merging, in the project folder. Sawtooth rewrites this file.\n\
+        "#!/bin/sh\n{MARKER}\n# The Stopcord factory \"{name}\" ({id}): work in its worktrees can't move {branch}.\n\
+         # {branch} changes by merging, in the project folder. Stopcord rewrites this file.\n\
          [ \"$1\" = prepared ] || exit 0\n\
          case \"$(pwd -P)/\" in {trees}/*) ;; *) exit 0 ;; esac\n\
          while read -r old new ref; do\n\
          \x20 if [ \"$ref\" = {target} ]; then\n\
-         \x20   echo \"sawtooth: {branch} only changes by merging it in Sawtooth, not from a worktree.\" >&2\n\
+         \x20   echo \"stopcord: {branch} only changes by merging it in Stopcord, not from a worktree.\" >&2\n\
          \x20   exit 1\n\
          \x20 fi\n\
          done\n\
@@ -134,7 +136,7 @@ fn install_guard(factory: &Factory, dir: &Path, home: &Path) -> Option<String> {
     let branch = git(project, &["branch", "--show-current"]).ok().filter(|b| !b.is_empty())?;
     let path = dir.join(GUARD);
     if path.exists() && !ours(&path) {
-        return Some(format!("This repo already has a {GUARD} hook, so Sawtooth couldn't add the one that stops agents moving {branch} from their worktrees."));
+        return Some(format!("This repo already has a {GUARD} hook, so Stopcord couldn't add the one that stops agents moving {branch} from their worktrees."));
     }
     // Every factory's worktrees, so two factories in one repo share the one guard.
     let trees = home.join("worktrees");
@@ -198,7 +200,7 @@ pub fn install(factory: &Factory, program: &Path, home: &Path) -> Vec<String> {
             }
             if exists && !ours(&path) {
                 problems.push(format!(
-                    "This repo already has a {hook} hook, so Sawtooth didn't replace it. \
+                    "This repo already has a {hook} hook, so Stopcord didn't replace it. \
                      Add this line to {} to run the factory's checks too: \"{}\" hook {} {hook}",
                     path.display(),
                     program.display(),
@@ -349,21 +351,21 @@ pub fn run_command(
     (ok, text)
 }
 
-/// What `sawtooth-app hook <id> <hook>` does. Returns the exit code for git.
+/// What `stopcord-app hook <id> <hook>` does. Returns the exit code for git.
 pub fn run_hook(store: &Store, id: &str, hook: &str, cwd: &Path) -> i32 {
     let Some(on) = HOOKS.iter().find(|(h, _)| *h == hook).map(|(_, on)| *on) else {
-        eprintln!("sawtooth: there's no hook called {hook}");
+        eprintln!("stopcord: there's no hook called {hook}");
         return 0;
     };
     let factory = match store.get(id) {
         Ok(f) => f,
         Err(_) => {
-            eprintln!("sawtooth: the factory {id} is gone, so no checks ran.");
+            eprintln!("stopcord: the factory {id} is gone, so no checks ran.");
             return 0;
         }
     };
     forward_signals();
-    let terminal = std::env::var("SAWTOOTH_TERMINAL").ok();
+    let terminal = std::env::var("STOPCORD_TERMINAL").ok();
     let branch = git(cwd, &["branch", "--show-current"]).unwrap_or_default();
     let what = if on == RunsOn::Commit {
         "commit"
@@ -377,11 +379,11 @@ pub fn run_hook(store: &Store, id: &str, hook: &str, cwd: &Path) -> i32 {
         .iter()
         .filter(|p| p.kind == Kind::Check && p.runs_on == on && !p.command.trim().is_empty())
     {
-        let _ = writeln!(stderr, "sawtooth: {} ({})", part.name, part.command);
+        let _ = writeln!(stderr, "stopcord: {} ({})", part.name, part.command);
         let (ok, output) = run_command(&part.command, cwd, &mut stderr, Some(HOOK_TIMEOUT));
         let _ = writeln!(
             stderr,
-            "sawtooth: {} {}",
+            "stopcord: {} {}",
             part.name,
             if ok { "passed" } else { "failed" }
         );
@@ -410,7 +412,7 @@ pub fn run_hook(store: &Store, id: &str, hook: &str, cwd: &Path) -> i32 {
     } else {
         let _ = writeln!(
             stderr,
-            "sawtooth: the {what} was stopped because {} failed. Fix what it says above, then {what} again.",
+            "stopcord: the {what} was stopped because {} failed. Fix what it says above, then {what} again.",
             failed.join(" and ")
         );
         1
@@ -527,6 +529,21 @@ mod tests {
     }
 
     #[test]
+    fn a_hook_installed_before_the_rename_is_still_ours() {
+        let repo = repo();
+        let home = tempfile::tempdir().unwrap();
+        let store = Store::new(home.path().to_path_buf());
+        let f = factory(&store, repo.path(), vec![check("Tests", "true", RunsOn::Commit)]);
+        let hooks = common_dir(repo.path()).unwrap().join("hooks");
+        std::fs::create_dir_all(&hooks).unwrap();
+        std::fs::write(hooks.join("pre-commit"), format!("#!/bin/sh\n{OLD_MARKER}\nexit 0\n")).unwrap();
+        assert!(ours(&hooks.join("pre-commit")));
+        assert!(install(&f, Path::new("/no/such/app"), home.path()).is_empty(), "replaced, not reported as someone else's");
+        let now = std::fs::read_to_string(hooks.join("pre-commit")).unwrap();
+        assert!(now.contains(MARKER) && !now.contains(OLD_MARKER), "{now}");
+    }
+
+    #[test]
     fn installs_only_what_checks_need_and_keeps_foreign_hooks() {
         let repo = repo();
         let home = tempfile::tempdir().unwrap();
@@ -542,10 +559,12 @@ mod tests {
         assert!(ours(&hooks.join("pre-commit")));
         assert!(!hooks.join("pre-push").exists());
 
-        // A missing app lets the commit through with a warning.
+        // A missing app lets the person's commit through with a warning. Their git runs the hook; the engine's wouldn't.
         std::fs::write(repo.path().join("a.txt"), "a").unwrap();
         git(repo.path(), &["add", "."]).unwrap();
-        git(repo.path(), &["commit", "-q", "-m", "a"]).unwrap();
+        let commit = Command::new("git").arg("-C").arg(repo.path()).args(["commit", "-q", "-m", "a"]).output().unwrap();
+        assert!(commit.status.success(), "{}", String::from_utf8_lossy(&commit.stderr));
+        assert!(String::from_utf8_lossy(&commit.stderr).contains("the app isn't at"), "the hook ran and warned");
 
         std::fs::write(hooks.join("pre-push"), "#!/bin/sh\nexit 0\n").unwrap();
         f.parts = vec![check("Lint", "true", RunsOn::Merge)];

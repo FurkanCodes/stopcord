@@ -2,9 +2,9 @@
 //!
 //! Agents built on terminal UI libraries ask for the cursor position, the
 //! terminal's capabilities and its colours when they start, and some wait for
-//! the answer. Nobody may be watching, so Sawtooth answers for the terminal.
+//! the answer. Nobody may be watching, so Stopcord answers for the terminal.
 
-/// The colours reported back: Sawtooth's `term` ground and `ink`.
+/// The colours reported back: Stopcord's `term` ground and `ink`.
 const BACKGROUND: &str = "rgb:1616/1818/1c1c";
 const FOREGROUND: &str = "rgb:e8e8/eaea/eeee";
 

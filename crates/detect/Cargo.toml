@@ -1,5 +1,5 @@
 [package]
-name = "sawtooth-detect"
+name = "stopcord-detect"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

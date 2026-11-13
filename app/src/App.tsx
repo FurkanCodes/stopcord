@@ -14,11 +14,11 @@ export function App() {
   const [overlay, setOverlay] = useState<'search' | 'help' | null>(null);
   const factoryName = useStore((s) => (s.route.screen === 'factory' ? s.factories.find((f) => f.id === (s.route as { id: string }).id)?.name : undefined));
   const where =
-    route.screen === 'home' ? 'Sawtooth' : route.screen === 'new' ? 'New factory' : route.screen === 'settings' ? 'Settings' : route.screen === 'integrations' ? 'Integrations' : `${factoryName ?? 'Other terminals'}: ${route.tab === 'overview' ? 'map' : route.tab}`;
+    route.screen === 'home' ? 'Stopcord' : route.screen === 'new' ? 'New factory' : route.screen === 'settings' ? 'Settings' : route.screen === 'integrations' ? 'Integrations' : `${factoryName ?? 'Other terminals'}: ${route.tab === 'overview' ? 'map' : route.tab}`;
 
   // A new screen: say where you are, and don't leave the keyboard nowhere.
   useEffect(() => {
-    document.title = where === 'Sawtooth' ? where : `${where} · Sawtooth`;
+    document.title = where === 'Stopcord' ? where : `${where} · Stopcord`;
     if (nothingFocused()) document.querySelector<HTMLElement>('.t-body')?.focus({ preventScroll: true });
   }, [where]);
 

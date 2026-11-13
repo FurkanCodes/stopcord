@@ -635,7 +635,7 @@ function Detail({ factory, item, runs, terminals, onSending, onSite }: { factory
       ];
     } else if (w === 'landing') {
       verbs = [{ k: 'L', label: "it's merged", run: () => void act('landed') }, back, drop];
-      say = 'sawtooth finishes this when the branch lands';
+      say = 'stopcord finishes this when the branch lands';
     } else {
       verbs = [...(terminalVerb ? [terminalVerb] : []), drop];
       say = item.lineStage ? `${item.lineStage} is working` : statusOf(item, terminals);

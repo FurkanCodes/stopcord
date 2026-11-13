@@ -11,7 +11,7 @@ npm run e2e
 
 The whole run takes about 10 minutes and opens test windows, so leave the machine alone while it runs. To run some of them, name them: `python3 e2e/run.py isolation logos`. The runner refuses a build older than the source.
 
-No test calls a model unless you ask for `real_answer`, which spends quota. Each test gets a throwaway home at `~/.sawtooth-e2e`, or `$SAWTOOTH_E2E_ROOT`, so your factories aren't touched. Run one at a time. Screenshots go to `target/e2e-shots`.
+No test calls a model unless you ask for `real_answer`, which spends quota. Each test gets a throwaway home at `~/.stopcord-e2e`, or `$STOPCORD_E2E_ROOT`, so your factories aren't touched. Run one at a time. Screenshots go to `target/e2e-shots`.
 
 | Test | What it proves |
 |---|---|

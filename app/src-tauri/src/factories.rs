@@ -1,6 +1,6 @@
 //! Factories: a project folder and the parts that run it.
 //!
-//! Each factory has its own folder, `~/.sawtooth/factories/<id>/`. `definition/`
+//! Each factory has its own folder, `~/.stopcord/factories/<id>/`. `definition/`
 //! is what people edit, under git (see `definition.rs`). `state/` belongs to the
 //! engine: `work.json` and the run log, `events.jsonl`. Keeping them apart means a
 //! save from the window can't overwrite what the engine just did. Nothing is
@@ -98,7 +98,7 @@ pub struct Part {
     pub every: String,
     /// Ticket source: start new items with no person. Off by default, since outside text reaches an agent.
     pub auto_start: bool,
-    /// Ticket source: environment variables its command gets from Sawtooth's secrets, such as
+    /// Ticket source: environment variables its command gets from Stopcord's secrets, such as
     /// SENTRY_AUTH_TOKEN. Names only: the values are kept per factory and source, never here.
     pub keys: Vec<String>,
     /// Ticket source: the connection in Settings whose credentials its command gets, such as sentry.
@@ -119,7 +119,7 @@ pub enum Level {
     Contained,
     /// A Linux virtual machine.
     Vm,
-    /// The harness's own sandbox, turned on with its own flags. Sawtooth's web filter isn't used.
+    /// The harness's own sandbox, turned on with its own flags. Stopcord's web filter isn't used.
     Harness,
 }
 
@@ -192,15 +192,15 @@ pub struct Runner {
     pub network_quiet: Vec<String>,
     #[serde(skip_serializing_if = "is_default")]
     pub other_sites: OtherSites,
-    /// VM level: a person's own command that runs a command inside their VM, replacing Sawtooth's
+    /// VM level: a person's own command that runs a command inside their VM, replacing Stopcord's
     /// container and everything it does. `{dir}` is the worktree and `{cmd}` the command.
     #[serde(skip_serializing_if = "no_text")]
     pub vm_command: String,
-    /// VM level: the image agents run in, built FROM sawtooth-vm:latest. Empty means Sawtooth's own.
+    /// VM level: the image agents run in, built FROM stopcord-vm:latest. Empty means Stopcord's own.
     #[serde(skip_serializing_if = "no_text")]
     pub vm_image: String,
     /// VM level: secrets each agent gets as environment variables, by name. The values stay in
-    /// `~/.sawtooth/secrets`, under the same names.
+    /// `~/.stopcord/secrets`, under the same names.
     #[serde(skip_serializing_if = "none")]
     pub secrets: Vec<String>,
     /// Commands run in the worktree before the agent starts.
@@ -308,7 +308,7 @@ pub struct Report {
     /// A shell command, with the details in `ST_*`. Empty when it only posts to Slack.
     #[serde(skip_serializing_if = "no_text")]
     pub command: String,
-    /// Environment variables the command gets from Sawtooth's secrets, for this report only. Names only.
+    /// Environment variables the command gets from Stopcord's secrets, for this report only. Names only.
     #[serde(skip_serializing_if = "none")]
     pub keys: Vec<String>,
     /// A Slack channel, such as #eng, that the connected bot posts the event to.
@@ -693,7 +693,7 @@ fn write_atomic(file: &Path, text: &str) -> Result<()> {
 }
 
 impl Store {
-    /// `home` is Sawtooth's own folder, `~/.sawtooth`.
+    /// `home` is Stopcord's own folder, `~/.stopcord`.
     pub fn new(home: PathBuf) -> Store {
         Store {
             home,
@@ -932,7 +932,7 @@ impl Store {
         Ok(out)
     }
 
-    /// Forgets a factory. Its folder moves to `~/.sawtooth/removed/`, so the
+    /// Forgets a factory. Its folder moves to `~/.stopcord/removed/`, so the
     /// knowledge base and run log are never lost by a click.
     pub fn remove(&self, id: &str) -> Result<PathBuf> {
         let _guard = self.lock.lock().unwrap();

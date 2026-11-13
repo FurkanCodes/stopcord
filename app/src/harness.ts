@@ -1,5 +1,5 @@
 // A harness command and the model in it. The command stays the truth: a model is only a flag in it,
-// written the way that harness's profile says, so any harness Sawtooth doesn't know still works.
+// written the way that harness's profile says, so any harness Stopcord doesn't know still works.
 
 import { useEffect, useState } from 'react';
 import { api, type Factory, type HarnessProfile } from './api';

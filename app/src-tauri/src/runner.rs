@@ -7,7 +7,7 @@
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use sawtooth_sandbox::{Network, Policy, wrap};
+use stopcord_sandbox::{Network, Policy, wrap};
 use serde_json::{Value, json};
 
 use crate::bridge::{Bridge, Failure};
@@ -26,7 +26,7 @@ pub struct Started {
     pub agent: Option<String>,
 }
 
-/// Whether a runner puts its agents in Sawtooth's VM, rather than a person's own VM command.
+/// Whether a runner puts its agents in Stopcord's VM, rather than a person's own VM command.
 pub fn in_vm(runner: Option<&Runner>) -> bool {
     runner.is_some_and(|r| r.level == Level::Vm && r.vm_command.trim().is_empty())
 }
@@ -55,12 +55,14 @@ fn expand(home: &Path, path: &str) -> PathBuf {
 
 /// Sockets no agent may reach. A contained agent that reached the daemon could ask for an unconfined terminal,
 /// and a debug build's test socket runs whatever it's sent as script in the window.
-pub(crate) fn masked_sockets(home: &Path, sawtooth_home: &Path, daemon_socket: &Path) -> Vec<PathBuf> {
-    let test_socket = std::env::var_os("SAWTOOTH_TEST_SOCKET").map_or_else(|| sawtooth_home.join("app-test.sock"), PathBuf::from);
+pub(crate) fn masked_sockets(home: &Path, stopcord_home: &Path, daemon_socket: &Path) -> Vec<PathBuf> {
+    let test_socket = std::env::var_os("STOPCORD_TEST_SOCKET").map_or_else(|| stopcord_home.join("app-test.sock"), PathBuf::from);
     vec![
         daemon_socket.to_path_buf(),
-        sawtooth_home.join("sawtooth.sock"),
+        stopcord_home.join("stopcord.sock"),
         test_socket,
+        // A daemon started before the app was renamed from Sawtooth listens here until it stops.
+        stopcord_home.join("sawtooth.sock"),
         PathBuf::from("/var/run/docker.sock"),
         PathBuf::from("/run/docker.sock"),
         home.join(".docker/run/docker.sock"),
@@ -78,15 +80,15 @@ pub struct Block {
 }
 
 /// Every built-in read block, by the name a runner's `unblock` uses. Covers the sandbox crate's own list.
-pub fn built_in_blocks(home: &Path, sawtooth_home: &Path) -> Vec<Block> {
+pub fn built_in_blocks(home: &Path, stopcord_home: &Path) -> Vec<Block> {
     let block = |id: &str, label: &str, paths: &[&str]| Block {
         id: id.into(),
         label: label.into(),
         paths: paths.iter().map(|p| home.join(p)).collect(),
     };
-    let mut secrets = block("secrets", "sawtooth's secrets", &[".sawtooth/secrets"]);
-    if !secrets.paths.contains(&sawtooth_home.join("secrets")) {
-        secrets.paths.push(sawtooth_home.join("secrets"));
+    let mut secrets = block("secrets", "stopcord's secrets", &[".stopcord/secrets"]);
+    if !secrets.paths.contains(&stopcord_home.join("secrets")) {
+        secrets.paths.push(stopcord_home.join("secrets"));
     }
     vec![
         block("ssh", "ssh keys", &[".ssh"]),
@@ -128,7 +130,7 @@ pub fn policy_for(
 ) -> Policy {
     let mut p = Policy::new(cwd.to_path_buf(), home.to_path_buf(), program.to_path_buf());
     p.git_common_dir = crate::worktree::common_dir(cwd);
-    // Whatever the project has checked out moves only by a merge, which Sawtooth makes outside the sandbox.
+    // Whatever the project has checked out moves only by a merge, which Stopcord makes outside the sandbox.
     p.protected_branch = crate::worktree::git(Path::new(&factory.path), &["branch", "--show-current"]).ok().filter(|b| !b.is_empty());
     if let Some(h) = harness {
         p.write.extend(h.write.iter().map(|w| home.join(w)));
@@ -152,7 +154,7 @@ pub fn policy_for(
         let mut listed: Vec<PathBuf> = LISTED_HOME_READS.iter().map(|r| home.join(r)).collect();
         listed.push(store.home().join("bin"));
         listed.extend(runner.read.iter().map(|r| expand(home, r)));
-        p.reads = sawtooth_sandbox::Reads::Listed(listed);
+        p.reads = stopcord_sandbox::Reads::Listed(listed);
     }
     // No write to `~/.zcompdump*`: zsh runs that file in every shell the person opens later. A login shell
     // that can't rewrite it just keeps the old one.
@@ -186,7 +188,7 @@ pub fn test(store: &Store, bridge: &Bridge, factory: &Factory, runner: &Runner, 
     let at = crate::runs::now_ms();
     let note = |text: &str| Ok(TestReport { checks: Vec::new(), note: text.to_string(), at });
     match runner.level {
-        Level::Harness => return note("A harness's own sandbox runs inside the harness, so Sawtooth can't test it from outside."),
+        Level::Harness => return note("A harness's own sandbox runs inside the harness, so Stopcord can't test it from outside."),
         Level::Vm if !runner.vm_command.trim().is_empty() => return note("A VM started by your own command can't be tested from here."),
         Level::Vm => return test_vm(store, bridge, factory, runner, at),
         _ => {}
@@ -203,32 +205,33 @@ pub fn test(store: &Store, bridge: &Bridge, factory: &Factory, runner: &Runner, 
         let paths = runner.deny_read.iter().map(|p| expand(&home, p)).collect();
         blocks.push(probe::Block { label: "your own blocks".into(), paths, blocked: true });
     }
-    let daemon = sawtooth_daemon::paths::socket();
+    let daemon = stopcord_daemon::paths::socket();
     let mut sockets = vec![
         probe::Socket { label: "the daemon".into(), path: daemon.clone() },
-        probe::Socket { label: "the app".into(), path: store.home().join("sawtooth.sock") },
+        probe::Socket { label: "the app".into(), path: store.home().join("stopcord.sock") },
     ];
     let masked = masked_sockets(&home, store.home(), &daemon);
     sockets.push(probe::Socket { label: "the app's test socket".into(), path: masked[2].clone() });
+    sockets.push(probe::Socket { label: "a daemon from before the rename".into(), path: masked[3].clone() });
     // A machine can have several, often one linked to another, so each is named by where it is.
     let tilde = |p: &Path| p.strip_prefix(&home).map_or_else(|_| p.display().to_string(), |r| format!("~/{}", r.display()));
     sockets.extend(
         masked
             .into_iter()
-            .skip(3)
+            .skip(4)
             .map(|path| probe::Socket { label: format!("docker at {}", tilde(&path)), path }),
     );
     let spec = probe::Spec {
         contained: runner.level == Level::Contained,
         listed: runner.reads == crate::factories::ReadMode::Listed,
-        outside: home.join(format!(".sawtooth-probe-{}", std::process::id())),
+        outside: home.join(format!(".stopcord-probe-{}", std::process::id())),
         sample: PathBuf::from(&factory.path),
         blocks,
         sockets,
     };
     let argv = vec![program.display().to_string(), "probe".into(), serde_json::to_string(&spec).unwrap_or_default()];
     let (argv, env, token) = if runner.level == Level::Contained {
-        sawtooth_sandbox::available().map_err(|why| fail(format!("This machine can't make a sandbox: {why}")))?;
+        stopcord_sandbox::available().map_err(|why| fail(format!("This machine can't make a sandbox: {why}")))?;
         let info = bridge.call("confine.prepare", json!({ "allow": allowed_sites(runner, None) }))?;
         let token = info["token"].as_str().unwrap_or_default().to_string();
         let network = Network::Filter {
@@ -369,7 +372,7 @@ pub fn vm_argv(template: &str, dir: &Path, command: &str, shell_path: &str) -> V
 
 /// Long enough for a cold install on a slow connection.
 const SETUP_TIMEOUT: Duration = Duration::from_secs(20 * 60);
-pub const SETUP_DONE: &str = "sawtooth-setup-done";
+pub const SETUP_DONE: &str = "stopcord-setup-done";
 
 fn setup_markers(cwd: &Path) -> Option<(PathBuf, PathBuf)> {
     let done = cwd.join(crate::worktree::git(cwd, &["rev-parse", "--git-path", SETUP_DONE]).ok()?);
@@ -451,7 +454,7 @@ pub fn prepare(
     let contained = level == Level::Contained;
     if level == Level::Harness && command.is_some() && harness.is_none_or(|h| h.own_sandbox_args.trim().is_empty()) {
         let name = harness.map_or("This command", |h| h.id.as_str());
-        return Err(fail(format!("{name} has no sandbox of its own that Sawtooth knows how to turn on. Use Sawtooth's sandbox, or none.")));
+        return Err(fail(format!("{name} has no sandbox of its own that Stopcord knows how to turn on. Use Stopcord's sandbox, or none.")));
     }
     let setup = runner.map_or(&[][..], |r| r.setup_commands.as_slice());
     if !setup.is_empty()
@@ -483,14 +486,14 @@ pub fn prepare(
     let bin = store.home().join("bin");
     let mut started = Started {
         env: vec![
-            ("SAWTOOTH_ST".to_string(), bin.join("st").display().to_string()),
+            ("STOPCORD_ST".to_string(), bin.join("st").display().to_string()),
         ],
         confine: confine.clone(),
         ..Started::default()
     };
     match (level, runner) {
         (Level::Contained, Some(r)) => {
-            if let Err(why) = sawtooth_sandbox::available() {
+            if let Err(why) = stopcord_sandbox::available() {
                 let _ = bridge.call("confine.release", json!({ "token": confine }));
                 return Err(fail(format!("This factory's runner needs a sandbox and this machine can't make one: {why}")));
             }
@@ -507,7 +510,7 @@ pub fn prepare(
                 cwd,
                 program,
                 &home,
-                &sawtooth_daemon::paths::socket(),
+                &stopcord_daemon::paths::socket(),
                 network,
                 report,
             );
@@ -615,15 +618,15 @@ mod tests {
             dir.path(),
             Path::new("/app"),
             Path::new("/Users/me"),
-            Path::new("/Users/me/.sawtooth/sawtooth.sock"),
+            Path::new("/Users/me/.stopcord/stopcord.sock"),
             Network::Off,
             Some(PathBuf::from("/r.sock")),
         );
         assert!(p.deny_read.contains(&store.home().join("secrets")));
         assert!(p.deny_read.contains(&PathBuf::from("/Users/me/.config/mine")));
-        assert!(p.masked_sockets.contains(&PathBuf::from("/Users/me/.sawtooth/sawtooth.sock")));
+        assert!(p.masked_sockets.contains(&PathBuf::from("/Users/me/.stopcord/stopcord.sock")));
         assert!(p.masked_sockets.contains(&PathBuf::from("/var/run/docker.sock")));
-        if std::env::var_os("SAWTOOTH_TEST_SOCKET").is_none() {
+        if std::env::var_os("STOPCORD_TEST_SOCKET").is_none() {
             assert!(p.masked_sockets.contains(&store.home().join("app-test.sock")));
         }
         assert!(p.write.contains(&PathBuf::from("/Users/me/.claude")));
@@ -637,7 +640,7 @@ mod tests {
         assert_eq!(p.report_socket, Some(PathBuf::from("/r.sock")));
     }
 
-    fn policy_with(edit: impl FnOnce(&mut Runner)) -> (tempfile::TempDir, Store, sawtooth_sandbox::Policy) {
+    fn policy_with(edit: impl FnOnce(&mut Runner)) -> (tempfile::TempDir, Store, stopcord_sandbox::Policy) {
         let dir = tempfile::tempdir().unwrap();
         let store = Store::new(dir.path().join("st"));
         let mut f = factory();
@@ -664,8 +667,8 @@ mod tests {
 
     #[test]
     fn the_crates_own_blocks_all_have_a_name() {
-        let named: Vec<PathBuf> = built_in_blocks(Path::new("/h"), Path::new("/h/.sawtooth")).into_iter().flat_map(|b| b.paths).collect();
-        for path in sawtooth_sandbox::COMMON_DENY_READS {
+        let named: Vec<PathBuf> = built_in_blocks(Path::new("/h"), Path::new("/h/.stopcord")).into_iter().flat_map(|b| b.paths).collect();
+        for path in stopcord_sandbox::COMMON_DENY_READS {
             assert!(named.contains(&Path::new("/h").join(path)), "{path} can't be turned off by name");
         }
     }
@@ -673,12 +676,12 @@ mod tests {
     #[test]
     fn listed_reads_add_the_tools_and_what_the_runner_lists() {
         let (_d, _s, everything) = policy_with(|_| {});
-        assert_eq!(everything.reads, sawtooth_sandbox::Reads::Everything);
+        assert_eq!(everything.reads, stopcord_sandbox::Reads::Everything);
         let (_d, store, listed) = policy_with(|r| {
             r.reads = crate::factories::ReadMode::Listed;
             r.read = vec!["~/notes".into()];
         });
-        let sawtooth_sandbox::Reads::Listed(paths) = listed.reads else { panic!("not listed") };
+        let stopcord_sandbox::Reads::Listed(paths) = listed.reads else { panic!("not listed") };
         assert!(paths.contains(&PathBuf::from("/Users/me/notes")));
         assert!(paths.contains(&PathBuf::from("/Users/me/.nvm")));
         assert!(paths.contains(&store.home().join("bin")), "st has to be readable to report");

@@ -260,8 +260,8 @@ mod tests {
 
     fn policy() -> Policy {
         Policy::new(
-            "/nowhere-sawtooth/wt".into(),
-            "/nowhere-sawtooth/home".into(),
+            "/nowhere-stopcord/wt".into(),
+            "/nowhere-stopcord/home".into(),
             "/bin/app".into(),
         )
     }
@@ -269,7 +269,7 @@ mod tests {
     fn filter(port: u16) -> Network {
         Network::Filter {
             port,
-            socket: "/nowhere-sawtooth/f.sock".into(),
+            socket: "/nowhere-stopcord/f.sock".into(),
         }
     }
 
@@ -313,11 +313,11 @@ mod tests {
     #[test]
     fn worktree_and_extra_writes_are_writable() {
         let mut p = policy();
-        p.write.push("/nowhere-sawtooth/state".into());
+        p.write.push("/nowhere-stopcord/state".into());
         let s = seatbelt_profile(&p);
-        assert!(s.contains(r#"(subpath "/nowhere-sawtooth/wt")"#));
-        assert!(s.contains(r#"(subpath "/nowhere-sawtooth/state")"#));
-        assert!(s.contains(r#"(subpath "/nowhere-sawtooth/home/.npm")"#));
+        assert!(s.contains(r#"(subpath "/nowhere-stopcord/wt")"#));
+        assert!(s.contains(r#"(subpath "/nowhere-stopcord/state")"#));
+        assert!(s.contains(r#"(subpath "/nowhere-stopcord/home/.npm")"#));
     }
 
     #[test]
@@ -356,18 +356,18 @@ mod tests {
     #[test]
     fn a_write_prefix_becomes_an_anchored_regex() {
         let mut p = policy();
-        p.write_prefix.push(PathBuf::from("/nowhere-sawtooth/.claude.json"));
+        p.write_prefix.push(PathBuf::from("/nowhere-stopcord/.claude.json"));
         let s = seatbelt_profile(&p);
-        assert!(s.contains(r#"(regex #"^/nowhere-sawtooth/\.claude\.json")"#), "{s}");
+        assert!(s.contains(r#"(regex #"^/nowhere-stopcord/\.claude\.json")"#), "{s}");
     }
 
     #[test]
     fn quotes_and_backslashes_are_escaped() {
         let mut p = policy();
-        p.write.push(PathBuf::from("/nowhere-sawtooth/a\"b\\c"));
+        p.write.push(PathBuf::from("/nowhere-stopcord/a\"b\\c"));
         let s = seatbelt_profile(&p);
         assert!(
-            s.contains(r#"(subpath "/nowhere-sawtooth/a\"b\\c")"#),
+            s.contains(r#"(subpath "/nowhere-stopcord/a\"b\\c")"#),
             "{s}"
         );
     }
@@ -375,8 +375,8 @@ mod tests {
     #[test]
     fn denies_come_after_the_broad_allows() {
         let mut p = policy();
-        p.read_only.push("/nowhere-sawtooth/wt/keep".into());
-        p.masked_sockets.push("/nowhere-sawtooth/d.sock".into());
+        p.read_only.push("/nowhere-stopcord/wt/keep".into());
+        p.masked_sockets.push("/nowhere-stopcord/d.sock".into());
         p.deny_ports.push(7777);
         p.network = filter(9000);
         let s = seatbelt_profile(&p);
@@ -399,7 +399,7 @@ mod tests {
             loopback
                 < pos(
                     &s,
-                    r#"(deny network-outbound (literal "/nowhere-sawtooth/d.sock"))"#
+                    r#"(deny network-outbound (literal "/nowhere-stopcord/d.sock"))"#
                 )
         );
     }
@@ -408,19 +408,19 @@ mod tests {
     fn read_denials_and_read_only_paths_are_listed() {
         let mut p = policy();
         p.read_only
-            .push("/nowhere-sawtooth/home/.claude/settings.json".into());
+            .push("/nowhere-stopcord/home/.claude/settings.json".into());
         let s = seatbelt_profile(&p);
         let deny_read = &s[pos(&s, "(deny file-read*")..];
-        assert!(deny_read.contains(r#"(subpath "/nowhere-sawtooth/home/.ssh")"#));
-        assert!(deny_read.contains(r#"(subpath "/nowhere-sawtooth/home/.sawtooth/secrets")"#));
+        assert!(deny_read.contains(r#"(subpath "/nowhere-stopcord/home/.ssh")"#));
+        assert!(deny_read.contains(r#"(subpath "/nowhere-stopcord/home/.stopcord/secrets")"#));
         let deny_write = &s[pos(&s, "(deny file-write*")..];
-        assert!(deny_write.contains(r#"(subpath "/nowhere-sawtooth/home/.claude/settings.json")"#));
+        assert!(deny_write.contains(r#"(subpath "/nowhere-stopcord/home/.claude/settings.json")"#));
     }
 
     #[test]
     fn git_common_dir_opens_objects_but_not_hooks_or_config() {
         let mut p = policy();
-        p.git_common_dir = Some("/nowhere-sawtooth/proj/.git".into());
+        p.git_common_dir = Some("/nowhere-stopcord/proj/.git".into());
         let s = seatbelt_profile(&p);
         let (allows, denies) = s.split_at(pos(&s, "(deny file-write*"));
         for w in [
@@ -432,12 +432,12 @@ mod tests {
             "index",
         ] {
             assert!(
-                allows.contains(&format!(r#"(subpath "/nowhere-sawtooth/proj/.git/{w}")"#)),
+                allows.contains(&format!(r#"(subpath "/nowhere-stopcord/proj/.git/{w}")"#)),
                 "{w}"
             );
         }
         for r in ["hooks", "config"] {
-            let rule = format!(r#"(subpath "/nowhere-sawtooth/proj/.git/{r}")"#);
+            let rule = format!(r#"(subpath "/nowhere-stopcord/proj/.git/{r}")"#);
             assert!(!allows.contains(&rule), "{r} allowed");
             assert!(denies.contains(&rule), "{r} not denied");
         }
@@ -446,25 +446,25 @@ mod tests {
     #[test]
     fn git_pointers_that_redirect_hooks_stay_read_only() {
         let mut p = policy();
-        p.git_common_dir = Some("/nowhere-sawtooth/pr+oj/.git".into());
+        p.git_common_dir = Some("/nowhere-stopcord/pr+oj/.git".into());
         let s = seatbelt_profile(&p);
         let denies = &s[pos(&s, "(deny file-write*")..];
         assert!(
-            denies.contains(r#"(literal "/nowhere-sawtooth/wt/.git")"#),
+            denies.contains(r#"(literal "/nowhere-stopcord/wt/.git")"#),
             "{s}"
         );
         assert!(
-            denies.contains(r#"(subpath "/nowhere-sawtooth/wt/.git/hooks")"#),
+            denies.contains(r#"(subpath "/nowhere-stopcord/wt/.git/hooks")"#),
             "{s}"
         );
         assert!(
-            denies.contains(r#"(subpath "/nowhere-sawtooth/wt/.git/config")"#),
+            denies.contains(r#"(subpath "/nowhere-stopcord/wt/.git/config")"#),
             "{s}"
         );
         // The `+` must be escaped as a regex and its backslash escaped again for the SBPL string.
         assert!(
             denies.contains(
-                r#"(regex "^/nowhere-sawtooth/pr\\+oj/\\.git/worktrees/[^/]+/(commondir|gitdir|config\\.worktree)$")"#
+                r#"(regex "^/nowhere-stopcord/pr\\+oj/\\.git/worktrees/[^/]+/(commondir|gitdir|config\\.worktree)$")"#
             ),
             "{s}"
         );
@@ -474,16 +474,16 @@ mod tests {
     fn report_socket_is_allowed_by_literal_after_the_masks() {
         let mut p = policy();
         p.network = filter(9000);
-        p.masked_sockets.push("/nowhere-sawtooth/r.sock".into());
-        p.report_socket = Some("/nowhere-sawtooth/r.sock".into());
+        p.masked_sockets.push("/nowhere-stopcord/r.sock".into());
+        p.report_socket = Some("/nowhere-stopcord/r.sock".into());
         let s = seatbelt_profile(&p);
         let deny = pos(
             &s,
-            r#"(deny network-outbound (literal "/nowhere-sawtooth/r.sock"))"#,
+            r#"(deny network-outbound (literal "/nowhere-stopcord/r.sock"))"#,
         );
         let allow = pos(
             &s,
-            r#"(allow network-outbound (literal "/nowhere-sawtooth/r.sock"))"#,
+            r#"(allow network-outbound (literal "/nowhere-stopcord/r.sock"))"#,
         );
         assert!(deny < allow, "{s}");
     }
@@ -511,9 +511,9 @@ mod tests {
     #[test]
     fn off_still_allows_the_report_socket() {
         let mut p = policy();
-        p.report_socket = Some("/nowhere-sawtooth/r.sock".into());
+        p.report_socket = Some("/nowhere-stopcord/r.sock".into());
         let s = seatbelt_profile(&p);
-        assert!(s.contains(r#"(allow network-outbound (literal "/nowhere-sawtooth/r.sock"))"#));
+        assert!(s.contains(r#"(allow network-outbound (literal "/nowhere-stopcord/r.sock"))"#));
         assert!(!s.contains("localhost"), "{s}");
     }
 
@@ -537,7 +537,7 @@ mod tests {
         let mut p = policy();
         p.network = Network::Open;
         p.deny_ports.push(7777);
-        p.masked_sockets.push("/nowhere-sawtooth/d.sock".into());
+        p.masked_sockets.push("/nowhere-stopcord/d.sock".into());
         let s = seatbelt_profile(&p);
         let allow = pos(&s, "(allow network*)");
         assert!(
@@ -551,7 +551,7 @@ mod tests {
             allow
                 < pos(
                     &s,
-                    r#"(deny network-outbound (literal "/nowhere-sawtooth/d.sock"))"#
+                    r#"(deny network-outbound (literal "/nowhere-stopcord/d.sock"))"#
                 )
         );
     }
@@ -575,10 +575,10 @@ mod tests {
     #[test]
     fn paths_are_not_repeated() {
         let mut p = policy();
-        p.write.push("/nowhere-sawtooth/wt".into());
+        p.write.push("/nowhere-stopcord/wt".into());
         let s = seatbelt_profile(&p);
         assert_eq!(
-            s.matches(r#"(subpath "/nowhere-sawtooth/wt")"#).count(),
+            s.matches(r#"(subpath "/nowhere-stopcord/wt")"#).count(),
             1,
             "{s}"
         );

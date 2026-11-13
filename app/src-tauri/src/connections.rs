@@ -1,6 +1,6 @@
 //! Connections: the outside services a person signs in to once, for every factory on this
 //! machine. A factory's source or report names a connection and says only what's its own, such
-//! as which Sentry project. Secret fields live in Sawtooth's secrets, plain ones in settings.yaml.
+//! as which Sentry project. Secret fields live in Stopcord's secrets, plain ones in settings.yaml.
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -18,7 +18,7 @@ pub struct Field {
     /// The environment variable a command gets it as.
     pub name: &'static str,
     pub label: &'static str,
-    /// Kept in Sawtooth's secrets and never shown again, or kept plain in settings.yaml.
+    /// Kept in Stopcord's secrets and never shown again, or kept plain in settings.yaml.
     pub secret: bool,
     pub required: bool,
     pub placeholder: &'static str,
@@ -76,7 +76,7 @@ pub fn all() -> &'static [Connection] {
             id: "github",
             name: "GitHub",
             fields: &[],
-            how: "sign in once with gh auth login in a terminal. Sawtooth uses gh as you",
+            how: "sign in once with gh auth login in a terminal. Stopcord uses gh as you",
             link: "https://cli.github.com",
         },
     ];
@@ -367,11 +367,11 @@ pub fn github_repo(folder: &Path) -> Result<String, String> {
         })
 }
 
-/// A Slack app manifest with everything Sawtooth needs, so creating the app is one paste.
+/// A Slack app manifest with everything Stopcord needs, so creating the app is one paste.
 pub fn slack_manifest() -> String {
     let manifest = serde_json::json!({
-        "display_information": { "name": "Sawtooth", "description": "Turns @mentions into work for your factories" },
-        "features": { "bot_user": { "display_name": "sawtooth", "always_online": true } },
+        "display_information": { "name": "Stopcord", "description": "Turns @mentions into work for your factories" },
+        "features": { "bot_user": { "display_name": "stopcord", "always_online": true } },
         "oauth_config": { "scopes": { "bot": ["app_mentions:read", "chat:write", "channels:read", "groups:read", "channels:history", "groups:history", "users:read"] } },
         "settings": {
             "event_subscriptions": { "bot_events": ["app_mention"] },

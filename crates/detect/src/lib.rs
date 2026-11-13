@@ -7,7 +7,7 @@
 //!
 //! The approach and the rule format follow herdr's detection manifests
 //! (<https://github.com/herdrdev/herdr>, Apache-2.0). The bundled rule files in
-//! `rules/` are adapted from herdr's; this crate's code is Sawtooth's own.
+//! `rules/` are adapted from herdr's; this crate's code is Stopcord's own.
 
 mod regions;
 mod rules;
@@ -27,7 +27,7 @@ pub enum State {
     Working,
     /// Stopped on a question only a person can answer.
     Blocked,
-    /// Not an agent Sawtooth knows, or a screen no rule can read.
+    /// Not an agent Stopcord knows, or a screen no rule can read.
     Unknown,
 }
 

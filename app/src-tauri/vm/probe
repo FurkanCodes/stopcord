@@ -9,7 +9,7 @@ import os
 import socket
 import sys
 
-MARK = "SAWTOOTH-PROBE "
+MARK = "STOPCORD-PROBE "
 
 
 def check(name, should_block, got, why=""):
@@ -44,7 +44,7 @@ def ask_filter(site):
 
 
 def unknown_site():
-    status, why = ask_filter("sawtooth-probe.invalid")
+    status, why = ask_filter("stopcord-probe.invalid")
     if status is None:
         return None, why
     return ("allowed" if status == "200" else "blocked"), ""
@@ -63,13 +63,13 @@ def allowed_site(site):
 
 
 def reports():
-    where, key = os.environ.get("SAWTOOTH_REPORT", ""), os.environ.get("SAWTOOTH_KEY", "")
+    where, key = os.environ.get("STOPCORD_REPORT", ""), os.environ.get("STOPCORD_KEY", "")
     host, _, port = where.rpartition(":")
     if not host:
         return None, "no report address was set up"
     try:
         with socket.create_connection((host, int(port)), timeout=5) as s:
-            # Not a real report, so Sawtooth answers without recording anything.
+            # Not a real report, so Stopcord answers without recording anything.
             s.sendall(f'{key} {{"verb":"probe"}}\n'.encode())
             json.loads(s.makefile().readline())
         return "allowed", ""
@@ -80,9 +80,9 @@ def reports():
 def run(spec):
     out = []
     try:
-        with open("/work/.sawtooth-probe", "w") as f:
-            f.write("sawtooth probe")
-        os.remove("/work/.sawtooth-probe")
+        with open("/work/.stopcord-probe", "w") as f:
+            f.write("stopcord probe")
+        os.remove("/work/.stopcord-probe")
         out.append(check("writes in its own folder", False, "allowed"))
     except OSError as e:
         out.append(check("writes in its own folder", False, "blocked", str(e)))
@@ -110,7 +110,7 @@ def run(spec):
         got, why = allowed_site(site)
         out.append(check(f"reaches {site}, which it needs", False, got, why))
     got, why = reports()
-    out.append(check("reports back to sawtooth", False, got, why))
+    out.append(check("reports back to stopcord", False, got, why))
     return out
 
 

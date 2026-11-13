@@ -8,7 +8,7 @@ edition = "2024"
 rust-version = "1.88"
 publish = false
 license = "Apache-2.0"
-repository = "https://github.com/FurkanCodes/sawtooth"
+repository = "https://github.com/FurkanCodes/stopcord"
 authors = ["Furkan"]
 
 [workspace.dependencies]

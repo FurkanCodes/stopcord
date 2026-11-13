@@ -9,7 +9,7 @@
 
 use std::time::{Duration, Instant};
 
-use sawtooth_detect::{Detection, State};
+use stopcord_detect::{Detection, State};
 
 /// How long a working agent must look idle before its turn counts as finished.
 /// Spinners and redraws flicker through idle-looking frames mid-turn.

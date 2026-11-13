@@ -1,13 +1,13 @@
-# @sawtooth/ui
+# @stopcord/ui
 
-Sawtooth's components and tokens: React, [Base UI](https://base-ui.com) 1.9 for behaviour, Tailwind v4 for styling. One dark theme.
+Stopcord's components and tokens: React, [Base UI](https://base-ui.com) 1.9 for behaviour, Tailwind v4 for styling. One dark theme.
 
 ## Use it
 
 ```css
 /* app.css */
 @import "tailwindcss";
-@import "@sawtooth/ui/theme.css";
+@import "@stopcord/ui/theme.css";
 ```
 
 ```html
@@ -15,14 +15,14 @@ Sawtooth's components and tokens: React, [Base UI](https://base-ui.com) 1.9 for 
 ```
 
 ```tsx
-import { TooltipProvider, FlowNode, Lamp } from '@sawtooth/ui';
+import { TooltipProvider, FlowNode, Lamp } from '@stopcord/ui';
 
 <TooltipProvider>
   <FlowNode icon="shield" name="No secrets" meta="every commit" flag="failed" x={800} y={120} />
 </TooltipProvider>
 ```
 
-`theme.css` holds the tokens as a Tailwind `@theme`, so they're utilities: `bg-raised`, `text-ink-2`, `border-line`, `rounded-node`, `shadow-pop`, `text-meta`, `animate-breathe`. It removes Tailwind's default palette, so only Sawtooth colours exist. It also `@source`s this package, so the app doesn't need to.
+`theme.css` holds the tokens as a Tailwind `@theme`, so they're utilities: `bg-raised`, `text-ink-2`, `border-line`, `rounded-node`, `shadow-pop`, `text-meta`, `animate-breathe`. It removes Tailwind's default palette, so only Stopcord colours exist. It also `@source`s this package, so the app doesn't need to.
 
 ## Rules the components keep
 

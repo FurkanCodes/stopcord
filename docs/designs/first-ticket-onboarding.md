@@ -8,10 +8,10 @@
 
 ## Overview
 
-Sawtooth runs a factory for each project. A ticket goes in. The engine starts a
+Stopcord runs a factory for each project. A ticket goes in. The engine starts a
 planner, a builder and a reviewer in turn. A person approves the plan and
 decides at handoff whether to merge. This design makes the first pass through
-that loop work for someone who has never used Sawtooth. They open the app with
+that loop work for someone who has never used Stopcord. They open the app with
 no factories, pick a project folder, write one small ticket, approve its plan,
 and decide at handoff, without reading anything outside the app.
 
@@ -143,7 +143,7 @@ it can't keep.
 
 ### CUJ 1: First ticket, nothing goes wrong
 
-*   **Given**: Sawtooth has no factories. Claude Code is installed and signed
+*   **Given**: Stopcord has no factories. Claude Code is installed and signed
     in. The machine can sandbox. The user has a JS repo with commits, a
     `package-lock.json` and tests that pass.
 *   **When**: They open the app, choose "+ new factory", and pick the repo
@@ -184,7 +184,7 @@ it can't keep.
     finishing.
 *   **Then**: The ticket detail says in one or two sentences what happened and
     what each available action does. Home's "next up" lists it. The approve and
-    handoff notes say that Sawtooth doesn't notify anyone outside the app (D4).
+    handoff notes say that Stopcord doesn't notify anyone outside the app (D4).
 
 ### CUJ 4: An existing user sees the same screens
 
@@ -313,13 +313,13 @@ are Non-Goals.
         (not reviewed or a saved template, which New factory doesn't describe
         a test run for); the factory has a tests part; the machine can
         sandbox; the folder wasn't cloned in this New factory, by either
-        clone path; and `SAWTOOTH_NO_AUTO_TESTS` isn't set.
+        clone path; and `STOPCORD_NO_AUTO_TESTS` isn't set.
     *   **Otherwise, only when asked:** "run tests" in Work's empty state or in
         Setup.
 
     Without a sandbox, the repo's code would run with the person's full rights.
     A folder that was just cloned may hold code nobody has read. In both cases
-    the person decides. The e2e harness sets `SAWTOOTH_NO_AUTO_TESTS`, so e2e
+    the person decides. The e2e harness sets `STOPCORD_NO_AUTO_TESTS`, so e2e
     tests never start a test run they didn't ask for.
 *   **Failed tests stop every commit,** because a line's tests part runs on
     commit (`main.rs:338-346`) and the hooks are shared by every worktree. The
@@ -584,8 +584,8 @@ stopped during the run."
 | Id | Text |
 | --- | --- |
 | F-protected-added | This protected test is new. The gate ran it as the branch wrote it. |
-| P-no-branch | The project folder has no branch checked out, so Sawtooth couldn't add the hook that stops agents moving a branch from their worktrees. Check out a branch, then open the app again. |
-| P-guard-hookspath | This repo keeps its git hooks in `<path>` (core.hooksPath), so Sawtooth couldn't add the hook that stops agents moving `<branch>` from their worktrees. |
+| P-no-branch | The project folder has no branch checked out, so Stopcord couldn't add the hook that stops agents moving a branch from their worktrees. Check out a branch, then open the app again. |
+| P-guard-hookspath | This repo keeps its git hooks in `<path>` (core.hooksPath), so Stopcord couldn't add the hook that stops agents moving `<branch>` from their worktrees. |
 
 **Work notes**
 
@@ -901,7 +901,7 @@ options breaks the e2e scripts step 17 fixes.
         *   adds `id` to `State.testing`, or returns `Err` with E-running if
             it's already there;
         *   logs T-started, then starts a thread named
-            `sawtooth-test-run`, and returns.
+            `stopcord-test-run`, and returns.
     *   The thread holds a guard whose `Drop` removes `id` from
         `State.testing`, so a panic can't leave it set. It:
         1.  calls `gate::snapshot_head` into `state_dir(id)/gates/test-run`;
@@ -972,14 +972,14 @@ options breaks the e2e scripts step 17 fixes.
             and the folder isn't a git repo with a commit, return
             `Failure::new("git", …)` with R-git and its fix;
         *   **the level:** only the fallback arm changes: `_ =>` becomes
-            `Level::Contained` when `sawtooth_sandbox::available()` is `Ok`,
+            `Level::Contained` when `stopcord_sandbox::available()` is `Ok`,
             and `Level::Worktree` otherwise. `Level`'s serde default doesn't
             change;
         *   **the setup:** `project::setup(folder).as_ref()` is passed to
             `standard_line`;
         *   **the test run:** after the "became a factory" run is logged, when
             `run_tests == Some(true)`, `template == "line"`, `from` is `None`,
-            the sandbox is available, `SAWTOOTH_NO_AUTO_TESTS` isn't set, and
+            the sandbox is available, `STOPCORD_NO_AUTO_TESTS` isn't set, and
             the factory has a tests part, call `engine.run_tests(&factory.id)`
             and ignore its result.
     *   New commands, registered in `generate_handler!`:
@@ -1111,7 +1111,7 @@ options breaks the e2e scripts step 17 fixes.
 *   **Type / Scope**: e2e harness and the tests that use New factory's folded
     fields.
 *   **Proposed Changes**:
-    *   `harness.py` adds `SAWTOOTH_NO_AUTO_TESTS='1'` to `env` (line 14). That
+    *   `harness.py` adds `STOPCORD_NO_AUTO_TESTS='1'` to `env` (line 14). That
         keeps all 24 scripts that call `create_factory` from starting a test
         run.
     *   `new_factory.py`, `work_screen.py` and `templates.py` press `c` before

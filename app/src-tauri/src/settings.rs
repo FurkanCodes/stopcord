@@ -1,8 +1,8 @@
 //! Settings that belong to the machine rather than to one factory, and the
 //! secrets that integrations need.
 //!
-//! `~/.sawtooth/settings.yaml` is plain and can be edited by hand. Secrets are one
-//! file each in `~/.sawtooth/secrets/`, readable only by this user and denied to
+//! `~/.stopcord/settings.yaml` is plain and can be edited by hand. Secrets are one
+//! file each in `~/.stopcord/secrets/`, readable only by this user and denied to
 //! every sandbox. The window can set a secret or ask whether it exists, but it
 //! can never read one back.
 
@@ -99,7 +99,7 @@ pub fn source_key(factory: &str, source: &str, name: &str) -> String {
 }
 
 /// Where a VM sandbox's secret is kept: per factory and sandbox. A bare name would be shared with
-/// every other sandbox, and with Sawtooth's own secrets such as the Slack tokens, so an untrusted
+/// every other sandbox, and with Stopcord's own secrets such as the Slack tokens, so an untrusted
 /// sandbox could ask for those by name.
 pub fn vm_key(factory: &str, runner: &str, name: &str) -> String {
     format!("vm.{factory}.{runner}.{name}")

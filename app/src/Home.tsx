@@ -1,6 +1,6 @@
 import type { Factory, Run, Terminal } from './api';
 import { laneOf } from './factory/parts';
-import { allNeeds, go, harnessOf, lampOf, needsOf, openFactory, openNeed, sawtoothHome, setState, terminalsIn, useStore } from './store';
+import { allNeeds, go, harnessOf, lampOf, needsOf, openFactory, openNeed, stopcordHome, setState, terminalsIn, useStore } from './store';
 import { firstLine, tilde } from './text';
 import { ago } from './time';
 import { Logo, Named } from './tui/Logo';
@@ -178,7 +178,7 @@ export function Home({ onSearch }: { onSearch: () => void }) {
       ]}
       status={{
         mode: 'HOME',
-        path: tilde(sawtoothHome(factories)),
+        path: tilde(stopcordHome(factories)),
         info: `${factories.length} factor${factories.length === 1 ? 'y' : 'ies'} · ${workingTotal}/${termTotal} working · ${queuedTotal} queued`,
       }}
     >
@@ -187,7 +187,7 @@ export function Home({ onSearch }: { onSearch: () => void }) {
           <Pane title={<Titled k="+">no factories yet</Titled>} style={{ maxWidth: 560, padding: '16px 14px 12px', display: 'flex', flexDirection: 'column', gap: 10 }}>
             <p className="t-muted">
               a factory is one project folder: its terminals, its knowledge base, its checks and its triggers. make one, then start agents in
-              it. sawtooth shows what each one is doing and says when one needs you.
+              it. stopcord shows what each one is doing and says when one needs you.
             </p>
             <span>
               <button type="button" className="t-solid" onClick={() => go({ screen: 'new' })}>

@@ -9,7 +9,7 @@ use crate::factories::slug;
 
 /// Git as the engine runs it, outside any sandbox, often in a folder an agent could write to. The
 /// repo's own hooks and fsmonitor would run code the agent may have planted there, and a replace ref
-/// it made would change what a commit holds, so none of them apply to Sawtooth's own git.
+/// it made would change what a commit holds, so none of them apply to Stopcord's own git.
 pub fn git_command(dir: &Path) -> Command {
     let mut c = Command::new("git");
     c.arg("-C")
@@ -163,7 +163,7 @@ fn on_branch(dir: &Path, branch: &str) -> Result<()> {
     let head = git(dir, &["symbolic-ref", "-q", "HEAD"]).unwrap_or_default();
     if head != format!("refs/heads/{branch}") {
         let now = head.strip_prefix("refs/heads/").map_or_else(|| "no branch".to_string(), |b| format!("branch {b}"));
-        bail!("{} is on {now}, not {branch}, so Sawtooth didn't commit there", dir.display());
+        bail!("{} is on {now}, not {branch}, so Stopcord didn't commit there", dir.display());
     }
     Ok(())
 }
