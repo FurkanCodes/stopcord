@@ -334,10 +334,10 @@ mod tests {
 
     #[test]
     fn a_flicker_of_idle_starts_the_wait_over() {
-        // The steady wait is far longer than a flicker, so a slow machine oversleeping a flicker doesn't count as steady.
-        let fake = Fake::idle(Duration::from_millis(300));
+        let fake = Fake::idle(Duration::from_millis(50));
         *fake.state.lock().unwrap() = "working".into();
-        let t = typist(2000);
+        // A steady wait far longer than a 15ms flicker, so a slow machine oversleeping one doesn't count as steady.
+        let t = Arc::new(Typist::new(Duration::from_millis(2000), Duration::from_millis(500), Duration::from_millis(5), Duration::from_millis(300)));
         let (t2, f2) = (Arc::clone(&t), Arc::clone(&fake));
         let job = thread::spawn(move || t2.type_prompt(&Shared(f2), "t1", "go", "term", &|| ()));
         for _ in 0..3 {
