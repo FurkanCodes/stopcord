@@ -23,3 +23,4 @@ app/src-tauri/gen/
 *.log
 .codegraph/
 .claude/settings.local.json
+/dist/

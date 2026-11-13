@@ -13,12 +13,10 @@ The line stops for you at the points you choose, and nothing merges until you sa
 ![Status: early](https://img.shields.io/badge/status-early-E5A50A)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-111)](LICENSE)
 
-**Build and install** (needs [Rust, Node.js and Xcode's tools](#install)):
+**Install** (Apple silicon Mac):
 
 ```sh
-git clone https://github.com/FurkanCodes/stopcord.git && cd stopcord
-npm ci && cd app && npx tauri build --bundles app
-open ../target/release/bundle/macos/Stopcord.app
+curl -fsSL https://raw.githubusercontent.com/FurkanCodes/stopcord/main/scripts/install.sh | bash
 ```
 
 [Install](#install) · [First ticket](#your-first-ticket) · [Safety](#how-much-agents-are-confined) · [Known gaps](#what-it-doesnt-protect-yet)
@@ -51,6 +49,25 @@ The builder works on its own branch, in its own folder. Your tests run on a clea
 
 You can change every part of this line, or start from a simpler one.
 
+<table>
+  <tr>
+    <td width="50%"><img src="docs/assets/screenshots/home.png" alt="The home screen: what needs you across every factory, oldest first"></td>
+    <td width="50%"><img src="docs/assets/screenshots/approve.png" alt="A plan waiting for approval, with approve, send back and drop"></td>
+  </tr>
+  <tr>
+    <td align="center"><b>Home:</b> what needs you, across every factory</td>
+    <td align="center"><b>Approve:</b> read the plan before anything is built</td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="docs/assets/screenshots/handoff.png" alt="Handoff: the diff, the test result and the reviewer's finding on its line"></td>
+    <td width="50%"><img src="docs/assets/screenshots/map.png" alt="The factory map: the sandbox, its checks, knowledge base and the line"></td>
+  </tr>
+  <tr>
+    <td align="center"><b>Handoff:</b> the diff, the tests and the review, then merge</td>
+    <td align="center"><b>Map:</b> the factory's parts and its line</td>
+  </tr>
+</table>
+
 ## Why Stopcord
 
 | | |
@@ -78,17 +95,34 @@ You can change every part of this line, or start from a simpler one.
 
 ## Install
 
-There's no download yet: Stopcord isn't signed or notarized. Build it from source. An app you build yourself isn't blocked by Gatekeeper.
-
 **You need:**
 
-- macOS (tested on macOS 26)
+- a Mac with Apple silicon (M1 or later). Tested on macOS 26.
 - git, and a repo with at least one commit
-- Rust through [rustup](https://rustup.rs), which installs the version the repo pins, Node.js 22 or later, and Xcode's command line tools (`xcode-select --install`)
 - at least one coding-agent CLI, installed and signed in. Claude Code is the one tested most.
 - Docker, only for the `vm` level
 
-**Then:**
+**Then, in Terminal:**
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/FurkanCodes/stopcord/main/scripts/install.sh | bash
+```
+
+The script downloads the latest release, checks it against its SHA-256 checksum, and puts `Stopcord.app` in `/Applications`. [Read it](scripts/install.sh) before you run it.
+
+Stopcord isn't notarized yet: that needs a paid Apple Developer account, which this one-person project doesn't have yet. So the script asks you one question:
+
+- **yes:** skip Apple's check, and Stopcord opens right away.
+- **no:** keep Apple's check. macOS blocks Stopcord the first time it opens. Click **Done**, then go to System Settings → Privacy & Security and click **Open Anyway**.
+
+You get the same app either way. To update, run the command again. Your factories and the agents working in them carry on.
+
+Or download `Stopcord-<version>.zip` from [Releases](https://github.com/FurkanCodes/stopcord/releases), check it with `shasum -a 256 -c Stopcord-<version>.zip.sha256`, and move `Stopcord.app` to Applications.
+
+<details>
+<summary><b>Build from source</b> (Intel Macs, Linux, or to work on Stopcord)</summary>
+
+You also need Rust through [rustup](https://rustup.rs), which installs the version the repo pins, Node.js 22 or later, and Xcode's command line tools (`xcode-select --install`).
 
 ```sh
 git clone https://github.com/FurkanCodes/stopcord.git
@@ -98,9 +132,11 @@ cd app
 npx tauri build --bundles app
 ```
 
-The app is at `target/release/bundle/macos/Stopcord.app`. Move it to `/Applications` and open it.
+The app is at `target/release/bundle/macos/Stopcord.app`. An app you build yourself isn't blocked by Gatekeeper.
 
-To work on Stopcord itself, run `npm run app` from the repo root instead. That starts a debug build that reloads as you edit.
+To work on Stopcord itself, run `npm run app` from the repo root instead. That starts a debug build that reloads as you edit. To make a release zip, run `scripts/package.sh`.
+
+</details>
 
 ## Your first ticket
 
