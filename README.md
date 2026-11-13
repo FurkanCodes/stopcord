@@ -84,7 +84,7 @@ There's no download yet: Stopcord isn't signed or notarized. Build it from sourc
 
 - macOS (tested on macOS 26)
 - git, and a repo with at least one commit
-- Rust 1.88 or later ([rustup](https://rustup.rs)), Node.js 22 or later, and Xcode's command line tools (`xcode-select --install`)
+- Rust through [rustup](https://rustup.rs), which installs the version the repo pins, Node.js 22 or later, and Xcode's command line tools (`xcode-select --install`)
 - at least one coding-agent CLI, installed and signed in. Claude Code is the one tested most.
 - Docker, only for the `vm` level
 
