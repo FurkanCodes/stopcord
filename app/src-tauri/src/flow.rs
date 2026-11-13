@@ -1309,45 +1309,6 @@ impl Engine {
 
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn report(command: &str) -> crate::factories::Report {
-        crate::factories::Report { id: "notify".into(), on: vec!["handoff".into()], command: command.into(), keys: vec!["HOOK".into()], slack: String::new() }
-    }
-
-    #[test]
-    fn a_report_gets_its_keys_in_the_environment_and_a_test_says_what_happened() {
-        let home = tempfile::tempdir().unwrap();
-        let dir = tempfile::tempdir().unwrap();
-        let f = Factory { id: "web".into(), path: dir.path().display().to_string(), ..Factory::default() };
-        crate::settings::set_secret(home.path(), &crate::settings::report_key("web", "notify", "HOOK"), "https://hooks.example/abc").unwrap();
-        let (ok, said) = test_report(home.path(), &f, &report(r#"echo "$ST_EVENT $ST_KEY ${HOOK#https://}""#));
-        assert!(ok, "{said}");
-        assert_eq!(said, "the command ran: handoff TEST-1 hooks.example/abc");
-        let (ok, said) = test_report(home.path(), &f, &report("echo nope >&2; exit 4"));
-        assert!(!ok && said.contains("nope"), "{said}");
-        let (ok, said) = send_report(home.path(), &f, &crate::factories::Report { slack: "#eng".into(), ..report("") }, &[]);
-        assert!(!ok && said.contains("Slack isn't connected"), "{said}");
-        let (ok, said) = send_report(home.path(), &f, &report(""), &[]);
-        assert!(!ok && said.contains("nothing to send"), "{said}");
-    }
-
-    #[test]
-    fn a_slack_report_names_the_ticket_and_links_it() {
-        let env: Vec<(String, String)> = [("ST_KEY", "SEN-4"), ("ST_EVENT", "merged"), ("ST_TITLE", "Null user"), ("ST_URL", "https://s/4"), ("ST_TEXT", "SEN-4 merged")].iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
-        assert_eq!(report_text(&env), "*SEN-4* merged: Null user <https://s/4|open>");
-    }
-
-    #[test]
-    fn a_command_line_quotes_every_word_and_keeps_its_environment() {
-        let line = command_line(&["a b".to_string(), "c'd".to_string()], &[("X".to_string(), "1 2".to_string())]);
-        assert_eq!(line, r#"env X='1 2' 'a b' 'c'\''d'"#);
-        assert_eq!(command_line(&["x".to_string()], &[]), "'x'");
-    }
-}
-
 /// The Slack message for a report: the ticket, what happened, and its link.
 fn report_text(env: &[(String, String)]) -> String {
     let get = |k: &str| env.iter().find(|(n, _)| n == k).map(|(_, v)| v.as_str()).unwrap_or("");
@@ -1408,4 +1369,43 @@ pub(crate) fn test_report(home: &Path, f: &Factory, r: &crate::factories::Report
         ("ST_TEXT".to_string(), "This is a test from Sawtooth. Nothing happened to any real work.".to_string()),
     ];
     send_report(home, f, r, &env)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn report(command: &str) -> crate::factories::Report {
+        crate::factories::Report { id: "notify".into(), on: vec!["handoff".into()], command: command.into(), keys: vec!["HOOK".into()], slack: String::new() }
+    }
+
+    #[test]
+    fn a_report_gets_its_keys_in_the_environment_and_a_test_says_what_happened() {
+        let home = tempfile::tempdir().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let f = Factory { id: "web".into(), path: dir.path().display().to_string(), ..Factory::default() };
+        crate::settings::set_secret(home.path(), &crate::settings::report_key("web", "notify", "HOOK"), "https://hooks.example/abc").unwrap();
+        let (ok, said) = test_report(home.path(), &f, &report(r#"echo "$ST_EVENT $ST_KEY ${HOOK#https://}""#));
+        assert!(ok, "{said}");
+        assert_eq!(said, "the command ran: handoff TEST-1 hooks.example/abc");
+        let (ok, said) = test_report(home.path(), &f, &report("echo nope >&2; exit 4"));
+        assert!(!ok && said.contains("nope"), "{said}");
+        let (ok, said) = send_report(home.path(), &f, &crate::factories::Report { slack: "#eng".into(), ..report("") }, &[]);
+        assert!(!ok && said.contains("Slack isn't connected"), "{said}");
+        let (ok, said) = send_report(home.path(), &f, &report(""), &[]);
+        assert!(!ok && said.contains("nothing to send"), "{said}");
+    }
+
+    #[test]
+    fn a_slack_report_names_the_ticket_and_links_it() {
+        let env: Vec<(String, String)> = [("ST_KEY", "SEN-4"), ("ST_EVENT", "merged"), ("ST_TITLE", "Null user"), ("ST_URL", "https://s/4"), ("ST_TEXT", "SEN-4 merged")].iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
+        assert_eq!(report_text(&env), "*SEN-4* merged: Null user <https://s/4|open>");
+    }
+
+    #[test]
+    fn a_command_line_quotes_every_word_and_keeps_its_environment() {
+        let line = command_line(&["a b".to_string(), "c'd".to_string()], &[("X".to_string(), "1 2".to_string())]);
+        assert_eq!(line, r#"env X='1 2' 'a b' 'c'\''d'"#);
+        assert_eq!(command_line(&["x".to_string()], &[]), "'x'");
+    }
 }

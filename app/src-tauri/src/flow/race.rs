@@ -93,6 +93,7 @@ impl Engine {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn start_racer(self: &Arc<Self>, f: &Factory, w: &WorkItem, s: &LineStage, agent_id: &str, field: usize, note: &str, real: &Path) {
         let key = w.ticket.key.as_str();
         let out = |terminal: String, why: String| {

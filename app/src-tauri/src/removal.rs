@@ -125,10 +125,10 @@ pub fn clear(home: &Path, factory: &Factory, trees: &Path, moved_to: &Path, choi
                 problems.push(format!("the worktree for {} stayed: {e}", w.branch));
             }
         }
-        if trees.exists() {
-            if let Err(e) = std::fs::remove_dir_all(trees) {
-                problems.push(format!("{} stayed: {e}", trees.display()));
-            }
+        if trees.exists()
+            && let Err(e) = std::fs::remove_dir_all(trees)
+        {
+            problems.push(format!("{} stayed: {e}", trees.display()));
         }
         let _ = git(project, &["worktree", "prune"]);
     }

@@ -59,10 +59,10 @@ pub fn apply(t: &Template, f: &mut Factory, detected_tests: Option<&str>) {
     for check in &t.checks {
         let mut c = check.clone();
         c.kind = Kind::Check;
-        if c.id == "tests" {
-            if let Some(cmd) = detected_tests {
-                c.command = cmd.to_string();
-            }
+        if c.id == "tests"
+            && let Some(cmd) = detected_tests
+        {
+            c.command = cmd.to_string();
         }
         f.parts.push(c);
     }
@@ -106,7 +106,7 @@ pub fn list(home: &Path) -> (Vec<Template>, Vec<String>) {
             }
         }
     }
-    out.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    out.sort_by_key(|a| a.name.to_lowercase());
     (out, problems)
 }
 

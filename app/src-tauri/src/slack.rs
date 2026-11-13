@@ -195,13 +195,14 @@ impl Engine {
     /// thread. A question only goes back for a mention heard live: catching up after a restart
     /// would ask again about every one of them.
     fn slack_proposal(self: &Arc<Self>, s: &SlackSettings, event: &Value, live: bool) {
-        if let Some(user) = event["user"].as_str() {
-            if event["type"] == "app_mention" && !s.allow_users.iter().any(|a| a == user) {
-                if live {
-                    self.slack_knock(event, user);
-                }
-                return;
+        if let Some(user) = event["user"].as_str()
+            && event["type"] == "app_mention"
+            && !s.allow_users.iter().any(|a| a == user)
+        {
+            if live {
+                self.slack_knock(event, user);
             }
+            return;
         }
         let Some(ticket) = ticket_from_event(event, &s.allow_users) else { return };
         let factories: Vec<(String, String)> = self.store.list().unwrap_or_default().into_iter().map(|f| (f.id, f.name)).collect();

@@ -14,9 +14,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy
+      # rust-toolchain.toml pins the version, so CI lints with the same clippy as a local build.
+      - name: Install Rust
+        run: rustup show
 
       - uses: actions/setup-node@v4
         with:

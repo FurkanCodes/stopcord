@@ -30,10 +30,10 @@ pub fn not_ready(home: &Path, factory: &Factory, part: &Part) -> Option<String> 
     if part.command.trim().is_empty() {
         return Some("it has no pull command yet".into());
     }
-    if !part.connection.is_empty() {
-        if let Some(why) = crate::connections::not_ready(home, &part.connection) {
-            return Some(why);
-        }
+    if !part.connection.is_empty()
+        && let Some(why) = crate::connections::not_ready(home, &part.connection)
+    {
+        return Some(why);
     }
     let unset: Vec<&str> = part.vars.iter().filter(|(_, v)| v.trim().is_empty()).map(|(k, _)| k.as_str()).collect();
     if !unset.is_empty() {

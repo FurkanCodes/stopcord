@@ -302,7 +302,7 @@ pub fn choices(home: &Path, connection: &str, parent: &str) -> Result<Vec<Choice
                 Some(Choice { label: if name == id { id.clone() } else { format!("{name} ({id})") }, id })
             })
             .collect();
-        out.sort_by(|a, b| a.label.to_lowercase().cmp(&b.label.to_lowercase()));
+        out.sort_by_key(|a| a.label.to_lowercase());
         out
     };
     match connection {
