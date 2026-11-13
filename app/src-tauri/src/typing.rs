@@ -292,7 +292,7 @@ mod tests {
     #[test]
     fn a_turn_starting_clears_the_draft() {
         // Pressing "1" on a permission menu has no Enter, but it starts the turn.
-        let t = typist(60);
+        let t = typist(1000);
         t.person_typed("t1", b"1");
         t.turn_began("t1");
         let fake = Fake::idle(Duration::from_millis(50));
@@ -305,11 +305,12 @@ mod tests {
         // A harness that asks something at startup waits for a person, however long that takes.
         let fake = Fake::idle(Duration::from_millis(50));
         *fake.state.lock().unwrap() = "blocked".into();
-        let t = typist(60);
+        // Room to settle once the question is answered, and a wait while blocked well past that.
+        let t = typist(200);
         let f2 = Arc::clone(&fake);
         let t2 = Arc::clone(&t);
         let job = thread::spawn(move || t2.type_prompt(&Shared(f2), "t1", "go", "term", &|| ()));
-        thread::sleep(Duration::from_millis(250));
+        thread::sleep(Duration::from_millis(800));
         assert!(!job.is_finished(), "gave up while a person was being asked");
         *fake.state.lock().unwrap() = "idle".into();
         job.join().unwrap().unwrap();
